@@ -145,6 +145,14 @@ export const binanceGetExchangeInfo = async (symbol: string) => {
   return response?.symbols?.find((s: any) => s.symbol === symbol.toUpperCase()) || null;
 };
 
+export const binanceGetCommissionRate = async (symbol: string): Promise<number> => {
+  const response = await binanceRequest('/fapi/v1/commissionRate', { symbol: symbol.toUpperCase() }, 'GET', true);
+  if (response && response.takerCommissionRate) {
+    return parseFloat(response.takerCommissionRate);
+  }
+  return 0.0004; // Default to 0.04% if not found or error
+};
+
 export const formatQuantity = (quantity: number, exchangeInfo: any): string => {
   if (!exchangeInfo) return quantity.toFixed(3);
   const stepSizeFilter = exchangeInfo.filters.find((f: any) => f.filterType === 'LOT_SIZE');

@@ -10,6 +10,7 @@ import {
   binanceClosePosition, 
   binanceCancelAllOrders, 
   binanceGetExchangeInfo, 
+  binanceGetCommissionRate, 
   formatQuantity 
 } from '@/lib/binance';
 
@@ -61,12 +62,15 @@ export async function POST(req: NextRequest) {
           const closeResp = await binanceClosePosition(symbol, closeSide as 'BUY' | 'SELL', existing.quantity);
 
           if (binanceOrderSuccess(closeResp)) {
-            const profitPercent = existing.positionType === 'buy'
-              ? ((currentPrice - existing.entryPrice) / existing.entryPrice) * 100
-              : ((existing.entryPrice - currentPrice) / existing.entryPrice) * 100;
+            const comm = await binanceGetCommissionRate(symbol);
+            const entryCost = existing.entryPrice * existing.quantity * ((existing as any).commission ?? 0.0004);
+            const exitCost = currentPrice * existing.quantity * comm;
+
             const profitFiat = existing.positionType === 'buy'
-              ? (currentPrice - existing.entryPrice) * existing.quantity
-              : (existing.entryPrice - currentPrice) * existing.quantity;
+              ? ((currentPrice - existing.entryPrice) * existing.quantity) - entryCost - exitCost
+              : ((existing.entryPrice - currentPrice) * existing.quantity) - entryCost - exitCost;
+            
+            const profitPercent = (profitFiat / (existing.entryPrice * existing.quantity)) * 100;
 
             await prisma.position.update({
               where: { id: existing.id },
@@ -89,6 +93,7 @@ export async function POST(req: NextRequest) {
     if (!price) return NextResponse.json({ error: true, message: 'Failed to fetch price' }, { status: 500 });
 
     const exchangeInfo = await binanceGetExchangeInfo(symbol);
+    const commission = await binanceGetCommissionRate(symbol);
     const quantityRaw = amount / price;
     const quantityFormatted = parseFloat(formatQuantity(quantityRaw, exchangeInfo));
 
@@ -126,8 +131,9 @@ export async function POST(req: NextRequest) {
         status: 'open',
         origin,
         timeframe,
+        commission: commission as any,
       },
-    });
+    } as any);
 
     return NextResponse.json({ success: true, message: `Position # opened for ${symbol}` });
   } catch (error: any) {

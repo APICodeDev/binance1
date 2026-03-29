@@ -8,7 +8,8 @@ import {
   binanceCancelAllOrders, 
   binanceOrderSuccess, 
   binanceClosePosition, 
-  binancePlaceStopMarket 
+  binancePlaceStopMarket,
+  binanceGetCommissionRate
 } from '@/lib/binance';
 
 export async function GET() {
@@ -35,12 +36,15 @@ export async function GET() {
       if (!realMap[symbol]) {
         // Closed on Binance, sync DB
         const currentPrice = (await binanceGetPrice(symbol)) || pos.entryPrice;
-        const profitPercent = pos.positionType === 'buy'
-          ? ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100
-          : ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100;
+        const comm = await binanceGetCommissionRate(symbol);
+        const entryCost = pos.entryPrice * pos.quantity * ((pos as any).commission ?? 0.0004);
+        const exitCost = currentPrice * pos.quantity * comm;
+
         const profitFiat = pos.positionType === 'buy'
-          ? (currentPrice - pos.entryPrice) * pos.quantity
-          : (pos.entryPrice - currentPrice) * pos.quantity;
+          ? ((currentPrice - pos.entryPrice) * pos.quantity) - entryCost - exitCost
+          : ((pos.entryPrice - currentPrice) * pos.quantity) - entryCost - exitCost;
+        
+        const profitPercent = (profitFiat / (pos.entryPrice * pos.quantity)) * 100;
 
         await binanceCancelAllOrders(symbol);
         await prisma.position.update({
@@ -70,23 +74,26 @@ export async function GET() {
       continue;
     }
 
-    let profitPercent = pos.positionType === 'buy'
-      ? ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100
-      : ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100;
+    const comm = await binanceGetCommissionRate(symbol);
+    const entryCost = pos.entryPrice * pos.quantity * ((pos as any).commission ?? 0.0004);
+    const exitCost = currentPrice * pos.quantity * comm;
+
+    const profitFiat = pos.positionType === 'buy'
+      ? ((currentPrice - pos.entryPrice) * pos.quantity) - entryCost - exitCost
+      : ((pos.entryPrice - currentPrice) * pos.quantity) - entryCost - exitCost;
     
-    let profitFiat = pos.positionType === 'buy'
-      ? (currentPrice - pos.entryPrice) * pos.quantity
-      : (pos.entryPrice - currentPrice) * pos.quantity;
+    const profitPercent = (profitFiat / (pos.entryPrice * pos.quantity)) * 100;
 
     let newSl = pos.stopLoss;
     let slTriggered = false;
 
     if (pos.positionType === 'buy') {
+      const bePrice = pos.entryPrice * (1 + comm) / (1 - comm);
       if (currentPrice <= pos.stopLoss) {
         slTriggered = true;
       } else if (profitPercent >= 0.5) {
         const suggestedSl = currentPrice * (1 - 0.005);
-        const targetSl = Math.max(pos.entryPrice, suggestedSl);
+        const targetSl = Math.max(bePrice, suggestedSl);
         if (targetSl > pos.stopLoss) {
           newSl = targetSl;
           await binanceCancelAllOrders(symbol);
@@ -94,11 +101,12 @@ export async function GET() {
         }
       }
     } else { // short
+      const bePrice = pos.entryPrice * (1 - comm) / (1 + comm);
       if (currentPrice >= pos.stopLoss) {
         slTriggered = true;
       } else if (profitPercent >= 0.5) {
         const suggestedSl = currentPrice * (1 + 0.005);
-        const targetSl = Math.min(pos.entryPrice, suggestedSl);
+        const targetSl = Math.min(bePrice, suggestedSl);
         if (targetSl < pos.stopLoss) {
           newSl = targetSl;
           await binanceCancelAllOrders(symbol);

@@ -40,6 +40,7 @@ interface Position {
   closedAt?: string;
   origin?: string | null;
   timeframe?: string | null;
+  commission?: number;
 }
 
 export default function Dashboard() {
@@ -53,6 +54,7 @@ export default function Dashboard() {
   const [newPos, setNewPos] = useState({ symbol: '', amount: '100', type: 'buy' });
   const [totalPnl, setTotalPnl] = useState(0);
   const [showSplash, setShowSplash] = useState(true);
+  const [showEjectModal, setShowEjectModal] = useState<Position | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setShowSplash(false), 4100);
@@ -149,6 +151,32 @@ export default function Dashboard() {
     }
   };
 
+  const manualEject = (pos: Position) => {
+    setShowEjectModal(pos);
+  };
+
+  const confirmManualEject = async () => {
+    if (!showEjectModal) return;
+    const { id, symbol } = showEjectModal;
+    try {
+      const res = await fetch('/api/close', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      const data = await res.json();
+      if (!data.error) {
+        setShowEjectModal(null);
+        fetchData();
+      } else {
+        alert('Error: ' + data.message);
+      }
+    } catch (error) {
+      console.error('Manual eject error:', error);
+      alert('Network error ejecting');
+    }
+  };
+
   const emergencyCloseAll = async () => {
     if (confirm('⚠️ ERES CONSCIENTE DE QUE ESTO CERRARÁ TODAS LAS POSICIONES?')) {
       try {
@@ -173,9 +201,15 @@ export default function Dashboard() {
 
   const totalSecuredProfit = openPositions.reduce((acc, pos) => {
     const isBuy = pos.positionType === 'buy';
+    const comm = pos.commission ?? 0.0004;
     const isSafe = (isBuy && pos.stopLoss > pos.entryPrice) || (!isBuy && pos.stopLoss < pos.entryPrice);
     if (isSafe) {
-      return acc + (isBuy ? (pos.stopLoss - pos.entryPrice) * pos.quantity : (pos.entryPrice - pos.stopLoss) * pos.quantity);
+      const entryCost = pos.entryPrice * pos.quantity * comm;
+      const exitCost = pos.stopLoss * pos.quantity * comm;
+      const secured = isBuy 
+        ? ((pos.stopLoss - pos.entryPrice) * pos.quantity) - entryCost - exitCost
+        : ((pos.entryPrice - pos.stopLoss) * pos.quantity) - entryCost - exitCost;
+      return acc + Math.max(0, secured);
     }
     return acc;
   }, 0);
@@ -313,10 +347,56 @@ export default function Dashboard() {
                 </motion.div>
               ) : (
                 openPositions.map((pos) => (
-                  <PositionCard key={pos.id} pos={pos} />
+                  <PositionCard key={pos.id} pos={pos} onEject={manualEject} />
                 ))
               )}
             </AnimatePresence>
+
+        {/* Modal Manual Eject Confirmation */}
+        <AnimatePresence>
+          {showEjectModal && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md"
+            >
+              <motion.div 
+                initial={{ scale: 0.9, opacity: 0, y: 20 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.9, opacity: 0, y: 20 }}
+                className="glass-card w-full max-w-sm p-8 flex flex-col items-center text-center gap-6"
+              >
+                <div className="w-16 h-16 bg-rose-500/10 rounded-full flex items-center justify-center mb-2">
+                  <AlertTriangle size={32} className="text-rose-500 animate-pulse" />
+                </div>
+                
+                <div className="space-y-2">
+                  <h3 className="text-xl font-black text-white uppercase tracking-wider">Manual Exit Confirmation</h3>
+                  <p className="text-slate-400 text-sm leading-relaxed">
+                    Are you sure you want to close your <span className="text-white font-bold">{showEjectModal.symbol}</span> position immediately? 
+                    <br/>This will execute a market order.
+                  </p>
+                </div>
+
+                <div className="flex flex-col w-full gap-3 mt-4">
+                  <button 
+                    onClick={confirmManualEject}
+                    className="w-full bg-rose-600 hover:bg-rose-500 text-white font-black py-4 rounded-2xl transition-all shadow-lg shadow-rose-600/20 uppercase tracking-widest text-xs"
+                  >
+                    Yes, Eject Now
+                  </button>
+                  <button 
+                    onClick={() => setShowEjectModal(null)}
+                    className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-4 rounded-2xl transition-all uppercase tracking-widest text-xs"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
           </div>
         </section>
 
@@ -366,6 +446,7 @@ Amount: ${pos.amount} USDT
 Quantity: ${pos.quantity}
 Entry Price: ${pos.entryPrice}
 Stop Target: ${pos.stopLoss}
+Commission: ${((pos.commission ?? 0.0004) * 100).toFixed(4)}%
 PnL %: ${pos.profitLossPercent.toFixed(2)}%
 PnL USDT: ${pos.profitLossFiat.toFixed(2)} USDT`;
                   
@@ -511,10 +592,16 @@ PnL USDT: ${pos.profitLossFiat.toFixed(2)} USDT`;
   );
 }
 
-function PositionCard({ pos }: { pos: Position }) {
+function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position) => void }) {
   const isBuy = pos.positionType === 'buy';
-  const isSafe = (isBuy && pos.stopLoss >= pos.entryPrice) || (!isBuy && pos.stopLoss <= pos.entryPrice);
-  const pnlSafe = isBuy ? (pos.stopLoss - pos.entryPrice) * pos.quantity : (pos.entryPrice - pos.stopLoss) * pos.quantity;
+  const comm = pos.commission ?? 0.0004;
+  const entryCost = pos.entryPrice * pos.quantity * comm;
+  const exitCost = pos.stopLoss * pos.quantity * comm;
+  const pnlSafe = isBuy 
+    ? ((pos.stopLoss - pos.entryPrice) * pos.quantity) - entryCost - exitCost
+    : ((pos.entryPrice - pos.stopLoss) * pos.quantity) - entryCost - exitCost;
+  
+  const isSafe = pnlSafe > 0;
   const isBreakeven = Math.abs(pnlSafe) < 0.05;
 
   return (
@@ -557,6 +644,12 @@ function PositionCard({ pos }: { pos: Position }) {
         </div>
       </div>
 
+      {(pos.commission !== undefined && pos.commission !== null) && (
+        <div className="px-3 py-1 bg-slate-800/50 rounded-lg self-start">
+          <p className="text-[9px] text-slate-500 font-bold uppercase">Fee: {(pos.commission * 100).toFixed(4)}%</p>
+        </div>
+      )}
+
       <div className="bg-slate-950/50 rounded-2xl p-3 border border-slate-800/50">
         <div className="flex justify-between items-end">
           <div className="space-y-1">
@@ -578,7 +671,10 @@ function PositionCard({ pos }: { pos: Position }) {
         </div>
       )}
 
-      <button className="w-full bg-rose-600 hover:bg-rose-500 text-white rounded-xl py-2.5 text-xs font-black uppercase tracking-[0.2em] flex items-center justify-center gap-2 transition-transform transform hover:scale-105 active:scale-95 shadow-lg shadow-rose-600/20 mt-1">
+      <button 
+        onClick={() => onEject(pos)}
+        className="w-full bg-rose-600 hover:bg-rose-500 text-white rounded-xl py-2.5 text-xs font-black uppercase tracking-[0.2em] flex items-center justify-center gap-2 transition-transform transform hover:scale-105 active:scale-95 shadow-lg shadow-rose-600/20 mt-1"
+      >
         <AlertTriangle size={14} /> MANUAL EJECT
       </button>
     </motion.div>
