@@ -1,0 +1,586 @@
+'use client';
+
+import { useState, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { 
+  ShieldCheck, 
+  Settings, 
+  AlertTriangle, 
+  TrendingUp, 
+  TrendingDown, 
+  Activity, 
+  Plus, 
+  History, 
+  Trash2, 
+  RefreshCw,
+  Clock,
+  ExternalLink,
+  Bot
+} from 'lucide-react';
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+
+// Typing for positions from API
+interface Position {
+  id: number;
+  symbol: string;
+  positionType: 'buy' | 'sell';
+  amount: number;
+  quantity: number;
+  entryPrice: number;
+  stopLoss: number;
+  status: 'open' | 'closed';
+  profitLossPercent: number;
+  profitLossFiat: number;
+  createdAt: string;
+  closedAt?: string;
+  origin?: string | null;
+  timeframe?: string | null;
+}
+
+export default function Dashboard() {
+  const [openPositions, setOpenPositions] = useState<Position[]>([]);
+  const [closedPositions, setClosedPositions] = useState<Position[]>([]);
+  const [botEnabled, setBotEnabled] = useState(true);
+  const [customAmount, setCustomAmount] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [showModal, setShowModal] = useState(false);
+  const [newPos, setNewPos] = useState({ symbol: '', amount: '100', type: 'buy' });
+  const [totalPnl, setTotalPnl] = useState(0);
+  const [showSplash, setShowSplash] = useState(true);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setShowSplash(false), 4100);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const fetchData = useCallback(async (isSilent = false) => {
+    if (!isSilent) setLoading(true);
+    try {
+      // Fetch positions
+      const res = await fetch('/api/positions');
+      const data = await res.json();
+      setOpenPositions(data.open || []);
+      setClosedPositions(data.history || []);
+      setTotalPnl(data.totalPnl || 0);
+
+      // Fetch bot status
+      const settingsRes = await fetch('/api/settings');
+      const settings = await settingsRes.json();
+      setBotEnabled(settings.bot_enabled === '1');
+      setCustomAmount(settings.custom_amount || '');
+    } catch (error) {
+      console.error('Fetch error:', error);
+    } finally {
+      if (!isSilent) setLoading(false);
+    }
+  }, []);
+
+  const runMonitor = useCallback(async () => {
+    setSyncing(true);
+    try {
+      await fetch('/api/monitor');
+      await fetchData(true);
+    } catch (error) {
+      console.error('Monitor sync error:', error);
+    } finally {
+      setSyncing(false);
+    }
+  }, [fetchData]);
+
+  // Initial load and polling
+  useEffect(() => {
+    fetchData();
+    const interval = setInterval(() => {
+      runMonitor();
+    }, 10000); // 10 seconds polling as requested
+    return () => clearInterval(interval);
+  }, [fetchData, runMonitor]);
+
+  const toggleBot = async () => {
+    const newValue = botEnabled ? '0' : '1';
+    try {
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bot_enabled: newValue }),
+      });
+      setBotEnabled(!botEnabled);
+    } catch (error) {
+      console.error('Toggle bot error:', error);
+    }
+  };
+
+  const saveCustomAmount = async (val: string) => {
+    setCustomAmount(val);
+    try {
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ custom_amount: val }),
+      });
+    } catch (error) {
+      console.error('Save custom amount error:', error);
+    }
+  };
+
+  const submitNewPosition = async () => {
+    try {
+      const res = await fetch('/api/entry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newPos),
+      });
+      const data = await res.json();
+      if (!data.error) {
+        setShowModal(false);
+        setNewPos({ symbol: '', amount: '100', type: 'buy' });
+        fetchData();
+      } else {
+        alert('Error: ' + data.message);
+      }
+    } catch (error) {
+      alert('Network error placing position');
+    }
+  };
+
+  const emergencyCloseAll = async () => {
+    if (confirm('⚠️ ERES CONSCIENTE DE QUE ESTO CERRARÁ TODAS LAS POSICIONES?')) {
+      try {
+        await fetch('/api/emergency', { method: 'POST' });
+        fetchData();
+      } catch (error) {
+        alert('Error in emergency stop');
+      }
+    }
+  };
+
+  const clearHistory = async () => {
+    if (confirm('Are you sure you want to clear the history and set Net Profit to zero?')) {
+      try {
+        await fetch('/api/positions', { method: 'DELETE' });
+        fetchData();
+      } catch (error) {
+        alert('Error clearing history');
+      }
+    }
+  };
+
+  const totalSecuredProfit = openPositions.reduce((acc, pos) => {
+    const isBuy = pos.positionType === 'buy';
+    const isSafe = (isBuy && pos.stopLoss > pos.entryPrice) || (!isBuy && pos.stopLoss < pos.entryPrice);
+    if (isSafe) {
+      return acc + (isBuy ? (pos.stopLoss - pos.entryPrice) * pos.quantity : (pos.entryPrice - pos.stopLoss) * pos.quantity);
+    }
+    return acc;
+  }, 0);
+
+  if (showSplash) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-slate-950 text-slate-50 relative overflow-hidden">
+        <motion.div
+           initial={{ opacity: 0, scale: 0.9, filter: "blur(10px)" }}
+           animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+           transition={{ duration: 2, ease: "easeOut" }}
+           className="flex flex-col items-center"
+        >
+          <motion.svg 
+            animate={{ y: [0, -15, 0], scale: [1, 1.05, 1] }} 
+            transition={{ duration: 1, ease: "easeInOut", repeat: Infinity }}
+            className="w-[100px] h-[100px] mb-5 text-yellow-400" 
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+          >
+              <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+              <polyline points="2 17 12 22 22 17"></polyline>
+              <polyline points="2 12 12 17 22 12"></polyline>
+          </motion.svg>
+          <h1 className="text-[40px] font-black tracking-[2px] m-0">TRADE<span className="text-yellow-400">BOT</span></h1>
+          <div className="mt-2.5 text-base text-slate-400 tracking-[4px] uppercase">System Initializing</div>
+        </motion.div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen p-4 md:p-8 max-w-7xl mx-auto space-y-8">
+      {/* Header */}
+      <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-slate-800 pb-8">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 bg-yellow-400 rounded-xl flex items-center justify-center shadow-lg shadow-yellow-400/20 shadow-inner rotate-3">
+             <Activity className="text-slate-900 w-8 h-8" />
+          </div>
+          <div>
+            <h1 className="text-3xl font-black italic tracking-tighter">BINANCE<span className="text-yellow-400">SYNC</span></h1>
+            <p className="text-xs text-slate-400 font-medium uppercase tracking-[0.2em]">Automated Trading Command Center</p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-4">
+          <div className={cn(
+            "flex items-center gap-2 px-4 py-2 rounded-full border transition-all duration-500",
+            botEnabled ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" : "bg-rose-500/10 border-rose-500/30 text-rose-400"
+          )}>
+            <Bot size={18} className={cn(botEnabled && "animate-pulse")} />
+            <span className="text-sm font-bold">{botEnabled ? 'BOT ACTIVE' : 'BOT DISABLED'}</span>
+            <div 
+              className={cn(
+                "w-10 h-5 rounded-full relative cursor-pointer transition-colors",
+                botEnabled ? "bg-emerald-500" : "bg-slate-600"
+              )}
+              onClick={toggleBot}
+            >
+              <div className={cn(
+                "absolute top-1 left-1 w-3 h-3 bg-white rounded-full transition-transform",
+                botEnabled ? "translate-x-5" : "translate-x-0"
+              )} />
+            </div>
+          </div>
+
+          <div className="bg-slate-900 border border-slate-800 px-4 py-2 rounded-xl hidden md:flex items-center gap-3">
+            <Settings size={18} className="text-slate-500" />
+            <div className="flex flex-col">
+              <span className="text-[9px] uppercase font-black text-slate-500 tracking-widest">Entry Amount (USDT)</span>
+              <input 
+                 type="number"
+                 placeholder="Auto (JSON)"
+                 value={customAmount}
+                 onChange={(e) => saveCustomAmount(e.target.value)}
+                 className="bg-transparent border-none text-sm font-black text-yellow-400 w-28 outline-none placeholder:text-slate-700 p-0 m-0"
+              />
+            </div>
+          </div>
+
+          <div className="bg-slate-900 border border-slate-800 px-6 py-2 rounded-xl flex items-center gap-3">
+             <div className="text-right">
+                <p className="text-[10px] text-blue-400/60 uppercase font-black tracking-wider">Secured Profit</p>
+                <p className="text-xl font-black text-blue-400">
+                  {totalSecuredProfit > 0 ? '+' : ''}{totalSecuredProfit.toFixed(2)} <span className="text-[10px] opacity-70">USDT</span>
+                </p>
+             </div>
+          </div>
+
+          <div className="bg-slate-900 border border-slate-800 px-6 py-2 rounded-xl flex items-center gap-3">
+             <div className="text-right">
+                <p className="text-[10px] text-slate-500 uppercase font-black">Net Profit/Loss</p>
+                <p className={cn("text-xl font-black", totalPnl >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                  {totalPnl.toFixed(2)} <span className="text-[10px] opacity-70">USDT</span>
+                </p>
+             </div>
+          </div>
+          
+          <button 
+            onClick={() => setShowModal(true)}
+            className="bg-yellow-400 hover:bg-yellow-300 text-slate-950 p-3 md:px-6 md:py-3 rounded-xl font-black flex items-center justify-center gap-2 transition-transform transform hover:scale-105 active:scale-95 shadow-lg shadow-yellow-400/10"
+          >
+            <Plus size={22} className="md:w-5 md:h-5" /> <span className="hidden md:inline">NEW SIGNAL</span>
+          </button>
+
+          <button 
+            onClick={emergencyCloseAll}
+            className="bg-rose-600 hover:bg-rose-500 text-white px-4 py-3 rounded-xl font-bold flex items-center gap-2 transition-transform transform hover:scale-105 active:scale-95"
+          >
+            <AlertTriangle size={18} />
+          </button>
+        </div>
+      </header>
+
+      {/* Main Grid */}
+      <main className="space-y-12">
+        <section>
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-xl font-black flex items-center gap-3 text-slate-300">
+              <Activity className="text-yellow-400" /> ACTIVE POSITIONS 
+              <span className="bg-slate-800 text-[10px] py-1 px-3 rounded-full text-white">{openPositions.length}</span>
+              {syncing && <RefreshCw size={14} className="animate-spin text-blue-400 ml-2" />}
+            </h2>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <AnimatePresence mode='popLayout'>
+              {openPositions.length === 0 ? (
+                <motion.div 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="col-span-full border-2 border-dashed border-slate-800 rounded-3xl p-12 flex flex-col items-center justify-center text-slate-500 space-y-4"
+                >
+                  <TrendingUp size={48} className="opacity-10" />
+                  <p className="font-bold text-center">No open trades in orbit.<br/><span className="text-xs font-normal opacity-50">Launch a new signal to begin.</span></p>
+                </motion.div>
+              ) : (
+                openPositions.map((pos) => (
+                  <PositionCard key={pos.id} pos={pos} />
+                ))
+              )}
+            </AnimatePresence>
+          </div>
+        </section>
+
+        {/* History */}
+        <section className="bg-slate-900/30 border border-slate-800/50 rounded-3xl overflow-hidden shadow-2xl">
+          <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+            <h2 className="text-lg font-black flex items-center gap-3">
+              <History className="text-blue-400" /> RECENT FLIGHT LOGS
+            </h2>
+            <button onClick={clearHistory} className="text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-rose-400 flex items-center gap-2 transition-colors">
+              <Trash2 size={14} /> Clear History
+            </button>
+          </div>
+          
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="text-[10px] text-slate-500 uppercase tracking-widest font-black border-b border-slate-800/50">
+                  <th className="px-6 py-4">Symbol</th>
+                  <th className="px-6 py-4">Origin / TF</th>
+                  <th className="px-6 py-4">Type</th>
+                  <th className="px-6 py-4">Entry</th>
+                  <th className="px-6 py-4">PnL %</th>
+                  <th className="px-6 py-4">PnL USDT</th>
+                  <th className="px-6 py-4">Closed At</th>
+                  <th className="px-6 py-4">Duration</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/30">
+                {closedPositions.map(pos => {
+                  let durationStr = '-';
+                  if (pos.closedAt) {
+                    const diffMs = new Date(pos.closedAt).getTime() - new Date(pos.createdAt).getTime();
+                    const totalSeconds = Math.max(0, Math.floor(diffMs / 1000));
+                    const hours = Math.floor(totalSeconds / 3600);
+                    const minutes = Math.floor((totalSeconds % 3600) / 60);
+                    const seconds = totalSeconds % 60;
+                    durationStr = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                  }
+
+                  const tooltipData = `Entry Time: ${new Date(pos.createdAt).toLocaleString()}
+Close Time: ${pos.closedAt ? new Date(pos.closedAt).toLocaleString() : '-'}
+Duration: ${durationStr}
+Symbol: ${pos.symbol}
+Type: ${pos.positionType.toUpperCase()}
+Amount: ${pos.amount} USDT
+Quantity: ${pos.quantity}
+Entry Price: ${pos.entryPrice}
+Stop Target: ${pos.stopLoss}
+PnL %: ${pos.profitLossPercent.toFixed(2)}%
+PnL USDT: ${pos.profitLossFiat.toFixed(2)} USDT`;
+                  
+                  return (
+                  <tr key={pos.id} title={tooltipData} className="text-sm hover:bg-slate-800/20 transition-colors group">
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-2">
+                        <span className="font-black text-slate-300">{pos.symbol}</span>
+                        <ExternalLink size={12} className="opacity-0 group-hover:opacity-30 transition-opacity" />
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-xs font-bold text-slate-500">
+                      {pos.origin || '-'}{pos.timeframe ? ` / ${pos.timeframe}` : ''}
+                    </td>
+                    <td className="px-6 py-4">
+                      <span className={cn(pos.positionType === 'buy' ? 'text-emerald-400' : 'text-rose-400', "font-bold text-xs uppercase")}>
+                        {pos.positionType}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 font-mono text-xs text-slate-400">{pos.entryPrice.toFixed(4)}</td>
+                    <td className={cn("px-6 py-4 font-black", pos.profitLossPercent >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                      {pos.profitLossPercent > 0 ? '+' : ''}{pos.profitLossPercent.toFixed(2)}%
+                    </td>
+                    <td className={cn("px-6 py-4 font-black", pos.profitLossFiat >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                      {pos.profitLossFiat > 0 ? '+' : ''}{pos.profitLossFiat.toFixed(2)}
+                    </td>
+                    <td className="px-6 py-4 text-xs text-slate-500 font-medium">
+                      {new Date(pos.closedAt!).toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 font-mono text-xs text-slate-500">
+                      {durationStr}
+                    </td>
+                  </tr>
+                )})}
+                {closedPositions.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="px-6 py-12 text-center text-slate-600 italic text-sm">No missions completed yet.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+
+      {/* Footer text */}
+      <footer className="pt-4 pb-8 flex justify-center">
+        <div className="text-[10px] text-slate-500 uppercase flex items-center gap-2 opacity-60 font-black tracking-widest">
+          <Clock size={12} /> Last update: Every 10s
+        </div>
+      </footer>
+
+      {/* NEW POSITION MODAL */}
+      <AnimatePresence>
+        {showModal && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xl"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-slate-900 border border-slate-700 w-full max-w-md rounded-[2rem] p-8 shadow-2xl relative overflow-hidden"
+            >
+              {/* Background accent */}
+              <div className="absolute top-0 right-0 w-32 h-32 bg-yellow-400/10 blur-3xl -z-10 rounded-full" />
+              <div className="absolute bottom-0 left-0 w-32 h-32 bg-blue-400/10 blur-3xl -z-10 rounded-full" />
+
+              <h3 className="text-2xl font-black italic tracking-tighter mb-8 flex items-center gap-3">
+                <ShieldCheck className="text-yellow-400" /> DEPLOY SIGNAL
+              </h3>
+
+              <div className="space-y-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Instrument Pairing</label>
+                  <div className="relative">
+                    <input 
+                      type="text" 
+                      placeholder="BTCUSDT" 
+                      className="w-full bg-slate-950/50 border border-slate-700 p-4 rounded-2xl outline-none focus:border-yellow-400 transition-colors placeholder:text-slate-700 font-black"
+                      value={newPos.symbol}
+                      onChange={(e) => setNewPos({...newPos, symbol: e.target.value.toUpperCase()})}
+                    />
+                    <TrendingUp className="absolute right-4 top-4 text-slate-700" size={18} />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Deployment Budget (USDT)</label>
+                  <input 
+                    type="number" 
+                    placeholder="100.00" 
+                    className="w-full bg-slate-950/50 border border-slate-700 p-4 rounded-2xl outline-none focus:border-yellow-400 transition-colors placeholder:text-slate-700 font-black"
+                    value={newPos.amount}
+                    onChange={(e) => setNewPos({...newPos, amount: e.target.value})}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <button 
+                    onClick={() => setNewPos({...newPos, type: 'buy'})}
+                    className={cn(
+                      "p-4 rounded-2xl font-black text-sm transition-all border",
+                      newPos.type === 'buy' ? "bg-emerald-500 text-slate-950 border-emerald-400" : "bg-slate-950/50 border-slate-800 text-slate-400 opacity-50 hover:opacity-100"
+                    )}
+                  >
+                    LONG / BUY
+                  </button>
+                  <button 
+                    onClick={() => setNewPos({...newPos, type: 'sell'})}
+                    className={cn(
+                      "p-4 rounded-2xl font-black text-sm transition-all border",
+                      newPos.type === 'sell' ? "bg-rose-500 text-white border-rose-400" : "bg-slate-950/50 border-slate-800 text-slate-400 opacity-50 hover:opacity-100"
+                    )}
+                  >
+                    SHORT / SELL
+                  </button>
+                </div>
+
+                <div className="flex gap-4 pt-4">
+                  <button 
+                    onClick={() => setShowModal(false)}
+                    className="flex-1 p-4 rounded-2xl font-bold text-slate-500 hover:bg-slate-800 transition-colors"
+                  >
+                    Abort
+                  </button>
+                  <button 
+                    onClick={submitNewPosition}
+                    className="flex-[2] p-4 bg-yellow-400 hover:bg-yellow-300 text-slate-950 rounded-2xl font-black shadow-lg shadow-yellow-400/20"
+                  >
+                    CONFIRM DEPLOY
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function PositionCard({ pos }: { pos: Position }) {
+  const isBuy = pos.positionType === 'buy';
+  const isSafe = (isBuy && pos.stopLoss >= pos.entryPrice) || (!isBuy && pos.stopLoss <= pos.entryPrice);
+  const pnlSafe = isBuy ? (pos.stopLoss - pos.entryPrice) * pos.quantity : (pos.entryPrice - pos.stopLoss) * pos.quantity;
+  const isBreakeven = Math.abs(pnlSafe) < 0.05;
+
+  return (
+    <motion.div 
+      layout
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.9 }}
+      className="glass-card p-5 flex flex-col gap-4 relative overflow-hidden group"
+    >
+      {/* Dynamic Background */}
+      <div className={cn(
+        "absolute -right-8 -top-8 w-24 h-24 blur-3xl rounded-full opacity-20 -z-10 group-hover:opacity-40 transition-opacity duration-700",
+        isBuy ? "bg-emerald-500" : "bg-rose-500"
+      )} />
+
+      <div className="flex items-center justify-between">
+        <div className="flex flex-col">
+          <span className="text-2xl font-black tracking-tight text-white">{pos.symbol}</span>
+          <span className="text-[10px] text-slate-500 font-bold tracking-widest uppercase flex gap-2">
+            ID: CMD-{pos.id.toString().padStart(4, '0')}
+            {(pos.origin || pos.timeframe) && ` | ${[pos.origin, pos.timeframe].filter(Boolean).join(' - ')}`}
+          </span>
+        </div>
+        <span className={cn(isBuy ? "badge-buy" : "badge-sell", "flex items-center gap-1.5")}>
+          {isBuy ? <TrendingUp size={10}/> : <TrendingDown size={10}/>} {pos.positionType}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-1">
+          <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider">Entry Level</p>
+          <p className="text-sm font-mono text-slate-300">{pos.entryPrice.toFixed(4)}</p>
+        </div>
+        <div className="space-y-1 text-right">
+          <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider">Stop Target</p>
+          <p className={cn("text-sm font-mono", isSafe ? "text-emerald-400" : "text-rose-400/80")}>
+            {pos.stopLoss.toFixed(4)}
+          </p>
+        </div>
+      </div>
+
+      <div className="bg-slate-950/50 rounded-2xl p-3 border border-slate-800/50">
+        <div className="flex justify-between items-end">
+          <div className="space-y-1">
+             <p className="text-[10px] text-emerald-400/50 font-black uppercase tracking-tighter">Real-time PnL</p>
+             <p className={cn("text-2xl font-black", pos.profitLossPercent >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                {pos.profitLossPercent > 0 ? '+' : ''}{pos.profitLossPercent.toFixed(2)}<span className="text-xs opacity-50">%</span>
+             </p>
+          </div>
+          <p className={cn("text-sm font-black mb-1 opacity-70", pos.profitLossPercent >= 0 ? "text-emerald-600" : "text-rose-600")}>
+            {pos.profitLossFiat.toFixed(2)} USDT
+          </p>
+        </div>
+      </div>
+
+      {isSafe && (
+        <div className="badge-safe justify-center py-2 animate-none bg-emerald-500/10 border-emerald-500/10">
+          <ShieldCheck size={14} className="text-emerald-400" /> 
+          {isBreakeven ? 'BREAKEVEN SECURED' : `+${pnlSafe.toFixed(2)} USDT SECURED`}
+        </div>
+      )}
+
+      <button className="w-full bg-rose-600 hover:bg-rose-500 text-white rounded-xl py-2.5 text-xs font-black uppercase tracking-[0.2em] flex items-center justify-center gap-2 transition-transform transform hover:scale-105 active:scale-95 shadow-lg shadow-rose-600/20 mt-1">
+        <AlertTriangle size={14} /> MANUAL EJECT
+      </button>
+    </motion.div>
+  );
+}

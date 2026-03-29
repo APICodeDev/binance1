@@ -1,0 +1,35 @@
+// prisma/schema.prisma
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Position {
+  id                   Int       @id @default(autoincrement())
+  symbol               String
+  positionType         String    @map("position_type") // 'buy' or 'sell'
+  amount               Float
+  quantity             Float
+  entryPrice           Float     @map("entry_price")
+  stopLoss             Float     @map("stop_loss")
+  status               String    @default("open") // 'open' or 'closed'
+  profitLossPercent    Float?    @default(0) @map("profit_loss_percent")
+  profitLossFiat       Float?    @default(0) @map("profit_loss_fiat")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  closedAt             DateTime? @map("closed_at")
+  origin               String?   // Added origin
+  timeframe            String?   // Added timeframe
+
+  @@map("positions")
+}
+
+model Setting {
+  key   String @id
+  value String
+
+  @@map("settings")
+}
