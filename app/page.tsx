@@ -55,6 +55,8 @@ export default function Dashboard() {
   const [totalPnl, setTotalPnl] = useState(0);
   const [showSplash, setShowSplash] = useState(true);
   const [showEjectModal, setShowEjectModal] = useState<Position | null>(null);
+  const [lastEntryError, setLastEntryError] = useState<{timestamp: string; symbol: string; type: string; detail: string} | null>(null);
+  const [errorPopup, setErrorPopup] = useState<string | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setShowSplash(false), 4100);
@@ -76,6 +78,15 @@ export default function Dashboard() {
       const settings = await settingsRes.json();
       setBotEnabled(settings.bot_enabled === '1');
       setCustomAmount(settings.custom_amount || '');
+      // Parse last entry error
+      if (settings.last_entry_error) {
+        try {
+          const parsed = JSON.parse(settings.last_entry_error);
+          setLastEntryError(parsed);
+        } catch { setLastEntryError(null); }
+      } else {
+        setLastEntryError(null);
+      }
     } catch (error) {
       console.error('Fetch error:', error);
     } finally {
@@ -144,10 +155,12 @@ export default function Dashboard() {
         setNewPos({ symbol: '', amount: '100', type: 'buy' });
         fetchData();
       } else {
-        alert('Error: ' + data.message);
+        setShowModal(false);
+        setErrorPopup(data.detail || data.message || 'Unknown error');
+        fetchData();
       }
     } catch (error) {
-      alert('Network error placing position');
+      setErrorPopup('Error de red al intentar abrir la posición.');
     }
   };
 
@@ -326,6 +339,20 @@ export default function Dashboard() {
       {/* Main Grid */}
       <main className="space-y-12">
         <section>
+          {/* Last entry error banner */}
+          {lastEntryError && lastEntryError.detail && (
+            <div className="mb-4 px-4 py-3 bg-rose-950/40 border border-rose-800/40 rounded-xl flex items-start gap-3">
+              <AlertTriangle size={16} className="text-rose-400 mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <p className="text-[11px] text-rose-400 font-bold uppercase tracking-wider mb-1">Último error de entrada</p>
+                <p className="text-xs text-rose-300/80 break-all leading-relaxed">{lastEntryError.detail}</p>
+                <p className="text-[10px] text-rose-500/60 mt-1">
+                  {lastEntryError.symbol} · {lastEntryError.type?.toUpperCase()} · {new Date(lastEntryError.timestamp).toLocaleString()}
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-black flex items-center gap-3 text-slate-300">
               <Activity className="text-yellow-400" /> ACTIVE POSITIONS 
@@ -583,6 +610,42 @@ PnL USDT: ${pos.profitLossFiat.toFixed(2)} USDT`;
                     CONFIRM DEPLOY
                   </button>
                 </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ERROR DETAIL POPUP */}
+      <AnimatePresence>
+        {errorPopup && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="bg-slate-900 border border-rose-700/50 w-full max-w-md rounded-[2rem] p-8 shadow-2xl relative overflow-hidden"
+            >
+              <div className="absolute top-0 right-0 w-40 h-40 bg-rose-500/10 blur-3xl -z-10 rounded-full" />
+              <div className="flex flex-col items-center text-center gap-5">
+                <div className="w-16 h-16 bg-rose-500/10 rounded-full flex items-center justify-center">
+                  <AlertTriangle size={32} className="text-rose-500" />
+                </div>
+                <h3 className="text-xl font-black text-white uppercase tracking-wider">Error de Apertura</h3>
+                <p className="text-sm text-rose-300/80 leading-relaxed break-all bg-slate-950/50 border border-slate-800 rounded-xl p-4 w-full text-left font-mono">
+                  {errorPopup}
+                </p>
+                <button
+                  onClick={() => setErrorPopup(null)}
+                  className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 font-black py-4 rounded-2xl transition-all uppercase tracking-widest text-xs mt-2"
+                >
+                  Cerrar
+                </button>
               </div>
             </motion.div>
           </motion.div>

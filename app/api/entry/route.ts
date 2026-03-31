@@ -90,7 +90,11 @@ export async function POST(req: NextRequest) {
 
     // Open new position
     const price = await binanceGetPrice(symbol);
-    if (!price) return NextResponse.json({ error: true, message: 'Failed to fetch price' }, { status: 500 });
+    if (!price) {
+      const errDetail = `No se pudo obtener el precio de ${symbol} desde Binance.`;
+      await saveLastEntryError(errDetail, symbol, type);
+      return NextResponse.json({ error: true, message: errDetail }, { status: 500 });
+    }
 
     const exchangeInfo = await binanceGetExchangeInfo(symbol);
     const commission = await binanceGetCommissionRate(symbol);
@@ -101,7 +105,11 @@ export async function POST(req: NextRequest) {
     const orderResponse = await binancePlaceMarketOrder(symbol, side, quantityFormatted);
 
     if (!binanceOrderSuccess(orderResponse)) {
-      return NextResponse.json({ error: true, message: 'Failed to open position', details: orderResponse }, { status: 500 });
+      const binanceMsg = orderResponse?.msg || orderResponse?.message || JSON.stringify(orderResponse);
+      const binanceCode = orderResponse?.code ?? 'N/A';
+      const errDetail = `Binance rechazó la orden MARKET ${side} ${quantityFormatted} ${symbol}. Código: ${binanceCode} — ${binanceMsg}`;
+      await saveLastEntryError(errDetail, symbol, type);
+      return NextResponse.json({ error: true, message: 'Failed to open position', detail: errDetail, binance: orderResponse }, { status: 500 });
     }
 
     const entryPrice = parseFloat(orderResponse.avgPrice) || price;
@@ -116,7 +124,11 @@ export async function POST(req: NextRequest) {
     if (!binanceOrderSuccess(slResponse)) {
       // Rollback
       await binanceClosePosition(symbol, side as 'BUY' | 'SELL', quantityFormatted);
-      return NextResponse.json({ error: true, message: 'Failed to place SL, rolled back' }, { status: 500 });
+      const slMsg = slResponse?.msg || slResponse?.message || JSON.stringify(slResponse);
+      const slCode = slResponse?.code ?? 'N/A';
+      const errDetail = `SL rechazado por Binance para ${symbol}. Código: ${slCode} — ${slMsg}. Rollback ejecutado.`;
+      await saveLastEntryError(errDetail, symbol, type);
+      return NextResponse.json({ error: true, message: 'Failed to place SL, rolled back', detail: errDetail, binance: slResponse }, { status: 500 });
     }
 
     // Save to DB
@@ -135,8 +147,35 @@ export async function POST(req: NextRequest) {
       },
     } as any);
 
+    // Clear last entry error on success
+    await prisma.setting.upsert({
+      where: { key: 'last_entry_error' },
+      update: { value: '' },
+      create: { key: 'last_entry_error', value: '' },
+    });
+
     return NextResponse.json({ success: true, message: `Position # opened for ${symbol}` });
   } catch (error: any) {
-    return NextResponse.json({ error: true, message: error.message }, { status: 500 });
+    const errDetail = `Excepción inesperada: ${error.message}`;
+    try { await saveLastEntryError(errDetail, 'N/A', 'N/A'); } catch (_) {}
+    return NextResponse.json({ error: true, message: error.message, detail: errDetail }, { status: 500 });
+  }
+}
+
+async function saveLastEntryError(detail: string, symbol: string, type: string) {
+  const payload = JSON.stringify({
+    timestamp: new Date().toISOString(),
+    symbol,
+    type,
+    detail,
+  });
+  try {
+    await prisma.setting.upsert({
+      where: { key: 'last_entry_error' },
+      update: { value: payload },
+      create: { key: 'last_entry_error', value: payload },
+    });
+  } catch (e) {
+    console.error('Could not save last_entry_error:', e);
   }
 }
