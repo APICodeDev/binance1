@@ -61,38 +61,49 @@ export async function POST(req: NextRequest) {
 
     if (existing) {
       if (existing.positionType === type) {
-        return NextResponse.json({ success: true, message: 'Position already open' });
+        // Requirement: If same direction, ignore completely.
+        console.log(`[ENTRY] Ignoring signal for ${symbol}: Position in direction ${type} is already open.`);
+        return NextResponse.json({ 
+          success: true, 
+          message: `Ignorada: Ya existe una posición abierta en dirección ${type} para ${symbol}. No se han realizado cambios.` 
+        });
       } else {
         // Change direction: Close current and continue
-        const currentPrice = await binanceGetPrice(symbol);
-        if (currentPrice) {
-          await binanceCancelAllOrders(symbol);
-          const closeSide = existing.positionType === 'buy' ? 'SELL' : 'BUY';
-          const closeResp = await binanceClosePosition(symbol, closeSide as 'BUY' | 'SELL', existing.quantity);
+        console.log(`[ENTRY] Changing direction for ${symbol}: Closing ${existing.positionType} to open ${type}.`);
+        
+        // 1. Cancel SL and any other orders first
+        await binanceCancelAllOrders(symbol);
+        
+        // 2. Close the actual position
+        const closeSide = existing.positionType === 'buy' ? 'SELL' : 'BUY';
+        const closeResp = await binanceClosePosition(symbol, closeSide as 'BUY' | 'SELL', existing.quantity);
 
-          if (binanceOrderSuccess(closeResp)) {
-            const comm = await binanceGetCommissionRate(symbol);
-            const entryCost = existing.entryPrice * existing.quantity * ((existing as any).commission ?? 0.0004);
-            const exitCost = currentPrice * existing.quantity * comm;
+        if (binanceOrderSuccess(closeResp)) {
+          const currentPrice = (await binanceGetPrice(symbol)) || existing.entryPrice;
+          const comm = await binanceGetCommissionRate(symbol);
+          const entryCost = existing.entryPrice * existing.quantity * ((existing as any).commission ?? 0.0004);
+          const exitCost = currentPrice * existing.quantity * comm;
 
-            const profitFiat = existing.positionType === 'buy'
-              ? ((currentPrice - existing.entryPrice) * existing.quantity) - entryCost - exitCost
-              : ((existing.entryPrice - currentPrice) * existing.quantity) - entryCost - exitCost;
-            
-            const profitPercent = (profitFiat / (existing.entryPrice * existing.quantity)) * 100;
+          const profitFiat = existing.positionType === 'buy'
+            ? ((currentPrice - existing.entryPrice) * existing.quantity) - entryCost - exitCost
+            : ((existing.entryPrice - currentPrice) * existing.quantity) - entryCost - exitCost;
+          
+          const profitPercent = (profitFiat / (existing.entryPrice * existing.quantity)) * 100;
 
-            await prisma.position.update({
-              where: { id: existing.id },
-              data: {
-                status: 'closed',
-                closedAt: new Date(),
-                profitLossPercent: profitPercent,
-                profitLossFiat: profitFiat,
-              },
-            });
-          } else {
-            return NextResponse.json({ error: true, message: 'Failed to close previous position' }, { status: 500 });
-          }
+          await prisma.position.update({
+            where: { id: existing.id },
+            data: {
+              status: 'closed',
+              closedAt: new Date(),
+              profitLossPercent: profitPercent,
+              profitLossFiat: profitFiat,
+            },
+          });
+          console.log(`[ENTRY] Previous position ${symbol} closed successfully.`);
+        } else {
+          const errDetail = `Error al cerrar posición previa de ${symbol} para cambio de dirección.`;
+          await saveLastEntryError(errDetail, symbol, type);
+          return NextResponse.json({ error: true, message: errDetail, detail: closeResp }, { status: 500 });
         }
       }
     }
