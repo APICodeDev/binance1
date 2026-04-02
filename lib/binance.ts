@@ -129,8 +129,15 @@ export const binancePlaceStopMarket = async (symbol: string, side: 'BUY' | 'SELL
   return binanceRequest('/fapi/v1/algoOrder', params, 'POST', true);
 };
 
+// Cancel all open algo orders (STOP_MARKET, TAKE_PROFIT, etc.) for a symbol
+// Correct endpoint: DELETE /fapi/v1/algoOpenOrders (NOT /fapi/v1/algoOrder/all)
 export const binanceCancelAlgoOrders = async (symbol: string) => {
-  return binanceRequest('/fapi/v1/algoOrder/all', { symbol: symbol.toUpperCase() }, 'DELETE', true);
+  return binanceRequest('/fapi/v1/algoOpenOrders', { symbol: symbol.toUpperCase() }, 'DELETE', true);
+};
+
+// Cancel a single algo order by algoId
+export const binanceCancelAlgoOrder = async (symbol: string, algoId: number) => {
+  return binanceRequest('/fapi/v1/algoOrder', { symbol: symbol.toUpperCase(), algoId }, 'DELETE', true);
 };
 
 export const binanceCancelAllOrders = async (symbol: string) => {
@@ -153,16 +160,31 @@ export const binanceGetCommissionRate = async (symbol: string): Promise<number> 
   return 0.0004; // Default to 0.04% if not found or error
 };
 
+export const binanceNormalizeSymbol = (symbol: string): string => {
+  let sym = symbol.toUpperCase().replace('/', '').replace('-', '');
+  if (sym && !sym.endsWith('USDT')) {
+    sym += 'USDT';
+  }
+  return sym;
+};
+
 export const formatQuantity = (quantity: number, exchangeInfo: any): string => {
   if (!exchangeInfo) return quantity.toFixed(3);
-  const stepSizeFilter = exchangeInfo.filters.find((f: any) => f.filterType === 'LOT_SIZE');
-  const stepSize = stepSizeFilter ? parseFloat(stepSizeFilter.stepSize) : 0.001;
+  
+  const lotFilter = exchangeInfo.filters.find((f: any) => f.filterType === 'LOT_SIZE');
+  const stepSize = lotFilter ? parseFloat(lotFilter.stepSize) : 0.001;
+  const maxQty = lotFilter ? parseFloat(lotFilter.maxQty) : 999999999;
+  const minQty = lotFilter ? parseFloat(lotFilter.minQty) : 0;
+  
+  let q = Math.max(minQty, Math.min(maxQty, quantity));
+  
   let precision = 0;
   let temp = stepSize;
   while (temp < 1 && temp > 0) {
     temp *= 10;
     precision++;
   }
-  const formatted = Math.floor(quantity / stepSize) * stepSize;
+  
+  const formatted = Math.floor(q / stepSize) * stepSize;
   return formatted.toFixed(precision);
 };

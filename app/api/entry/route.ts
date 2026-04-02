@@ -11,7 +11,8 @@ import {
   binanceCancelAllOrders, 
   binanceGetExchangeInfo, 
   binanceGetCommissionRate, 
-  formatQuantity 
+  formatQuantity,
+  binanceNormalizeSymbol
 } from '@/lib/binance';
 
 export async function POST(req: NextRequest) {
@@ -23,11 +24,12 @@ export async function POST(req: NextRequest) {
     } catch (parseError) {
       return NextResponse.json({ error: true, message: 'Invalid JSON syntax from webhook.' }, { status: 400 });
     }
-    const symbol = (data.symbol || '').toUpperCase();
+    const symbol = binanceNormalizeSymbol(data.symbol || '');
     let amount = parseFloat(data.amount) || 0;
     const type = (data.type || '').toLowerCase();
     const origin = data.origin ? String(data.origin) : null;
     const timeframe = data.timeframe ? String(data.timeframe) : null;
+    const incomingQuantity = parseFloat(data.quantity || data.contracts) || 0;
 
     // Check bot configuration
     const botEnabled = await prisma.setting.findUnique({ where: { key: 'bot_enabled' } });
@@ -36,12 +38,19 @@ export async function POST(req: NextRequest) {
     }
 
     const customAmountSetting = await prisma.setting.findUnique({ where: { key: 'custom_amount' } });
-    const customAmount = parseFloat(customAmountSetting?.value || '0');
+    const customAmount = parseFloat(String(customAmountSetting?.value || '0').replace(/[^0-9.]/g, ''));
     if (customAmount > 0) {
       amount = customAmount;
     }
 
-    if (!symbol || amount <= 0 || !['buy', 'sell'].includes(type)) {
+    // Safety check for outrageous amounts (e.g. phone numbers pasted by mistake)
+    if (amount > 1000000) {
+      const errDetail = `Amount ${amount} USDT seems way too high. Limit is 1,000,000 for safety.`;
+      await saveLastEntryError(errDetail, symbol, type);
+      return NextResponse.json({ error: true, message: 'Invest amount exceeded safety limits.' }, { status: 400 });
+    }
+
+    if (!symbol || (amount <= 0 && incomingQuantity <= 0) || !['buy', 'sell'].includes(type)) {
       return NextResponse.json({ error: true, message: 'Invalid parameters' }, { status: 400 });
     }
 
@@ -98,10 +107,27 @@ export async function POST(req: NextRequest) {
 
     const exchangeInfo = await binanceGetExchangeInfo(symbol);
     const commission = await binanceGetCommissionRate(symbol);
-    const quantityRaw = amount / price;
+    
+    let quantityRaw = 0;
+    if (incomingQuantity > 0) {
+      quantityRaw = incomingQuantity;
+    } else {
+      quantityRaw = amount / price;
+    }
+    
+    if (isNaN(quantityRaw) || quantityRaw <= 0) {
+      const errDetail = `Invalid quantity calculated: ${quantityRaw}. Amount: ${amount}, Price: ${price}`;
+      await saveLastEntryError(errDetail, symbol, type);
+      return NextResponse.json({ error: true, message: 'Calculation error' }, { status: 500 });
+    }
+
     const quantityFormatted = parseFloat(formatQuantity(quantityRaw, exchangeInfo));
 
     const side = type === 'buy' ? 'BUY' : 'SELL';
+
+    // Ensure clean slate before opening: cancel any previous orders (orphan or intentional)
+    await binanceCancelAllOrders(symbol);
+
     const orderResponse = await binancePlaceMarketOrder(symbol, side, quantityFormatted);
 
     if (!binanceOrderSuccess(orderResponse)) {

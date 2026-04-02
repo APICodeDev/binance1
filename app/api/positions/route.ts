@@ -1,4 +1,4 @@
-// app/api/positions/route.ts
+// app/api/positions/route.ts  
 export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';

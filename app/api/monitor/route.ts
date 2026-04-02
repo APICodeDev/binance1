@@ -6,6 +6,7 @@ import {
   binanceGetPrice, 
   binanceGetPositions, 
   binanceCancelAllOrders, 
+  binanceCancelAlgoOrders,
   binanceOrderSuccess, 
   binanceClosePosition, 
   binancePlaceStopMarket,
@@ -87,30 +88,49 @@ export async function GET() {
     let newSl = pos.stopLoss;
     let slTriggered = false;
 
+    // Trailing SL logic (Staircase)
+    let targetProfitSlPercent: number | null = null;
+    if (profitPercent >= 0.5) {
+      // 0.5% -> 0.0%, 1.0% -> 0.5%, 1.5% -> 1.0%, ...
+      targetProfitSlPercent = Math.floor(profitPercent / 0.5) * 0.5 - 0.5;
+    }
+
     if (pos.positionType === 'buy') {
-      const bePrice = pos.entryPrice * (1 + comm) / (1 - comm);
       if (currentPrice <= pos.stopLoss) {
         slTriggered = true;
-      } else if (profitPercent >= 0.5) {
-        const suggestedSl = currentPrice * (1 - 0.005);
-        const targetSl = Math.max(bePrice, suggestedSl);
-        if (targetSl > pos.stopLoss) {
-          newSl = targetSl;
-          await binanceCancelAllOrders(symbol);
-          await binancePlaceStopMarket(symbol, 'SELL', newSl, pos.quantity);
+      } else if (targetProfitSlPercent !== null) {
+        // Calculate price that gives targetProfitSlPercent for a BUY position
+        const targetSlPrice = pos.entryPrice * (targetProfitSlPercent / 100 + 1 + ((pos as any).commission ?? 0.0004)) / (1 - comm);
+        
+        if (targetSlPrice > pos.stopLoss) {
+          // Cancel existing SL algo orders first, then place the new SL
+          await binanceCancelAlgoOrders(symbol);
+          const slResp = await binancePlaceStopMarket(symbol, 'SELL', targetSlPrice, pos.quantity);
+          if (binanceOrderSuccess(slResp)) {
+            newSl = targetSlPrice;
+            results.push(`TRAILING_SL: Profit=${profitPercent.toFixed(2)}% | SL moved to ${targetProfitSlPercent}% (${newSl.toFixed(6)})`);
+          } else {
+            results.push(`ERROR_SL: Failed to move SL for ${symbol} on Binance. Resp: ${JSON.stringify(slResp)}`);
+          }
         }
       }
     } else { // short
-      const bePrice = pos.entryPrice * (1 - comm) / (1 + comm);
       if (currentPrice >= pos.stopLoss) {
         slTriggered = true;
-      } else if (profitPercent >= 0.5) {
-        const suggestedSl = currentPrice * (1 + 0.005);
-        const targetSl = Math.min(bePrice, suggestedSl);
-        if (targetSl < pos.stopLoss) {
-          newSl = targetSl;
-          await binanceCancelAllOrders(symbol);
-          await binancePlaceStopMarket(symbol, 'BUY', newSl, pos.quantity);
+      } else if (targetProfitSlPercent !== null) {
+        // Calculate price that gives targetProfitSlPercent for a SELL position
+        const targetSlPrice = pos.entryPrice * (1 - ((pos as any).commission ?? 0.0004) - (targetProfitSlPercent / 100)) / (1 + comm);
+
+        if (targetSlPrice < pos.stopLoss) {
+          // Cancel existing SL algo orders first, then place the new SL
+          await binanceCancelAlgoOrders(symbol);
+          const slResp = await binancePlaceStopMarket(symbol, 'BUY', targetSlPrice, pos.quantity);
+          if (binanceOrderSuccess(slResp)) {
+            newSl = targetSlPrice;
+            results.push(`TRAILING_SL: Profit=${profitPercent.toFixed(2)}% | SL moved to ${targetProfitSlPercent}% (${newSl.toFixed(6)})`);
+          } else {
+            results.push(`ERROR_SL: Failed to move SL for ${symbol} on Binance. Resp: ${JSON.stringify(slResp)}`);
+          }
         }
       }
     }
