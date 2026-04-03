@@ -6,7 +6,8 @@ import {
   binanceGetPrice, 
   binanceCancelAllOrders, 
   binanceClosePosition, 
-  binanceOrderSuccess 
+  binanceOrderSuccess,
+  binanceGetCommissionRate
 } from '@/lib/binance';
 
 export async function POST() {
@@ -14,24 +15,30 @@ export async function POST() {
   const results: string[] = [];
 
   for (const pos of openPositions) {
+    const mode = ((pos as any).tradingMode || 'demo') as 'demo' | 'live';
     const symbol = pos.symbol.toUpperCase();
-    const currentPrice = await binanceGetPrice(symbol);
+    const currentPrice = await binanceGetPrice(symbol, mode);
     if (!currentPrice) {
-      results.push(`Error fetching price for ${symbol}`);
+      results.push(`Error fetching price for ${symbol} in ${mode}`);
       continue;
     }
 
+    const comm = await binanceGetCommissionRate(symbol, mode);
+    const entryComm = (pos as any).commission ?? 0.0004;
+
     const closeSide = pos.positionType === 'buy' ? 'SELL' : 'BUY';
-    await binanceCancelAllOrders(symbol);
-    const closeResp = await binanceClosePosition(symbol, closeSide, pos.quantity);
+    await binanceCancelAllOrders(symbol, mode);
+    const closeResp = await binanceClosePosition(symbol, closeSide, pos.quantity, mode);
 
     if (binanceOrderSuccess(closeResp)) {
-        const profitPercent = pos.positionType === 'buy'
-            ? ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100
-            : ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100;
-        const profitFiat = pos.positionType === 'buy'
-            ? (currentPrice - pos.entryPrice) * pos.quantity
-            : (pos.entryPrice - currentPrice) * pos.quantity;
+      const entryCost = pos.entryPrice * pos.quantity * entryComm;
+      const exitCost = currentPrice * pos.quantity * comm;
+
+      const profitFiat = pos.positionType === 'buy'
+        ? ((currentPrice - pos.entryPrice) * pos.quantity) - entryCost - exitCost
+        : ((pos.entryPrice - currentPrice) * pos.quantity) - entryCost - exitCost;
+      
+      const profitPercent = (profitFiat / (pos.entryPrice * pos.quantity)) * 100;
 
       await prisma.position.update({
         where: { id: pos.id },
@@ -42,9 +49,9 @@ export async function POST() {
           profitLossFiat: profitFiat,
         },
       });
-      results.push(`Successfully closed #${pos.id} (${symbol})`);
+      results.push(`Successfully closed #${pos.id} (${symbol}) in ${mode}`);
     } else {
-      results.push(`Failed to close #${pos.id} (${symbol})`);
+      results.push(`Failed to close #${pos.id} (${symbol}) in ${mode}`);
     }
   }
 

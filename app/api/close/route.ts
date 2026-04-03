@@ -13,30 +13,27 @@ import {
 export async function POST(req: NextRequest) {
   try {
     const { id } = await req.json();
-    console.log('MANUAL CLOSE REQUEST:', id);
     if (!id) return NextResponse.json({ error: true, message: 'ID required' }, { status: 400 });
 
     const pos = await prisma.position.findUnique({ where: { id: Number(id) } });
     if (!pos || pos.status !== 'open') {
-      console.log('POSITION NOT FOUND OR ALREADY CLOSED:', id);
-      return NextResponse.json({ error: true, message: 'Position not found or already closed (ID: ' + id + ')' }, { status: 404 });
+      return NextResponse.json({ error: true, message: 'Position not found or already closed' }, { status: 404 });
     }
 
+    const mode = ((pos as any).tradingMode || 'demo') as 'demo' | 'live';
     const symbol = pos.symbol.toUpperCase();
-    console.log('MANUAL CLOSE SYMBOL:', symbol, 'QUANTITY:', pos.quantity);
-    const currentPrice = await binanceGetPrice(symbol);
+    
+    const currentPrice = await binanceGetPrice(symbol, mode);
     if (!currentPrice) return NextResponse.json({ error: true, message: 'Failed to fetch price' }, { status: 500 });
     
-    // Fetch live commission for exit
-    const exitComm = await binanceGetCommissionRate(symbol);
+    const exitComm = await binanceGetCommissionRate(symbol, mode);
     const entryComm = (pos as any).commission ?? 0.0004;
 
     const closeSide = pos.positionType === 'buy' ? 'SELL' : 'BUY';
-    await binanceCancelAllOrders(symbol);
-    const closeResp = await binanceClosePosition(symbol, closeSide, pos.quantity);
+    await binanceCancelAllOrders(symbol, mode);
+    const closeResp = await binanceClosePosition(symbol, closeSide, pos.quantity, mode);
 
     if (binanceOrderSuccess(closeResp)) {
-      console.log('BINANCE CLOSE SUCCESS:', symbol);
       const entryCost = pos.entryPrice * pos.quantity * entryComm;
       const exitCost = currentPrice * pos.quantity * exitComm;
 
@@ -46,7 +43,7 @@ export async function POST(req: NextRequest) {
       
       const profitPercent = (profitFiat / (pos.entryPrice * pos.quantity)) * 100;
 
-      await (prisma.position.update as any)({
+      await prisma.position.update({
         where: { id: pos.id },
         data: {
           status: 'closed',
@@ -56,13 +53,11 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      return NextResponse.json({ success: true, message: `Position ${symbol} ejected manually.` });
+      return NextResponse.json({ success: true, message: `Position ejected in ${mode}.` });
     } else {
-      console.error('BINANCE CLOSE FAILED:', JSON.stringify(closeResp));
       return NextResponse.json({ error: true, message: 'Binance close failed', details: closeResp }, { status: 500 });
     }
   } catch (error: any) {
-    console.error('MANUAL CLOSE ERROR:', error.message);
     return NextResponse.json({ error: true, message: error.message }, { status: 500 });
   }
 }

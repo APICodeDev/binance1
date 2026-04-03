@@ -17,6 +17,7 @@ model Position {
   entryPrice           Float     @map("entry_price")
   stopLoss             Float     @map("stop_loss")
   status               String    @default("open") // 'open' or 'closed'
+  tradingMode          String    @default("demo") @map("trading_mode") // 'demo' or 'live'
   profitLossPercent    Float?    @default(0) @map("profit_loss_percent")
   profitLossFiat       Float?    @default(0) @map("profit_loss_fiat")
   createdAt            DateTime  @default(now()) @map("created_at")
@@ -27,6 +28,7 @@ model Position {
 
   @@map("positions")
 }
+
 
 model Setting {
   key   String @id

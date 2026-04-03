@@ -15,6 +15,8 @@ import {
   binanceNormalizeSymbol
 } from '@/lib/binance';
 
+type TradingMode = 'demo' | 'live';
+
 export async function POST(req: NextRequest) {
   try {
     let data;
@@ -37,50 +39,67 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, message: 'Bot disabled' });
     }
 
+    // Fetch active trading mode
+    const modeSetting = await prisma.setting.findUnique({ where: { key: 'trading_mode' } });
+    const tradingMode = (modeSetting?.value || 'demo') as TradingMode;
+
     const customAmountSetting = await prisma.setting.findUnique({ where: { key: 'custom_amount' } });
     const customAmount = parseFloat(String(customAmountSetting?.value || '0').replace(/[^0-9.]/g, ''));
     if (customAmount > 0) {
       amount = customAmount;
     }
 
-    // Safety check for outrageous amounts (e.g. phone numbers pasted by mistake)
-    if (amount > 1000000) {
-      const errDetail = `Amount ${amount} USDT seems way too high. Limit is 1,000,000 for safety.`;
-      await saveLastEntryError(errDetail, symbol, type);
-      return NextResponse.json({ error: true, message: 'Invest amount exceeded safety limits.' }, { status: 400 });
-    }
-
     if (!symbol || (amount <= 0 && incomingQuantity <= 0) || !['buy', 'sell'].includes(type)) {
       return NextResponse.json({ error: true, message: 'Invalid parameters' }, { status: 400 });
     }
 
-    // Logic for entry/change of direction
+    // USDC/USDT Logic for LIVE mode
+    if (tradingMode === 'live') {
+      if (symbol.endsWith('USDT')) {
+        const errDetail = `Modo LIVE detectado: El par ${symbol} (USDT) no está permitido. Solo se admite USDC.`;
+        await saveLastEntryError(errDetail, symbol, type);
+        return NextResponse.json({ 
+          error: true, 
+          message: 'USDT symbols are forbidden in LIVE mode. Use USDC pairs.',
+          detail: errDetail 
+        }, { status: 400 });
+      }
+      if (!symbol.endsWith('USDC')) {
+        const errDetail = `Modo LIVE detectado: El par ${symbol} debe ser un par USDC.`;
+        await saveLastEntryError(errDetail, symbol, type);
+        return NextResponse.json({ 
+          error: true, 
+          message: 'Only USDC pairs are allowed in LIVE mode.',
+          detail: errDetail 
+        }, { status: 400 });
+      }
+    }
+
+    // Logic for entry/change of direction (within same mode)
     const existing = await prisma.position.findFirst({
-      where: { symbol, status: 'open' },
+      where: { symbol, status: 'open', tradingMode } as any,
     });
 
     if (existing) {
       if (existing.positionType === type) {
-        // Requirement: If same direction, ignore completely.
-        console.log(`[ENTRY] Ignoring signal for ${symbol}: Position in direction ${type} is already open.`);
+        console.log(`[ENTRY] [${tradingMode}] Ignoring signal for ${symbol}: Position in direction ${type} is already open.`);
         return NextResponse.json({ 
           success: true, 
-          message: `Ignorada: Ya existe una posición abierta en dirección ${type} para ${symbol}. No se han realizado cambios.` 
+          message: `Ignorada (${tradingMode}): Ya existe una posición abierta en dirección ${type} para ${symbol}.` 
         });
       } else {
-        // Change direction: Close current and continue
-        console.log(`[ENTRY] Changing direction for ${symbol}: Closing ${existing.positionType} to open ${type}.`);
+        console.log(`[ENTRY] [${tradingMode}] Changing direction for ${symbol}: Closing ${existing.positionType} to open ${type}.`);
         
         // 1. Cancel SL and any other orders first
-        await binanceCancelAllOrders(symbol);
+        await binanceCancelAllOrders(symbol, tradingMode);
         
         // 2. Close the actual position
         const closeSide = existing.positionType === 'buy' ? 'SELL' : 'BUY';
-        const closeResp = await binanceClosePosition(symbol, closeSide as 'BUY' | 'SELL', existing.quantity);
+        const closeResp = await binanceClosePosition(symbol, closeSide as 'BUY' | 'SELL', existing.quantity, tradingMode);
 
         if (binanceOrderSuccess(closeResp)) {
-          const currentPrice = (await binanceGetPrice(symbol)) || existing.entryPrice;
-          const comm = await binanceGetCommissionRate(symbol);
+          const currentPrice = (await binanceGetPrice(symbol, tradingMode)) || existing.entryPrice;
+          const comm = await binanceGetCommissionRate(symbol, tradingMode);
           const entryCost = existing.entryPrice * existing.quantity * ((existing as any).commission ?? 0.0004);
           const exitCost = currentPrice * existing.quantity * comm;
 
@@ -99,9 +118,9 @@ export async function POST(req: NextRequest) {
               profitLossFiat: profitFiat,
             },
           });
-          console.log(`[ENTRY] Previous position ${symbol} closed successfully.`);
+          console.log(`[ENTRY] [${tradingMode}] Previous position ${symbol} closed successfully.`);
         } else {
-          const errDetail = `Error al cerrar posición previa de ${symbol} para cambio de dirección.`;
+          const errDetail = `Error al cerrar posición previa de ${symbol} en ${tradingMode} para cambio de dirección.`;
           await saveLastEntryError(errDetail, symbol, type);
           return NextResponse.json({ error: true, message: errDetail, detail: closeResp }, { status: 500 });
         }
@@ -109,15 +128,15 @@ export async function POST(req: NextRequest) {
     }
 
     // Open new position
-    const price = await binanceGetPrice(symbol);
+    const price = await binanceGetPrice(symbol, tradingMode);
     if (!price) {
-      const errDetail = `No se pudo obtener el precio de ${symbol} desde Binance.`;
+      const errDetail = `No se pudo obtener el precio de ${symbol} desde Binance (${tradingMode}).`;
       await saveLastEntryError(errDetail, symbol, type);
       return NextResponse.json({ error: true, message: errDetail }, { status: 500 });
     }
 
-    const exchangeInfo = await binanceGetExchangeInfo(symbol);
-    const commission = await binanceGetCommissionRate(symbol);
+    const exchangeInfo = await binanceGetExchangeInfo(symbol, tradingMode);
+    const commission = await binanceGetCommissionRate(symbol, tradingMode);
     
     let quantityRaw = 0;
     if (incomingQuantity > 0) {
@@ -133,18 +152,17 @@ export async function POST(req: NextRequest) {
     }
 
     const quantityFormatted = parseFloat(formatQuantity(quantityRaw, exchangeInfo));
-
     const side = type === 'buy' ? 'BUY' : 'SELL';
 
-    // Ensure clean slate before opening: cancel any previous orders (orphan or intentional)
-    await binanceCancelAllOrders(symbol);
+    // Ensure clean slate before opening
+    await binanceCancelAllOrders(symbol, tradingMode);
 
-    const orderResponse = await binancePlaceMarketOrder(symbol, side, quantityFormatted);
+    const orderResponse = await binancePlaceMarketOrder(symbol, side, quantityFormatted, tradingMode);
 
     if (!binanceOrderSuccess(orderResponse)) {
       const binanceMsg = orderResponse?.msg || orderResponse?.message || JSON.stringify(orderResponse);
       const binanceCode = orderResponse?.code ?? 'N/A';
-      const errDetail = `Binance rechazó la orden MARKET ${side} ${quantityFormatted} ${symbol}. Código: ${binanceCode} — ${binanceMsg}`;
+      const errDetail = `Binance (${tradingMode}) rechazó la orden MARKET ${side} ${quantityFormatted} ${symbol}. Código: ${binanceCode} — ${binanceMsg}`;
       await saveLastEntryError(errDetail, symbol, type);
       return NextResponse.json({ error: true, message: 'Failed to open position', detail: errDetail, binance: orderResponse }, { status: 500 });
     }
@@ -156,14 +174,14 @@ export async function POST(req: NextRequest) {
     const stopPrice = type === 'buy' ? entryPrice * (1 - slPercent) : entryPrice * (1 + slPercent);
     const slSide = type === 'buy' ? 'SELL' : 'BUY';
 
-    const slResponse = await binancePlaceStopMarket(symbol, slSide as 'BUY' | 'SELL', stopPrice, quantityFormatted);
+    const slResponse = await binancePlaceStopMarket(symbol, slSide as 'BUY' | 'SELL', stopPrice, quantityFormatted, tradingMode);
 
     if (!binanceOrderSuccess(slResponse)) {
       // Rollback
-      await binanceClosePosition(symbol, side as 'BUY' | 'SELL', quantityFormatted);
+      await binanceClosePosition(symbol, side as 'BUY' | 'SELL', quantityFormatted, tradingMode);
       const slMsg = slResponse?.msg || slResponse?.message || JSON.stringify(slResponse);
       const slCode = slResponse?.code ?? 'N/A';
-      const errDetail = `SL rechazado por Binance para ${symbol}. Código: ${slCode} — ${slMsg}. Rollback ejecutado.`;
+      const errDetail = `SL rechazado por Binance (${tradingMode}) para ${symbol}. Rollback ejecutado.`;
       await saveLastEntryError(errDetail, symbol, type);
       return NextResponse.json({ error: true, message: 'Failed to place SL, rolled back', detail: errDetail, binance: slResponse }, { status: 500 });
     }
@@ -178,6 +196,7 @@ export async function POST(req: NextRequest) {
         entryPrice,
         stopLoss: stopPrice,
         status: 'open',
+        tradingMode,
         origin,
         timeframe,
         commission: commission as any,
@@ -191,7 +210,7 @@ export async function POST(req: NextRequest) {
       create: { key: 'last_entry_error', value: '' },
     });
 
-    return NextResponse.json({ success: true, message: `Position # opened for ${symbol}` });
+    return NextResponse.json({ success: true, message: `Position opened in ${tradingMode} for ${symbol}` });
   } catch (error: any) {
     const errDetail = `Excepción inesperada: ${error.message}`;
     try { await saveLastEntryError(errDetail, 'N/A', 'N/A'); } catch (_) {}

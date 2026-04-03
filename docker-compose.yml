@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  binance-bot:
+    build: .
+    container_name: binance-trading-bot
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    restart: always

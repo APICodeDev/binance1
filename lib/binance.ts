@@ -2,26 +2,40 @@
 import axios from 'axios';
 import crypto from 'crypto';
 
-const BINANCE_API_KEY = process.env.BINANCE_API_KEY || '';
-const BINANCE_SECRET_KEY = process.env.BINANCE_SECRET_KEY || '';
-const BINANCE_BASE_URL = process.env.BINANCE_BASE_URL || 'https://testnet.binancefuture.com';
+const BINANCE_DEMO_API_KEY = process.env.BINANCE_API_KEY || '';
+const BINANCE_DEMO_SECRET_KEY = process.env.BINANCE_SECRET_KEY || '';
+const BINANCE_DEMO_BASE_URL = process.env.BINANCE_BASE_URL || 'https://testnet.binancefuture.com';
 
-const binanceRequest = async (endpoint: string, params: Record<string, any> = {}, method: 'GET' | 'POST' | 'DELETE' = 'GET', signed = false) => {
+const BINANCE_LIVE_API_KEY = process.env.BINANCE_LIVE_API_KEY || '';
+const BINANCE_LIVE_SECRET_KEY = process.env.BINANCE_LIVE_SECRET_KEY || '';
+const BINANCE_LIVE_BASE_URL = process.env.BINANCE_LIVE_BASE_URL || 'https://fapi.binance.com';
+
+const binanceRequest = async (
+  endpoint: string, 
+  params: Record<string, any> = {}, 
+  method: 'GET' | 'POST' | 'DELETE' = 'GET', 
+  signed = false,
+  tradingMode: 'demo' | 'live' = 'demo'
+) => {
+  const apiKey = tradingMode === 'live' ? BINANCE_LIVE_API_KEY : BINANCE_DEMO_API_KEY;
+  const secretKey = tradingMode === 'live' ? BINANCE_LIVE_SECRET_KEY : BINANCE_DEMO_SECRET_KEY;
+  const baseUrl = tradingMode === 'live' ? BINANCE_LIVE_BASE_URL : BINANCE_DEMO_BASE_URL;
+
   if (signed) {
     params.timestamp = Date.now().toString();
     const query = new URLSearchParams(params).toString();
-    const signature = crypto.createHmac('sha256', BINANCE_SECRET_KEY).update(query).digest('hex');
+    const signature = crypto.createHmac('sha256', secretKey).update(query).digest('hex');
     params.signature = signature;
   }
 
-  const url = `${BINANCE_BASE_URL}${endpoint}`;
+  const url = `${baseUrl}${endpoint}`;
   const query = new URLSearchParams(params).toString();
   
   const headers: Record<string, string> = {
     'Content-Type': 'application/x-www-form-urlencoded',
   };
   if (signed) {
-    headers['X-MBX-APIKEY'] = BINANCE_API_KEY;
+    headers['X-MBX-APIKEY'] = apiKey;
   }
 
   try {
@@ -34,23 +48,23 @@ const binanceRequest = async (endpoint: string, params: Record<string, any> = {}
     });
     return response.data;
   } catch (error: any) {
-    console.error(`Binance API Error: ${method} ${endpoint}`, error.response?.data || error.message);
+    console.error(`Binance API Error (${tradingMode}): ${method} ${endpoint}`, error.response?.data || error.message);
     return error.response?.data || { error: true, message: error.message };
   }
 };
 
-export const binanceGetPrice = async (symbol: string): Promise<number | false> => {
-  const response = await binanceRequest('/fapi/v1/ticker/price', { symbol: symbol.toUpperCase() });
+export const binanceGetPrice = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo'): Promise<number | false> => {
+  const response = await binanceRequest('/fapi/v1/ticker/price', { symbol: symbol.toUpperCase() }, 'GET', false, tradingMode);
   return response?.price ? parseFloat(response.price) : false;
 };
 
-export const binancePlaceMarketOrder = async (symbol: string, side: 'BUY' | 'SELL', quantity: number) => {
+export const binancePlaceMarketOrder = async (symbol: string, side: 'BUY' | 'SELL', quantity: number, tradingMode: 'demo' | 'live' = 'demo') => {
   return binanceRequest('/fapi/v1/order', {
     symbol: symbol.toUpperCase(),
     side,
     type: 'MARKET',
     quantity,
-  }, 'POST', true);
+  }, 'POST', true, tradingMode);
 };
 
 export const binanceOrderSuccess = (resp: any) => {
@@ -63,7 +77,7 @@ export const binanceOrderSuccess = (resp: any) => {
   return false;
 };
 
-export const binanceClosePosition = async (symbol: string, side: 'BUY' | 'SELL', quantity: number) => {
+export const binanceClosePosition = async (symbol: string, side: 'BUY' | 'SELL', quantity: number, tradingMode: 'demo' | 'live' = 'demo') => {
   const sym = symbol.toUpperCase();
   // Attempt 1: with reduceOnly=true
   let resp = await binanceRequest('/fapi/v1/order', {
@@ -72,7 +86,7 @@ export const binanceClosePosition = async (symbol: string, side: 'BUY' | 'SELL',
     type: 'MARKET',
     quantity,
     reduceOnly: 'true',
-  }, 'POST', true);
+  }, 'POST', true, tradingMode);
 
   if (binanceOrderSuccess(resp)) return resp;
 
@@ -83,18 +97,18 @@ export const binanceClosePosition = async (symbol: string, side: 'BUY' | 'SELL',
       side,
       type: 'MARKET',
       quantity,
-    }, 'POST', true);
+    }, 'POST', true, tradingMode);
   }
   return resp;
 };
 
-export const binanceGetPositions = async () => {
-  const response = await binanceRequest('/fapi/v2/positionRisk', {}, 'GET', true);
+export const binanceGetPositions = async (tradingMode: 'demo' | 'live' = 'demo') => {
+  const response = await binanceRequest('/fapi/v2/positionRisk', {}, 'GET', true, tradingMode);
   return Array.isArray(response) && !response.hasOwnProperty('code') ? response : [];
 };
 
-export const binanceGetPricePrecision = async (symbol: string): Promise<number> => {
-  const response = await binanceRequest('/fapi/v1/exchangeInfo');
+export const binanceGetPricePrecision = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo'): Promise<number> => {
+  const response = await binanceRequest('/fapi/v1/exchangeInfo', {}, 'GET', false, tradingMode);
   if (response?.symbols) {
     const s = response.symbols.find((s: any) => s.symbol === symbol.toUpperCase());
     if (s) {
@@ -113,8 +127,8 @@ export const binanceGetPricePrecision = async (symbol: string): Promise<number> 
   return 2;
 };
 
-export const binancePlaceStopMarket = async (symbol: string, side: 'BUY' | 'SELL', stopPrice: number, quantity?: number) => {
-  const precision = await binanceGetPricePrecision(symbol);
+export const binancePlaceStopMarket = async (symbol: string, side: 'BUY' | 'SELL', stopPrice: number, quantity?: number, tradingMode: 'demo' | 'live' = 'demo') => {
+  const precision = await binanceGetPricePrecision(symbol, tradingMode);
   const params: any = {
     symbol: symbol.toUpperCase(),
     side,
@@ -126,34 +140,33 @@ export const binancePlaceStopMarket = async (symbol: string, side: 'BUY' | 'SELL
   if (quantity) params.quantity = quantity;
   else params.closePosition = 'true';
 
-  return binanceRequest('/fapi/v1/algoOrder', params, 'POST', true);
+  return binanceRequest('/fapi/v1/algoOrder', params, 'POST', true, tradingMode);
 };
 
-// Cancel all open algo orders (STOP_MARKET, TAKE_PROFIT, etc.) for a symbol
-// Correct endpoint: DELETE /fapi/v1/algoOpenOrders (NOT /fapi/v1/algoOrder/all)
-export const binanceCancelAlgoOrders = async (symbol: string) => {
-  return binanceRequest('/fapi/v1/algoOpenOrders', { symbol: symbol.toUpperCase() }, 'DELETE', true);
+// Cancel all open algo orders for a symbol
+export const binanceCancelAlgoOrders = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo') => {
+  return binanceRequest('/fapi/v1/algoOpenOrders', { symbol: symbol.toUpperCase() }, 'DELETE', true, tradingMode);
 };
 
 // Cancel a single algo order by algoId
-export const binanceCancelAlgoOrder = async (symbol: string, algoId: number) => {
-  return binanceRequest('/fapi/v1/algoOrder', { symbol: symbol.toUpperCase(), algoId }, 'DELETE', true);
+export const binanceCancelAlgoOrder = async (symbol: string, algoId: number, tradingMode: 'demo' | 'live' = 'demo') => {
+  return binanceRequest('/fapi/v1/algoOrder', { symbol: symbol.toUpperCase(), algoId }, 'DELETE', true, tradingMode);
 };
 
-export const binanceCancelAllOrders = async (symbol: string) => {
+export const binanceCancelAllOrders = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo') => {
   const sym = symbol.toUpperCase();
-  const r1 = await binanceRequest('/fapi/v1/allOpenOrders', { symbol: sym }, 'DELETE', true);
-  const r2 = await binanceCancelAlgoOrders(sym);
+  const r1 = await binanceRequest('/fapi/v1/allOpenOrders', { symbol: sym }, 'DELETE', true, tradingMode);
+  const r2 = await binanceCancelAlgoOrders(sym, tradingMode);
   return { normal: r1, algo: r2 };
 };
 
-export const binanceGetExchangeInfo = async (symbol: string) => {
-  const response = await binanceRequest('/fapi/v1/exchangeInfo');
+export const binanceGetExchangeInfo = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo') => {
+  const response = await binanceRequest('/fapi/v1/exchangeInfo', {}, 'GET', false, tradingMode);
   return response?.symbols?.find((s: any) => s.symbol === symbol.toUpperCase()) || null;
 };
 
-export const binanceGetCommissionRate = async (symbol: string): Promise<number> => {
-  const response = await binanceRequest('/fapi/v1/commissionRate', { symbol: symbol.toUpperCase() }, 'GET', true);
+export const binanceGetCommissionRate = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo'): Promise<number> => {
+  const response = await binanceRequest('/fapi/v1/commissionRate', { symbol: symbol.toUpperCase() }, 'GET', true, tradingMode);
   if (response && response.takerCommissionRate) {
     return parseFloat(response.takerCommissionRate);
   }
