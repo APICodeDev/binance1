@@ -267,14 +267,14 @@ export default function Dashboard() {
           <motion.svg 
             animate={{ y: [0, -15, 0], scale: [1, 1.05, 1] }} 
             transition={{ duration: 1, ease: "easeInOut", repeat: Infinity }}
-            className="w-[100px] h-[100px] mb-5 text-yellow-400" 
+            className="w-[100px] h-[100px] mb-5 text-cyan-400" 
             viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
           >
               <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
               <polyline points="2 17 12 22 22 17"></polyline>
               <polyline points="2 12 12 17 22 12"></polyline>
           </motion.svg>
-          <h1 className="text-[40px] font-black tracking-[2px] m-0">TRADE<span className="text-yellow-400">BOT</span></h1>
+          <h1 className="text-[40px] font-black tracking-[2px] m-0">TRADE<span className="text-cyan-400">BOT</span></h1>
           <div className="mt-2.5 text-base text-slate-400 tracking-[4px] uppercase">System Initializing</div>
         </motion.div>
       </div>
@@ -292,7 +292,7 @@ export default function Dashboard() {
           <div className="flex items-center gap-4">
             <div className={cn(
               "w-12 h-12 rounded-xl flex items-center justify-center shadow-lg shadow-inner rotate-3 transition-colors",
-              tradingMode === 'live' ? "bg-rose-500 shadow-rose-500/20" : "bg-yellow-400 shadow-yellow-400/20"
+              tradingMode === 'live' ? "bg-rose-500 shadow-rose-500/20" : "bg-cyan-400 shadow-cyan-400/20"
             )}>
               <Activity className="text-slate-900 w-8 h-8" />
             </div>
@@ -301,7 +301,7 @@ export default function Dashboard() {
                 {tradingMode === 'live' ? (
                   <>LIVE<span className="text-rose-500">TRADING</span></>
                 ) : (
-                  <>BINANCE<span className="text-yellow-400">SYNC</span></>
+                  <>BITGET<span className="text-cyan-400">SYNC</span></>
                 )}
               </h1>
               <p className="text-xs text-slate-400 font-medium uppercase tracking-[0.2em]">Automated Trading Command Center</p>
@@ -360,7 +360,7 @@ export default function Dashboard() {
                   placeholder="Auto (JSON)"
                   value={customAmount}
                   onChange={(e) => saveCustomAmount(e.target.value)}
-                  className="bg-transparent border-none text-sm font-black text-yellow-400 w-28 outline-none placeholder:text-slate-700 p-0 m-0"
+                  className="bg-transparent border-none text-sm font-black text-cyan-400 w-28 outline-none placeholder:text-slate-700 p-0 m-0"
                 />
               </div>
             </div>
@@ -387,7 +387,7 @@ export default function Dashboard() {
               onClick={() => setShowModal(true)}
               className={cn(
                 "p-3 md:px-6 md:py-3 rounded-xl font-black flex items-center justify-center gap-2 transition-all transform hover:scale-105 active:scale-95 shadow-lg",
-                "bg-yellow-400 hover:bg-yellow-300 text-slate-950 shadow-yellow-400/20"
+                "bg-cyan-400 hover:bg-cyan-300 text-slate-950 shadow-cyan-400/20"
               )}
             >
               {tradingMode === 'live' ? <Zap size={22} className="md:w-5 md:h-5" /> : <Plus size={22} className="md:w-5 md:h-5" />}
@@ -432,7 +432,7 @@ export default function Dashboard() {
 
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-black flex items-center gap-3 text-slate-300">
-                <Activity className={cn(tradingMode === 'live' ? "text-rose-500" : "text-yellow-400")} /> ACTIVE POSITIONS ({tradingMode.toUpperCase()})
+                <Activity className={cn(tradingMode === 'live' ? "text-rose-500" : "text-cyan-400")} /> ACTIVE POSITIONS ({tradingMode.toUpperCase()})
                 <span className="bg-slate-800 text-[10px] py-1 px-3 rounded-full text-white">{openPositions.length}</span>
                 {syncing && <RefreshCw size={14} className="animate-spin text-blue-400 ml-2" />}
               </h2>
@@ -621,11 +621,11 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
                 className="bg-slate-900 border border-slate-700 w-full max-w-md rounded-[2rem] p-8 shadow-2xl relative overflow-hidden"
               >
                 {/* Background accent */}
-                <div className="absolute top-0 right-0 w-32 h-32 bg-yellow-400/10 blur-3xl -z-10 rounded-full" />
+                <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-400/10 blur-3xl -z-10 rounded-full" />
                 <div className="absolute bottom-0 left-0 w-32 h-32 bg-blue-400/10 blur-3xl -z-10 rounded-full" />
 
                 <h3 className="text-2xl font-black italic tracking-tighter mb-8 flex items-center gap-3">
-                  <ShieldCheck className={tradingMode === 'live' ? "text-rose-500" : "text-yellow-400"} /> DEPLOY {tradingMode.toUpperCase()} SIGNAL
+                  <ShieldCheck className={tradingMode === 'live' ? "text-rose-500" : "text-cyan-400"} /> DEPLOY {tradingMode.toUpperCase()} SIGNAL
                 </h3>
 
                 <div className="space-y-6">
@@ -635,7 +635,7 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
                       <input 
                         type="text" 
                         placeholder={tradingMode === 'live' ? "BTCUSDC" : "BTCUSDT"} 
-                        className="w-full bg-slate-950/50 border border-slate-700 p-4 rounded-2xl outline-none focus:border-yellow-400 transition-colors placeholder:text-slate-700 font-black"
+                        className="w-full bg-slate-950/50 border border-slate-700 p-4 rounded-2xl outline-none focus:border-cyan-400 transition-colors placeholder:text-slate-700 font-black"
                         value={newPos.symbol}
                         onChange={(e) => setNewPos({...newPos, symbol: e.target.value.toUpperCase()})}
                       />
@@ -648,7 +648,7 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
                     <input 
                       type="number" 
                       placeholder="100.00" 
-                      className="w-full bg-slate-950/50 border border-slate-700 p-4 rounded-2xl outline-none focus:border-yellow-400 transition-colors placeholder:text-slate-700 font-black"
+                      className="w-full bg-slate-950/50 border border-slate-700 p-4 rounded-2xl outline-none focus:border-cyan-400 transition-colors placeholder:text-slate-700 font-black"
                       value={newPos.amount}
                       onChange={(e) => setNewPos({...newPos, amount: e.target.value})}
                     />
@@ -686,7 +686,7 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
                       onClick={submitNewPosition}
                       className={cn(
                         "flex-[2] p-4 rounded-2xl font-black shadow-lg",
-                        "bg-yellow-400 hover:bg-yellow-300 text-slate-950 shadow-yellow-400/20"
+                        "bg-cyan-400 hover:bg-cyan-300 text-slate-950 shadow-cyan-400/20"
                       )}
                     >
                       CONFIRM DEPLOY
@@ -750,9 +750,7 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
   const isSafe = pnlSafe > 0;
   const isBreakeven = Math.abs(pnlSafe) < 0.05;
 
-  const binanceUrl = pos.tradingMode === 'live'
-    ? `https://www.binance.com/en/trade/${pos.symbol.replace(/(USDC|USDT)$/, '_$1')}?type=cross`
-    : `https://demo.binance.com/en/futures/${pos.symbol}`;
+  const exchangeUrl = `https://www.bitget.com/en/mix/usdt/${pos.symbol}`;
 
   return (
     <motion.div 
@@ -772,15 +770,15 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
         <div className="flex flex-col">
           <div className="flex items-center gap-2">
             <a 
-              href={binanceUrl} 
+              href={exchangeUrl} 
               target="_blank" 
               rel="noopener noreferrer" 
               className="group/link flex items-center gap-2"
             >
-              <span className="text-2xl font-black tracking-tight text-white group-hover/link:text-yellow-400 transition-colors">
+              <span className="text-2xl font-black tracking-tight text-white group-hover/link:text-cyan-400 transition-colors">
                 {pos.symbol}
               </span>
-              <ExternalLink size={16} className="text-slate-600 group-hover/link:text-yellow-400 transition-colors" />
+              <ExternalLink size={16} className="text-slate-600 group-hover/link:text-cyan-400 transition-colors" />
             </a>
             {pos.tradingMode === 'live' && <span className="bg-rose-500 text-[8px] font-black px-1.5 py-0.5 rounded text-white animate-pulse">LIVE</span>}
           </div>

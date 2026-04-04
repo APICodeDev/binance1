@@ -3,15 +3,15 @@ export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { 
-  binanceGetPrice, 
-  binanceGetPositions, 
-  binanceCancelAllOrders, 
-  binanceCancelAlgoOrders,
-  binanceOrderSuccess, 
-  binanceClosePosition, 
-  binancePlaceStopMarket,
-  binanceGetCommissionRate
-} from '@/lib/binance';
+  bitgetGetPrice, 
+  bitgetGetPositions, 
+  bitgetCancelAllOrders, 
+  bitgetCancelAlgoOrders,
+  bitgetOrderSuccess, 
+  bitgetClosePosition, 
+  bitgetPlaceStopMarket,
+  bitgetGetCommissionRate
+} from '@/lib/bitget';
 
 export async function GET() {
   const positions = await prisma.position.findMany({ where: { status: 'open' } });
@@ -21,8 +21,8 @@ export async function GET() {
   }
 
   // Fetch real positions for both worlds
-  const realDemo = await binanceGetPositions('demo');
-  const realLive = await binanceGetPositions('live');
+  const realDemo = await bitgetGetPositions('demo');
+  const realLive = await bitgetGetPositions('live');
 
   const buildMap = (realList: any[]) => {
     const map: Record<string, any> = {};
@@ -48,8 +48,8 @@ export async function GET() {
 
     // 1. Sync with Binance (Closure check)
     if (!realMap[symbol]) {
-      const currentPrice = (await binanceGetPrice(symbol, mode)) || pos.entryPrice;
-      const comm = await binanceGetCommissionRate(symbol, mode);
+      const currentPrice = (await bitgetGetPrice(symbol, mode)) || pos.entryPrice;
+      const comm = await bitgetGetCommissionRate(symbol, mode);
       const entryCost = pos.entryPrice * pos.quantity * ((pos as any).commission ?? 0.0004);
       const exitCost = currentPrice * pos.quantity * comm;
 
@@ -59,7 +59,7 @@ export async function GET() {
       
       const profitPercent = (profitFiat / (pos.entryPrice * pos.quantity)) * 100;
 
-      await binanceCancelAllOrders(symbol, mode);
+      await bitgetCancelAllOrders(symbol, mode);
       await prisma.position.update({
         where: { id: pos.id },
         data: {
@@ -74,13 +74,13 @@ export async function GET() {
     }
 
     // 2. Trailing Stop and Local SL Check
-    const currentPrice = await binanceGetPrice(symbol, mode);
+    const currentPrice = await bitgetGetPrice(symbol, mode);
     if (!currentPrice) {
       results.push(`ERROR: Failed to fetch price for ${symbol} in ${mode}.`);
       continue;
     }
 
-    const comm = await binanceGetCommissionRate(symbol, mode);
+    const comm = await bitgetGetCommissionRate(symbol, mode);
     const entryCost = pos.entryPrice * pos.quantity * ((pos as any).commission ?? 0.0004);
     const exitCost = currentPrice * pos.quantity * comm;
 
@@ -105,9 +105,9 @@ export async function GET() {
       } else if (targetProfitSlPercent !== null) {
         const targetSlPrice = pos.entryPrice * (targetProfitSlPercent / 100 + 1 + ((pos as any).commission ?? 0.0004)) / (1 - comm);
         if (targetSlPrice > pos.stopLoss) {
-          await binanceCancelAlgoOrders(symbol, mode);
-          const slResp = await binancePlaceStopMarket(symbol, 'SELL', targetSlPrice, pos.quantity, mode);
-          if (binanceOrderSuccess(slResp)) {
+          await bitgetCancelAlgoOrders(symbol, mode);
+          const slResp = await bitgetPlaceStopMarket(symbol, 'SELL', targetSlPrice, pos.quantity, mode);
+          if (bitgetOrderSuccess(slResp)) {
             newSl = targetSlPrice;
           }
         }
@@ -118,9 +118,9 @@ export async function GET() {
       } else if (targetProfitSlPercent !== null) {
         const targetSlPrice = pos.entryPrice * (1 - ((pos as any).commission ?? 0.0004) - (targetProfitSlPercent / 100)) / (1 + comm);
         if (targetSlPrice < pos.stopLoss) {
-          await binanceCancelAlgoOrders(symbol, mode);
-          const slResp = await binancePlaceStopMarket(symbol, 'BUY', targetSlPrice, pos.quantity, mode);
-          if (binanceOrderSuccess(slResp)) {
+          await bitgetCancelAlgoOrders(symbol, mode);
+          const slResp = await bitgetPlaceStopMarket(symbol, 'BUY', targetSlPrice, pos.quantity, mode);
+          if (bitgetOrderSuccess(slResp)) {
             newSl = targetSlPrice;
           }
         }
@@ -129,10 +129,10 @@ export async function GET() {
 
     if (slTriggered) {
       const closeSide = (pos.positionType === 'buy' ? 'SELL' : 'BUY') as 'BUY' | 'SELL';
-      await binanceCancelAllOrders(symbol, mode);
-      const closeResp = await binanceClosePosition(symbol, closeSide, pos.quantity, mode);
+      await bitgetCancelAllOrders(symbol, mode);
+      const closeResp = await bitgetClosePosition(symbol, closeSide, pos.quantity, mode);
 
-      if (binanceOrderSuccess(closeResp)) {
+      if (bitgetOrderSuccess(closeResp)) {
         await prisma.position.update({
           where: { id: pos.id },
           data: {

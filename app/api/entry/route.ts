@@ -3,17 +3,17 @@ export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { 
-  binanceGetPrice, 
-  binancePlaceMarketOrder, 
-  binancePlaceStopMarket, 
-  binanceOrderSuccess, 
-  binanceClosePosition, 
-  binanceCancelAllOrders, 
-  binanceGetExchangeInfo, 
-  binanceGetCommissionRate, 
+  bitgetGetPrice, 
+  bitgetPlaceMarketOrder, 
+  bitgetPlaceStopMarket, 
+  bitgetOrderSuccess, 
+  bitgetClosePosition, 
+  bitgetCancelAllOrders, 
+  bitgetGetExchangeInfo, 
+  bitgetGetCommissionRate, 
   formatQuantity,
-  binanceNormalizeSymbol
-} from '@/lib/binance';
+  bitgetNormalizeSymbol
+} from '@/lib/bitget';
 
 type TradingMode = 'demo' | 'live';
 
@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
     } catch (parseError) {
       return NextResponse.json({ error: true, message: 'Invalid JSON syntax from webhook.' }, { status: 400 });
     }
-    const symbol = binanceNormalizeSymbol(data.symbol || '');
+    const symbol = bitgetNormalizeSymbol(data.symbol || '');
     let amount = parseFloat(data.amount) || 0;
     const type = (data.type || '').toLowerCase();
     const origin = data.origin ? String(data.origin) : null;
@@ -91,15 +91,15 @@ export async function POST(req: NextRequest) {
         console.log(`[ENTRY] [${tradingMode}] Changing direction for ${symbol}: Closing ${existing.positionType} to open ${type}.`);
         
         // 1. Cancel SL and any other orders first
-        await binanceCancelAllOrders(symbol, tradingMode);
+        await bitgetCancelAllOrders(symbol, tradingMode);
         
         // 2. Close the actual position
         const closeSide = existing.positionType === 'buy' ? 'SELL' : 'BUY';
-        const closeResp = await binanceClosePosition(symbol, closeSide as 'BUY' | 'SELL', existing.quantity, tradingMode);
+        const closeResp = await bitgetClosePosition(symbol, closeSide as 'BUY' | 'SELL', existing.quantity, tradingMode);
 
-        if (binanceOrderSuccess(closeResp)) {
-          const currentPrice = (await binanceGetPrice(symbol, tradingMode)) || existing.entryPrice;
-          const comm = await binanceGetCommissionRate(symbol, tradingMode);
+        if (bitgetOrderSuccess(closeResp)) {
+          const currentPrice = (await bitgetGetPrice(symbol, tradingMode)) || existing.entryPrice;
+          const comm = await bitgetGetCommissionRate(symbol, tradingMode);
           const entryCost = existing.entryPrice * existing.quantity * ((existing as any).commission ?? 0.0004);
           const exitCost = currentPrice * existing.quantity * comm;
 
@@ -128,15 +128,15 @@ export async function POST(req: NextRequest) {
     }
 
     // Open new position
-    const price = await binanceGetPrice(symbol, tradingMode);
+    const price = await bitgetGetPrice(symbol, tradingMode);
     if (!price) {
-      const errDetail = `No se pudo obtener el precio de ${symbol} desde Binance (${tradingMode}).`;
+      const errDetail = `No se pudo obtener el precio de ${symbol} desde Bitget (${tradingMode}).`;
       await saveLastEntryError(errDetail, symbol, type);
       return NextResponse.json({ error: true, message: errDetail }, { status: 500 });
     }
 
-    const exchangeInfo = await binanceGetExchangeInfo(symbol, tradingMode);
-    const commission = await binanceGetCommissionRate(symbol, tradingMode);
+    const exchangeInfo = await bitgetGetExchangeInfo(symbol, tradingMode);
+    const commission = await bitgetGetCommissionRate(symbol, tradingMode);
     
     let quantityRaw = 0;
     if (incomingQuantity > 0) {
@@ -155,16 +155,16 @@ export async function POST(req: NextRequest) {
     const side = type === 'buy' ? 'BUY' : 'SELL';
 
     // Ensure clean slate before opening
-    await binanceCancelAllOrders(symbol, tradingMode);
+    await bitgetCancelAllOrders(symbol, tradingMode);
 
-    const orderResponse = await binancePlaceMarketOrder(symbol, side, quantityFormatted, tradingMode);
+    const orderResponse = await bitgetPlaceMarketOrder(symbol, side, quantityFormatted, tradingMode);
 
-    if (!binanceOrderSuccess(orderResponse)) {
+    if (!bitgetOrderSuccess(orderResponse)) {
       const binanceMsg = orderResponse?.msg || orderResponse?.message || JSON.stringify(orderResponse);
       const binanceCode = orderResponse?.code ?? 'N/A';
-      const errDetail = `Binance (${tradingMode}) rechazó la orden MARKET ${side} ${quantityFormatted} ${symbol}. Código: ${binanceCode} — ${binanceMsg}`;
+      const errDetail = `Bitget (${tradingMode}) rechazó la orden MARKET ${side} ${quantityFormatted} ${symbol}. Código: ${binanceCode} — ${binanceMsg}`;
       await saveLastEntryError(errDetail, symbol, type);
-      return NextResponse.json({ error: true, message: 'Failed to open position', detail: errDetail, binance: orderResponse }, { status: 500 });
+      return NextResponse.json({ error: true, message: 'Failed to open position', detail: errDetail, bitget: orderResponse }, { status: 500 });
     }
 
     const entryPrice = parseFloat(orderResponse.avgPrice) || price;
@@ -174,16 +174,16 @@ export async function POST(req: NextRequest) {
     const stopPrice = type === 'buy' ? entryPrice * (1 - slPercent) : entryPrice * (1 + slPercent);
     const slSide = type === 'buy' ? 'SELL' : 'BUY';
 
-    const slResponse = await binancePlaceStopMarket(symbol, slSide as 'BUY' | 'SELL', stopPrice, quantityFormatted, tradingMode);
+    const slResponse = await bitgetPlaceStopMarket(symbol, slSide as 'BUY' | 'SELL', stopPrice, quantityFormatted, tradingMode);
 
-    if (!binanceOrderSuccess(slResponse)) {
+    if (!bitgetOrderSuccess(slResponse)) {
       // Rollback
-      await binanceClosePosition(symbol, side as 'BUY' | 'SELL', quantityFormatted, tradingMode);
+      await bitgetClosePosition(symbol, side as 'BUY' | 'SELL', quantityFormatted, tradingMode);
       const slMsg = slResponse?.msg || slResponse?.message || JSON.stringify(slResponse);
       const slCode = slResponse?.code ?? 'N/A';
-      const errDetail = `SL rechazado por Binance (${tradingMode}) para ${symbol}. Rollback ejecutado.`;
+      const errDetail = `SL rechazado por Bitget (${tradingMode}) para ${symbol}. Rollback ejecutado.`;
       await saveLastEntryError(errDetail, symbol, type);
-      return NextResponse.json({ error: true, message: 'Failed to place SL, rolled back', detail: errDetail, binance: slResponse }, { status: 500 });
+      return NextResponse.json({ error: true, message: 'Failed to place SL, rolled back', detail: errDetail, bitget: slResponse }, { status: 500 });
     }
 
     // Save to DB
