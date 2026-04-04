@@ -175,7 +175,7 @@ export const binanceGetCommissionRate = async (symbol: string, tradingMode: 'dem
 
 export const binanceNormalizeSymbol = (symbol: string): string => {
   let sym = symbol.toUpperCase().replace('/', '').replace('-', '');
-  if (sym && !sym.endsWith('USDT')) {
+  if (sym && !sym.endsWith('USDT') && !sym.endsWith('USDC')) {
     sym += 'USDT';
   }
   return sym;

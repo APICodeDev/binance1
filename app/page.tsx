@@ -17,9 +17,11 @@ import {
   ExternalLink,
   Bot,
   Zap,
-  Globe
+  Globe,
+  Hammer
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
+import { buildInfo } from '@/lib/buildInfo';
 import { twMerge } from 'tailwind-merge';
 
 function cn(...inputs: ClassValue[]) {
@@ -594,10 +596,12 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
           </section>
         </main>
 
-        {/* Footer text */}
-        <footer className="pt-4 pb-8 flex justify-center">
+        <footer className="pt-4 pb-12 flex flex-col items-center gap-2">
           <div className="text-[10px] text-slate-500 uppercase flex items-center gap-2 opacity-60 font-black tracking-widest">
-            <Clock size={12} /> Last update: Every 10s
+            <Clock size={12} /> Last heartbeat: Every 10s
+          </div>
+          <div className="text-[10px] text-slate-500/40 uppercase flex items-center gap-2 font-black tracking-[0.2em]">
+            <Hammer size={12} /> Engine Built on: {buildInfo.timestamp}
           </div>
         </footer>
 
