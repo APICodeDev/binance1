@@ -750,6 +750,10 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
   const isSafe = pnlSafe > 0;
   const isBreakeven = Math.abs(pnlSafe) < 0.05;
 
+  const binanceUrl = pos.tradingMode === 'live'
+    ? `https://www.binance.com/en/trade/${pos.symbol.replace(/(USDC|USDT)$/, '_$1')}?type=cross`
+    : `https://demo.binance.com/en/futures/${pos.symbol}`;
+
   return (
     <motion.div 
       layout
@@ -767,7 +771,17 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
       <div className="flex items-center justify-between">
         <div className="flex flex-col">
           <div className="flex items-center gap-2">
-            <span className="text-2xl font-black tracking-tight text-white">{pos.symbol}</span>
+            <a 
+              href={binanceUrl} 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="group/link flex items-center gap-2"
+            >
+              <span className="text-2xl font-black tracking-tight text-white group-hover/link:text-yellow-400 transition-colors">
+                {pos.symbol}
+              </span>
+              <ExternalLink size={16} className="text-slate-600 group-hover/link:text-yellow-400 transition-colors" />
+            </a>
             {pos.tradingMode === 'live' && <span className="bg-rose-500 text-[8px] font-black px-1.5 py-0.5 rounded text-white animate-pulse">LIVE</span>}
           </div>
           <span className="text-[10px] text-slate-500 font-bold tracking-widest uppercase flex gap-2">
