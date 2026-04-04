@@ -1,8 +1,11 @@
 # 1. Base image
-FROM node:18-alpine AS base
+FROM node:20-alpine AS base
 
 # 2. Repertoio de trabajo
 WORKDIR /app
+
+# 3. Instalación de librerías para Prisma en Alpine
+RUN apk add --no-cache openssl libc6-compat
 
 # 3. Instalación de dependencias
 COPY package*.json ./
