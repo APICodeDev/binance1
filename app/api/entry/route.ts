@@ -160,9 +160,9 @@ export async function POST(req: NextRequest) {
     const orderResponse = await bitgetPlaceMarketOrder(symbol, side, quantityFormatted, tradingMode);
 
     if (!bitgetOrderSuccess(orderResponse)) {
-      const binanceMsg = orderResponse?.msg || orderResponse?.message || JSON.stringify(orderResponse);
-      const binanceCode = orderResponse?.code ?? 'N/A';
-      const errDetail = `Bitget (${tradingMode}) rechazó la orden MARKET ${side} ${quantityFormatted} ${symbol}. Código: ${binanceCode} — ${binanceMsg}`;
+      const bitgetMsg = orderResponse?.msg || orderResponse?.message || JSON.stringify(orderResponse);
+      const bitgetCode = orderResponse?.code ?? 'N/A';
+      const errDetail = `Bitget (${tradingMode}) rechazó la orden MARKET ${side} ${quantityFormatted} ${symbol}. Código: ${bitgetCode} — ${bitgetMsg}`;
       await saveLastEntryError(errDetail, symbol, type);
       return NextResponse.json({ error: true, message: 'Failed to open position', detail: errDetail, bitget: orderResponse }, { status: 500 });
     }

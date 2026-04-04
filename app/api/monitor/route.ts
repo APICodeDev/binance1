@@ -46,7 +46,7 @@ export async function GET() {
     const realMap = mode === 'live' ? liveMap : demoMap;
     const symbol = pos.symbol.toUpperCase();
 
-    // 1. Sync with Binance (Closure check)
+    // 1. Sync with Bitget (closure check)
     if (!realMap[symbol]) {
       const currentPrice = (await bitgetGetPrice(symbol, mode)) || pos.entryPrice;
       const comm = await bitgetGetCommissionRate(symbol, mode);
@@ -69,7 +69,7 @@ export async function GET() {
           profitLossFiat: profitFiat,
         },
       });
-      results.push(`SINC_CERRADA (${mode}): Position #${pos.id} (${symbol}) closed on Binance.`);
+      results.push(`SINC_CERRADA (${mode}): Position #${pos.id} (${symbol}) cerrada en Bitget.`);
       continue; // Move to next position
     }
 

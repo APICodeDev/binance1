@@ -6,8 +6,8 @@ import { Inter } from 'next/font/google'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata = {
-  title: 'Bitget Trading Bot Dashboard',
-  description: 'Premium trading assistant for Bitget Futures',
+  title: 'Binance Signal Desk',
+  description: 'Binance-inspired trading dashboard powered by Bitget Futures execution',
 }
 
 export default function RootLayout({

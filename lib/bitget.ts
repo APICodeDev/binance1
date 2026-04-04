@@ -136,7 +136,7 @@ export const bitgetGetPositions = async (tradingMode: 'demo' | 'live' = 'demo') 
   let allPositions: any[] = [];
   for (const resp of responses) {
     if (resp && resp.data && Array.isArray(resp.data)) {
-      // map to binance-like payload for existing code
+      // Map Bitget positions to the legacy shape expected by the current app.
       const mapped = resp.data.map((p: any) => ({
         symbol: p.symbol,
         positionAmt: p.total,
