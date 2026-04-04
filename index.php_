@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 // index.php
 ?>
 <!DOCTYPE html>
@@ -7,13 +7,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Binance Trading Bot - Iniciando</title>
+    <title>BITGET Trading Bot - Iniciando</title>
     <link rel="icon" type="image/png" href="favicon.png">
     <style>
         :root {
             --bg-color: #0f172a;
             --accent: #fcd535;
-            /* Binance Yellow */
+            /* BITGET Yellow */
             --text: #f8fafc;
         }
 
@@ -85,7 +85,7 @@
 
 <body>
     <div class="splash-container">
-        <!-- Icono abstracto que representa a Binance / Trading -->
+        <!-- Icono abstracto que representa a BITGET / Trading -->
         <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="#fcd535" stroke-width="2" stroke-linecap="round"
             stroke-linejoin="round">
             <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
@@ -97,7 +97,7 @@
     </div>
 
     <script>
-        // Transición suave al dashboard: espera a la animación (2s) y añade otros 2s extra
+        // TransiciÃ³n suave al dashboard: espera a la animaciÃ³n (2s) y aÃ±ade otros 2s extra
         setTimeout(() => {
             window.location.href = 'dashboard.php';
         }, 4100);

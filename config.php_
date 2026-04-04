@@ -1,9 +1,9 @@
-<?php
+﻿<?php
 // config.php
 
-define('BINANCE_API_KEY', 'BybstQ0Af40qEDVqAVBRkT4kXfI3O9VVvwL9diTgFeoTNfWrVL9f9n6Ahgm3eb06');
-define('BINANCE_SECRET_KEY', 'Jw58keRYtwFY3yHOWwzasLSKt254IJXALleIwIqpn9rS9AKuB5dXI7XUZsMXFzPi');
-define('BINANCE_BASE_URL', 'https://testnet.binancefuture.com'); // Usando futuros testnet (demo)
+define('BITGET_API_KEY', 'BybstQ0Af40qEDVqAVBRkT4kXfI3O9VVvwL9diTgFeoTNfWrVL9f9n6Ahgm3eb06');
+define('BITGET_SECRET_KEY', 'Jw58keRYtwFY3yHOWwzasLSKt254IJXALleIwIqpn9rS9AKuB5dXI7XUZsMXFzPi');
+define('BITGET_BASE_URL', 'https://testnet.BITGETfuture.com'); // Usando futuros testnet (demo)
 
 
 // Base de datos SQLite
@@ -39,6 +39,6 @@ try {
     $stmt = $db->prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('bot_enabled', '1')");
     $stmt->execute();
 } catch (PDOException $e) {
-    die("Error en la conexión a la base de datos: " . $e->getMessage());
+    die("Error en la conexiÃ³n a la base de datos: " . $e->getMessage());
 }
 ?>

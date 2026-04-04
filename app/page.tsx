@@ -28,7 +28,7 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-function BinanceMark({ className = 'w-[100px] h-[100px]' }: { className?: string }) {
+function BitgetMark({ className = 'w-[100px] h-[100px]' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
       <rect x="50" y="10" width="18" height="18" transform="rotate(45 50 10)" fill="currentColor" />
@@ -283,9 +283,9 @@ export default function Dashboard() {
             transition={{ duration: 1, ease: "easeInOut", repeat: Infinity }}
             className="mb-5 text-amber-400 drop-shadow-[0_0_24px_rgba(251,191,36,0.25)]"
           >
-            <BinanceMark />
+            <BitgetMark />
           </motion.div>
-          <h1 className="text-[40px] font-black tracking-[2px] m-0">BINANCE<span className="text-amber-400">DESK</span></h1>
+          <h1 className="text-[40px] font-black tracking-[2px] m-0">BITGET<span className="text-amber-400">DESK</span></h1>
           <div className="mt-2.5 text-base text-slate-400 tracking-[4px] uppercase">Signal Engine Initializing</div>
         </motion.div>
       </div>
@@ -305,17 +305,17 @@ export default function Dashboard() {
               "w-12 h-12 rounded-xl flex items-center justify-center shadow-lg shadow-inner rotate-3 transition-colors",
               tradingMode === 'live' ? "bg-amber-500 shadow-amber-500/20" : "bg-amber-400 shadow-amber-400/20"
             )}>
-              <BinanceMark className="w-7 h-7 text-slate-950" />
+              <BitgetMark className="w-7 h-7 text-slate-950" />
             </div>
             <div>
               <h1 className="text-3xl font-black italic tracking-tighter uppercase">
                 {tradingMode === 'live' ? (
-                  <>BINANCE<span className="text-amber-500">LIVE</span></>
+                  <>BITGET<span className="text-amber-500">LIVE</span></>
                 ) : (
-                  <>BINANCE<span className="text-amber-400">SIGNALS</span></>
+                  <>BITGET<span className="text-amber-400">SIGNALS</span></>
                 )}
               </h1>
-              <p className="text-xs text-slate-400 font-medium uppercase tracking-[0.2em]">Binance-style command center with Bitget execution</p>
+              <p className="text-xs text-slate-400 font-medium uppercase tracking-[0.2em]">Automated trading command center for Bitget Futures</p>
             </div>
           </div>
 
@@ -612,7 +612,7 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
             <Clock size={12} /> Last heartbeat: Every 10s
           </div>
           <div className="text-[10px] text-slate-500/40 uppercase flex items-center gap-2 font-black tracking-[0.2em]">
-            <Hammer size={12} /> Engine Built on: {buildInfo.timestamp}
+            <Hammer size={12} /> Build Bitget Sync Rev: {buildInfo.timestamp}
           </div>
         </footer>
 
@@ -636,7 +636,7 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
                 <div className="absolute bottom-0 left-0 w-32 h-32 bg-yellow-300/10 blur-3xl -z-10 rounded-full" />
 
                 <h3 className="text-2xl font-black italic tracking-tighter mb-8 flex items-center gap-3">
-                  <ShieldCheck className={tradingMode === 'live' ? "text-amber-500" : "text-amber-400"} /> OPEN {tradingMode.toUpperCase()} BINANCE SIGNAL
+                  <ShieldCheck className={tradingMode === 'live' ? "text-amber-500" : "text-amber-400"} /> OPEN {tradingMode.toUpperCase()} BITGET SIGNAL
                 </h3>
 
                 <div className="space-y-6">

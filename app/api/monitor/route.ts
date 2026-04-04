@@ -5,6 +5,7 @@ import { prisma } from '@/lib/db';
 import { 
   bitgetGetPrice, 
   bitgetGetPositions, 
+  bitgetGetSinglePosition,
   bitgetCancelAllOrders, 
   bitgetCancelAlgoOrders,
   bitgetOrderSuccess, 
@@ -36,18 +37,36 @@ export async function GET() {
     return map;
   };
 
-  const demoMap = buildMap(realDemo);
-  const liveMap = buildMap(realLive);
+  const demoMap = buildMap(realDemo.positions);
+  const liveMap = buildMap(realLive.positions);
 
   const results: string[] = [];
 
   for (const pos of positions) {
     const mode = ((pos as any).tradingMode || 'demo') as 'demo' | 'live';
     const realMap = mode === 'live' ? liveMap : demoMap;
+    const snapshot = mode === 'live' ? realLive : realDemo;
     const symbol = pos.symbol.toUpperCase();
+
+    if (!snapshot.ok) {
+      results.push(`SYNC_SKIPPED (${mode}): No se pudo verificar ${symbol} en Bitget. ${snapshot.errors.join(' | ')}`);
+      continue;
+    }
 
     // 1. Sync with Bitget (closure check)
     if (!realMap[symbol]) {
+      const singleSnapshot = await bitgetGetSinglePosition(symbol, mode);
+      if (!singleSnapshot.ok) {
+        results.push(`SYNC_SKIPPED (${mode}): Verificación individual falló para ${symbol}. ${singleSnapshot.errors.join(' | ')}`);
+        continue;
+      }
+
+      const stillOpen = singleSnapshot.positions.some((rp: any) => rp.symbol && parseFloat(rp.positionAmt) !== 0);
+      if (stillOpen) {
+        results.push(`SYNC_OK (${mode}): ${symbol} sigue abierto en Bitget tras verificación individual.`);
+        continue;
+      }
+
       const currentPrice = (await bitgetGetPrice(symbol, mode)) || pos.entryPrice;
       const comm = await bitgetGetCommissionRate(symbol, mode);
       const entryCost = pos.entryPrice * pos.quantity * ((pos as any).commission ?? 0.0004);
@@ -89,21 +108,29 @@ export async function GET() {
       : ((pos.entryPrice - currentPrice) * pos.quantity) - entryCost - exitCost;
     
     const profitPercent = (profitFiat / (pos.entryPrice * pos.quantity)) * 100;
+    const marketMovePercent = pos.positionType === 'buy'
+      ? ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100
+      : ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100;
 
     let newSl = pos.stopLoss;
     let slTriggered = false;
 
-    // Trailing SL logic (Staircase)
-    let targetProfitSlPercent: number | null = null;
-    if (profitPercent >= 0.5) {
-      targetProfitSlPercent = Math.floor(profitPercent / 0.5) * 0.5 - 0.5;
-    }
-
     if (pos.positionType === 'buy') {
       if (currentPrice <= pos.stopLoss) {
         slTriggered = true;
-      } else if (targetProfitSlPercent !== null) {
-        const targetSlPrice = pos.entryPrice * (targetProfitSlPercent / 100 + 1 + ((pos as any).commission ?? 0.0004)) / (1 - comm);
+      } else if (marketMovePercent >= 1) {
+        const crossedStep = Math.floor(marketMovePercent / 0.5) * 0.5;
+        const crossedPrice = pos.entryPrice * (1 + crossedStep / 100);
+        const targetSlPrice = crossedPrice * (1 - 0.5 / 100);
+        if (targetSlPrice > pos.stopLoss) {
+          await bitgetCancelAlgoOrders(symbol, mode);
+          const slResp = await bitgetPlaceStopMarket(symbol, 'SELL', targetSlPrice, pos.quantity, mode);
+          if (bitgetOrderSuccess(slResp)) {
+            newSl = targetSlPrice;
+          }
+        }
+      } else if (marketMovePercent >= 0.5) {
+        const targetSlPrice = pos.entryPrice;
         if (targetSlPrice > pos.stopLoss) {
           await bitgetCancelAlgoOrders(symbol, mode);
           const slResp = await bitgetPlaceStopMarket(symbol, 'SELL', targetSlPrice, pos.quantity, mode);
@@ -115,8 +142,19 @@ export async function GET() {
     } else { // short
       if (currentPrice >= pos.stopLoss) {
         slTriggered = true;
-      } else if (targetProfitSlPercent !== null) {
-        const targetSlPrice = pos.entryPrice * (1 - ((pos as any).commission ?? 0.0004) - (targetProfitSlPercent / 100)) / (1 + comm);
+      } else if (marketMovePercent >= 1) {
+        const crossedStep = Math.floor(marketMovePercent / 0.5) * 0.5;
+        const crossedPrice = pos.entryPrice * (1 - crossedStep / 100);
+        const targetSlPrice = crossedPrice * (1 + 0.5 / 100);
+        if (targetSlPrice < pos.stopLoss) {
+          await bitgetCancelAlgoOrders(symbol, mode);
+          const slResp = await bitgetPlaceStopMarket(symbol, 'BUY', targetSlPrice, pos.quantity, mode);
+          if (bitgetOrderSuccess(slResp)) {
+            newSl = targetSlPrice;
+          }
+        }
+      } else if (marketMovePercent >= 0.5) {
+        const targetSlPrice = pos.entryPrice;
         if (targetSlPrice < pos.stopLoss) {
           await bitgetCancelAlgoOrders(symbol, mode);
           const slResp = await bitgetPlaceStopMarket(symbol, 'BUY', targetSlPrice, pos.quantity, mode);

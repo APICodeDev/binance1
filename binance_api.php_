@@ -1,19 +1,19 @@
-<?php
-// binance_api.php
+﻿<?php
+// BITGET_api.php
 
 /**
- * Función base para hacer peticiones a la API de Binance Futures.
- * Escribe logs detallados en binance_api.log para diagnóstico.
+ * FunciÃ³n base para hacer peticiones a la API de BITGET Futures.
+ * Escribe logs detallados en BITGET_api.log para diagnÃ³stico.
  */
-function binance_request($endpoint, $params = [], $method = 'GET', $signed = false) {
+function BITGET_request($endpoint, $params = [], $method = 'GET', $signed = false) {
     if ($signed) {
         $params['timestamp'] = number_format(microtime(true) * 1000, 0, '.', '');
         $query_string = http_build_query($params);
-        $signature = hash_hmac('sha256', $query_string, BINANCE_SECRET_KEY);
+        $signature = hash_hmac('sha256', $query_string, BITGET_SECRET_KEY);
         $params['signature'] = $signature;
     }
 
-    $url = BINANCE_BASE_URL . $endpoint;
+    $url = BITGET_BASE_URL . $endpoint;
     if ($method === 'GET' && !empty($params)) {
         $url .= '?' . http_build_query($params);
     }
@@ -22,7 +22,7 @@ function binance_request($endpoint, $params = [], $method = 'GET', $signed = fal
 
     $headers = ['Content-Type: application/x-www-form-urlencoded'];
     if ($signed) {
-        $headers[] = 'X-MBX-APIKEY: ' . BINANCE_API_KEY;
+        $headers[] = 'X-MBX-APIKEY: ' . BITGET_API_KEY;
     }
 
     if ($method === 'POST') {
@@ -48,30 +48,30 @@ function binance_request($endpoint, $params = [], $method = 'GET', $signed = fal
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
-    // Log detallado de TODAS las llamadas a la API (para diagnóstico)
+    // Log detallado de TODAS las llamadas a la API (para diagnÃ³stico)
     $log_entry = date('Y-m-d H:i:s') . " | $method $endpoint | HTTP $http_code";
     if ($curl_error) {
         $log_entry .= " | CURL_ERROR: $curl_error";
-        file_put_contents(__DIR__ . '/binance_api.log', $log_entry . "\n", FILE_APPEND);
+        file_put_contents(__DIR__ . '/BITGET_api.log', $log_entry . "\n", FILE_APPEND);
         return ['error' => true, 'message' => $curl_error];
     }
 
     $decoded = json_decode($output, true);
     $log_entry .= " | RESPONSE: " . substr($output, 0, 300);
-    file_put_contents(__DIR__ . '/binance_api.log', $log_entry . "\n", FILE_APPEND);
+    file_put_contents(__DIR__ . '/BITGET_api.log', $log_entry . "\n", FILE_APPEND);
 
     if ($decoded === null) {
-        return ['error' => true, 'message' => 'JSON inválido de Binance: ' . $output];
+        return ['error' => true, 'message' => 'JSON invÃ¡lido de BITGET: ' . $output];
     }
 
     return $decoded;
 }
 
 /**
- * Obtiene el precio actual de un símbolo.
+ * Obtiene el precio actual de un sÃ­mbolo.
  */
-function binance_get_price($symbol) {
-    $response = binance_request('/fapi/v1/ticker/price', ['symbol' => strtoupper($symbol)]);
+function BITGET_get_price($symbol) {
+    $response = BITGET_request('/fapi/v1/ticker/price', ['symbol' => strtoupper($symbol)]);
     if (isset($response['price'])) {
         return (float) $response['price'];
     }
@@ -79,31 +79,31 @@ function binance_get_price($symbol) {
 }
 
 /**
- * Coloca una orden de mercado estándar (para ABRIR posiciones).
- * NO usar para cerrar — usar binance_close_position en su lugar.
+ * Coloca una orden de mercado estÃ¡ndar (para ABRIR posiciones).
+ * NO usar para cerrar â€” usar BITGET_close_position en su lugar.
  */
-function binance_place_market_order($symbol, $side, $quantity) {
+function BITGET_place_market_order($symbol, $side, $quantity) {
     $params = [
         'symbol'   => strtoupper($symbol),
         'side'     => $side,
         'type'     => 'MARKET',
         'quantity' => $quantity,
     ];
-    return binance_request('/fapi/v1/order', $params, 'POST', true);
+    return BITGET_request('/fapi/v1/order', $params, 'POST', true);
 }
 
 /**
- * Cierra una posición abierta en Binance Futures.
+ * Cierra una posiciÃ³n abierta en BITGET Futures.
  *
  * ESTRATEGIA DE CIERRE ROBUSTA:
  * 1. Intenta con reduceOnly=true (la forma correcta en One-Way Mode).
  * 2. Si falla con error -2022 (ReduceOnly rejected), reintenta SIN reduceOnly
- *    (esto puede ocurrir si hay una orden STOP_MARKET con closePosition=true todavía activa).
- * 3. Devuelve el resultado con campo 'binance_closed'=true si se confirmó el cierre.
+ *    (esto puede ocurrir si hay una orden STOP_MARKET con closePosition=true todavÃ­a activa).
+ * 3. Devuelve el resultado con campo 'BITGET_closed'=true si se confirmÃ³ el cierre.
  *
- * Retorna el response de la orden si tuvo éxito, o array con 'error'=>true si falló.
+ * Retorna el response de la orden si tuvo Ã©xito, o array con 'error'=>true si fallÃ³.
  */
-function binance_close_position($symbol, $side, $quantity) {
+function BITGET_close_position($symbol, $side, $quantity) {
     $sym = strtoupper($symbol);
 
     // Intento 1: con reduceOnly=true
@@ -114,17 +114,17 @@ function binance_close_position($symbol, $side, $quantity) {
         'quantity'   => $quantity,
         'reduceOnly' => 'true',
     ];
-    $resp = binance_request('/fapi/v1/order', $params, 'POST', true);
+    $resp = BITGET_request('/fapi/v1/order', $params, 'POST', true);
 
-    // Si tuvo éxito, devolver
-    if (binance_order_success($resp)) {
+    // Si tuvo Ã©xito, devolver
+    if (BITGET_order_success($resp)) {
         return $resp;
     }
 
     // Intento 2: si el error es -2022 (ReduceOnly rejected), intentar sin reduceOnly
-    // Esto puede pasar si el modo es Hedge o si hay otras órdenes en conflicto
+    // Esto puede pasar si el modo es Hedge o si hay otras Ã³rdenes en conflicto
     if (isset($resp['code']) && $resp['code'] == -2022) {
-        file_put_contents(__DIR__ . '/binance_api.log',
+        file_put_contents(__DIR__ . '/BITGET_api.log',
             date('Y-m-d H:i:s') . " | REINTENTO SIN reduceOnly para $sym\n", FILE_APPEND);
 
         $params2 = [
@@ -133,38 +133,38 @@ function binance_close_position($symbol, $side, $quantity) {
             'type'     => 'MARKET',
             'quantity' => $quantity,
         ];
-        $resp = binance_request('/fapi/v1/order', $params2, 'POST', true);
+        $resp = BITGET_request('/fapi/v1/order', $params2, 'POST', true);
     }
 
     return $resp;
 }
 
 /**
- * Comprueba si una respuesta de orden de Binance indica éxito.
- * Soporta tanto órdenes normales (orderId) como Algo Orders (algoId).
+ * Comprueba si una respuesta de orden de BITGET indica Ã©xito.
+ * Soporta tanto Ã³rdenes normales (orderId) como Algo Orders (algoId).
  */
-function binance_order_success($resp) {
+function BITGET_order_success($resp) {
     if (!is_array($resp)) return false;
     if (isset($resp['error']) && $resp['error']) return false;
     if (isset($resp['code']) && $resp['code'] < 0) return false;
-    // Órdenes normales: tienen orderId
+    // Ã“rdenes normales: tienen orderId
     if (isset($resp['orderId'])) return true;
     // Algo Orders (STOP_MARKET desde dic 2025): tienen algoId
     if (isset($resp['algoId'])) return true;
-    // Status explícito
+    // Status explÃ­cito
     $ok_statuses = ['FILLED', 'NEW', 'PARTIALLY_FILLED', 'EXECUTING'];
     if (isset($resp['status']) && in_array($resp['status'], $ok_statuses)) return true;
     return false;
 }
 
 /**
- * Verifica en Binance si una posición sigue abierta (positionAmt != 0).
- * Retorna true si la posición EXISTE y está abierta, false si está cerrada/no existe.
+ * Verifica en BITGET si una posiciÃ³n sigue abierta (positionAmt != 0).
+ * Retorna true si la posiciÃ³n EXISTE y estÃ¡ abierta, false si estÃ¡ cerrada/no existe.
  * Retorna null si no se puede determinar (error de API).
  */
-function binance_position_is_open($symbol) {
+function BITGET_position_is_open($symbol) {
     $sym = strtoupper($symbol);
-    $response = binance_request('/fapi/v2/positionRisk', ['symbol' => $sym], 'GET', true);
+    $response = BITGET_request('/fapi/v2/positionRisk', ['symbol' => $sym], 'GET', true);
 
     if (isset($response['code'])) {
         // Error de API
@@ -179,11 +179,11 @@ function binance_position_is_open($symbol) {
             return floatval($pos['positionAmt']) != 0;
         }
     }
-    return false; // No apareció en la respuesta → consideramos cerrada
+    return false; // No apareciÃ³ en la respuesta â†’ consideramos cerrada
 }
 
 /**
- * Obtiene la precisión de precio (tickSize) de un símbolo desde exchangeInfo.
+ * Obtiene la precisiÃ³n de precio (tickSize) de un sÃ­mbolo desde exchangeInfo.
  * Esto es crucial para formatear stopPrice correctamente y evitar el error -1111.
  */
 function get_price_precision($symbol) {
@@ -191,7 +191,7 @@ function get_price_precision($symbol) {
     $sym = strtoupper($symbol);
     if (isset($cache[$sym])) return $cache[$sym];
 
-    $response = binance_request('/fapi/v1/exchangeInfo');
+    $response = BITGET_request('/fapi/v1/exchangeInfo');
     if (isset($response['symbols'])) {
         foreach ($response['symbols'] as $s) {
             if ($s['symbol'] === $sym) {
@@ -226,7 +226,7 @@ function get_price_precision($symbol) {
  * @param float  $stopPrice Precio de triggger del stop
  * @param float  $quantity  Cantidad a cerrar (obligatorio: closePosition ya no acepta el endpoint antiguo)
  */
-function binance_place_stop_market($symbol, $side, $stopPrice, $quantity = null) {
+function BITGET_place_stop_market($symbol, $side, $stopPrice, $quantity = null) {
     $sym       = strtoupper($symbol);
     $precision = get_price_precision($sym);
 
@@ -240,44 +240,44 @@ function binance_place_stop_market($symbol, $side, $stopPrice, $quantity = null)
     ];
 
     // quantity es obligatorio a menos que se use closePosition
-    // Usamos closePosition=true para cerrar toda la posición del lado correcto
+    // Usamos closePosition=true para cerrar toda la posiciÃ³n del lado correcto
     if ($quantity !== null) {
         $params['quantity'] = $quantity;
     } else {
         $params['closePosition'] = 'true';
     }
 
-    return binance_request('/fapi/v1/algoOrder', $params, 'POST', true);
+    return BITGET_request('/fapi/v1/algoOrder', $params, 'POST', true);
 }
 
 /**
- * Cancela todas las Algo Orders abiertas de un símbolo.
+ * Cancela todas las Algo Orders abiertas de un sÃ­mbolo.
  * Endpoint: DELETE /fapi/v1/algoOrder/all
  */
-function binance_cancel_algo_orders($symbol) {
+function BITGET_cancel_algo_orders($symbol) {
     $params = ['symbol' => strtoupper($symbol)];
-    // El endpoint para cancelar todas las algo orders activas de un símbolo
-    return binance_request('/fapi/v1/algoOrder/all', $params, 'DELETE', true);
+    // El endpoint para cancelar todas las algo orders activas de un sÃ­mbolo
+    return BITGET_request('/fapi/v1/algoOrder/all', $params, 'DELETE', true);
 }
 
 /**
- * Cancela todas las órdenes abiertas de un símbolo en Binance
- * (tanto órdenes normales como algo orders).
+ * Cancela todas las Ã³rdenes abiertas de un sÃ­mbolo en BITGET
+ * (tanto Ã³rdenes normales como algo orders).
  */
-function binance_cancel_all_orders($symbol) {
+function BITGET_cancel_all_orders($symbol) {
     $sym = strtoupper($symbol);
-    // Cancelar órdenes normales
-    $r1 = binance_request('/fapi/v1/allOpenOrders', ['symbol' => $sym], 'DELETE', true);
+    // Cancelar Ã³rdenes normales
+    $r1 = BITGET_request('/fapi/v1/allOpenOrders', ['symbol' => $sym], 'DELETE', true);
     // Cancelar algo orders (Stop Loss native)
-    $r2 = binance_cancel_algo_orders($sym);
+    $r2 = BITGET_cancel_algo_orders($sym);
     return ['normal' => $r1, 'algo' => $r2];
 }
 
 /**
- * Obtiene todas las posiciones de Binance Futures (incluidas las cerradas con positionAmt=0).
+ * Obtiene todas las posiciones de BITGET Futures (incluidas las cerradas con positionAmt=0).
  */
-function binance_get_positions() {
-    $response = binance_request('/fapi/v2/positionRisk', [], 'GET', true);
+function BITGET_get_positions() {
+    $response = BITGET_request('/fapi/v2/positionRisk', [], 'GET', true);
     if (is_array($response) && !isset($response['code'])) {
         return $response;
     }
@@ -285,10 +285,10 @@ function binance_get_positions() {
 }
 
 /**
- * Obtiene información de exchange para un símbolo (stepSize etc.).
+ * Obtiene informaciÃ³n de exchange para un sÃ­mbolo (stepSize etc.).
  */
-function binance_get_exchange_info($symbol) {
-    $response = binance_request('/fapi/v1/exchangeInfo');
+function BITGET_get_exchange_info($symbol) {
+    $response = BITGET_request('/fapi/v1/exchangeInfo');
     if (isset($response['symbols'])) {
         foreach ($response['symbols'] as $s) {
             if ($s['symbol'] === strtoupper($symbol)) {
@@ -300,7 +300,7 @@ function binance_get_exchange_info($symbol) {
 }
 
 /**
- * Formatea la cantidad según el stepSize del exchange.
+ * Formatea la cantidad segÃºn el stepSize del exchange.
  */
 function format_quantity($quantity, $exchange_info) {
     if (!$exchange_info) {
@@ -323,3 +323,4 @@ function format_quantity($quantity, $exchange_info) {
     return number_format($formatted, $precision, '.', '');
 }
 ?>
+

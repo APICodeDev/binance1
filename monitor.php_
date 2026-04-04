@@ -1,10 +1,10 @@
-<?php
+﻿<?php
 // monitor.php
-// Sincronización bidireccional Binance ↔ BD local + Trailing Stop Loss
-// Ejecutado cada 10s desde el dashboard vía fetch('monitor.php')
+// SincronizaciÃ³n bidireccional BITGET â†” BD local + Trailing Stop Loss
+// Ejecutado cada 10s desde el dashboard vÃ­a fetch('monitor.php')
 
 require_once 'config.php';
-require_once 'binance_api.php';
+require_once 'BITGET_api.php';
 
 // -----------------------------------------------------------------------
 // PASO 1: Obtener posiciones abiertas en la BD local
@@ -18,12 +18,12 @@ if (empty($positions)) {
 }
 
 // -----------------------------------------------------------------------
-// PASO 2: Obtener estado real de posiciones en Binance Futures
+// PASO 2: Obtener estado real de posiciones en BITGET Futures
 // -----------------------------------------------------------------------
-$real_positions = binance_get_positions();
+$real_positions = BITGET_get_positions();
 
-// SEGURIDAD: si la API falla (devuelve error o array vacío sin datos),
-// NO sincronizamos para evitar cerrar posiciones erróneamente.
+// SEGURIDAD: si la API falla (devuelve error o array vacÃ­o sin datos),
+// NO sincronizamos para evitar cerrar posiciones errÃ³neamente.
 $api_ok = !empty($real_positions) && !isset($real_positions['code']);
 
 if ($api_ok) {
@@ -36,9 +36,9 @@ if ($api_ok) {
     }
 
     // -----------------------------------------------------------------------
-    // PASO 3: SINCRONIZACIÓN Binance → BD
-    // Si la posición está en BD (open) pero NO en Binance → cerrada externamente
-    // (SL nativo disparado, cierre manual en app Binance, liquidación, etc.)
+    // PASO 3: SINCRONIZACIÃ“N BITGET â†’ BD
+    // Si la posiciÃ³n estÃ¡ en BD (open) pero NO en BITGET â†’ cerrada externamente
+    // (SL nativo disparado, cierre manual en app BITGET, liquidaciÃ³n, etc.)
     // -----------------------------------------------------------------------
     foreach ($positions as $pos) {
         $id     = $pos['id'];
@@ -46,8 +46,8 @@ if ($api_ok) {
         $type   = $pos['position_type'];
 
         if (!isset($real_map[$symbol])) {
-            // Posición cerrada en Binance — sincronizar BD
-            $current_price = binance_get_price($symbol) ?: floatval($pos['entry_price']);
+            // PosiciÃ³n cerrada en BITGET â€” sincronizar BD
+            $current_price = BITGET_get_price($symbol) ?: floatval($pos['entry_price']);
             $entry_price   = floatval($pos['entry_price']);
             $quantity      = floatval($pos['quantity']);
 
@@ -60,7 +60,7 @@ if ($api_ok) {
             }
 
             // Limpiar cualquier orden pendiente que pudiera haber quedado
-            binance_cancel_all_orders($symbol);
+            BITGET_cancel_all_orders($symbol);
 
             // Cerrar en la BD
             $upd = $db->prepare(
@@ -68,11 +68,11 @@ if ($api_ok) {
                  profit_loss_percent = ?, profit_loss_fiat = ? WHERE id = ? AND status = 'open'"
             );
             $upd->execute([$profit_percent, $profit_fiat, $id]);
-            echo "SINC_CERRADA: Posición #$id ($symbol) cerrada en Binance externamente (SL/manual). BD actualizada. Precio ref: $current_price\n";
+            echo "SINC_CERRADA: PosiciÃ³n #$id ($symbol) cerrada en BITGET externamente (SL/manual). BD actualizada. Precio ref: $current_price\n";
         }
     }
 
-    // Refrescar lista de posiciones aún abiertas tras sincronización
+    // Refrescar lista de posiciones aÃºn abiertas tras sincronizaciÃ³n
     $stmt      = $db->query("SELECT * FROM positions WHERE status = 'open'");
     $positions = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -81,13 +81,13 @@ if ($api_ok) {
         exit;
     }
 } else {
-    echo "ADVERTENCIA: API Binance no disponible o sin datos. Se omite sincronización exterior. Solo se ejecuta trailing SL local.\n";
+    echo "ADVERTENCIA: API BITGET no disponible o sin datos. Se omite sincronizaciÃ³n exterior. Solo se ejecuta trailing SL local.\n";
 }
 
 // -----------------------------------------------------------------------
 // PASO 4: Trailing Stop Loss + Cierre por SL local
-// Para cada posición que sigue abierta en BD, ajustar el trailing SL.
-// Si el precio toca el SL: enviar orden de cierre REAL a Binance.
+// Para cada posiciÃ³n que sigue abierta en BD, ajustar el trailing SL.
+// Si el precio toca el SL: enviar orden de cierre REAL a BITGET.
 // -----------------------------------------------------------------------
 foreach ($positions as $pos) {
     $id          = $pos['id'];
@@ -97,7 +97,7 @@ foreach ($positions as $pos) {
     $current_sl  = floatval($pos['stop_loss']);
     $quantity    = floatval($pos['quantity']);
 
-    $current_price = binance_get_price($symbol);
+    $current_price = BITGET_get_price($symbol);
     if (!$current_price) {
         echo "ERROR: No se pudo obtener precio de $symbol. Saltando.\n";
         continue;
@@ -120,8 +120,8 @@ foreach ($positions as $pos) {
             $target_sl    = max($entry_price, $suggested_sl); // al menos breakeven
             if ($target_sl > $current_sl) {
                 $new_sl = $target_sl;
-                binance_cancel_all_orders($symbol);
-                binance_place_stop_market($symbol, 'SELL', $new_sl, $quantity);
+                BITGET_cancel_all_orders($symbol);
+                BITGET_place_stop_market($symbol, 'SELL', $new_sl, $quantity);
             }
         }
     } else { // short
@@ -136,36 +136,36 @@ foreach ($positions as $pos) {
             $target_sl    = min($entry_price, $suggested_sl); // al menos breakeven
             if ($target_sl < $current_sl) {
                 $new_sl = $target_sl;
-                binance_cancel_all_orders($symbol);
-                binance_place_stop_market($symbol, 'BUY', $new_sl, $quantity);
+                BITGET_cancel_all_orders($symbol);
+                BITGET_place_stop_market($symbol, 'BUY', $new_sl, $quantity);
             }
         }
     }
 
     if ($sl_triggered) {
         // ----------------------------------------------------------------
-        // SL LOCAL ACTIVADO: enviar orden de cierre REAL a Binance
-        // No asumir que Binance ya lo cerró — mandarlo explícitamente.
+        // SL LOCAL ACTIVADO: enviar orden de cierre REAL a BITGET
+        // No asumir que BITGET ya lo cerrÃ³ â€” mandarlo explÃ­citamente.
         // ----------------------------------------------------------------
         $close_side = ($type === 'buy') ? 'SELL' : 'BUY';
 
-        // Cancelar órdenes pendientes (el STOP_MARKET nativo) antes de enviar MARKET
-        binance_cancel_all_orders($symbol);
+        // Cancelar Ã³rdenes pendientes (el STOP_MARKET nativo) antes de enviar MARKET
+        BITGET_cancel_all_orders($symbol);
 
         // Enviar orden de cierre de mercado
-        $close_resp = binance_close_position($symbol, $close_side, $quantity);
+        $close_resp = BITGET_close_position($symbol, $close_side, $quantity);
 
-        if (binance_order_success($close_resp)) {
-            // Cerrar en BD solo si Binance aceptó la orden
+        if (BITGET_order_success($close_resp)) {
+            // Cerrar en BD solo si BITGET aceptÃ³ la orden
             $upd = $db->prepare(
                 "UPDATE positions SET status = 'closed', closed_at = CURRENT_TIMESTAMP,
                  profit_loss_percent = ?, profit_loss_fiat = ? WHERE id = ? AND status = 'open'"
             );
             $upd->execute([$profit_percent, $profit_fiat, $id]);
-            echo "SL_CERRADA: Posición #$id ($symbol) cerrada en Binance y BD por Stop Loss local a $current_price. PnL: " . round($profit_percent, 2) . "%\n";
+            echo "SL_CERRADA: PosiciÃ³n #$id ($symbol) cerrada en BITGET y BD por Stop Loss local a $current_price. PnL: " . round($profit_percent, 2) . "%\n";
         } else {
             $err = isset($close_resp['code']) ? "code={$close_resp['code']} msg={$close_resp['msg']}" : json_encode($close_resp);
-            echo "SL_ERROR: Posición #$id ($symbol) — SL activado pero fallo al cerrar en Binance: $err. BD NO actualizada.\n";
+            echo "SL_ERROR: PosiciÃ³n #$id ($symbol) â€” SL activado pero fallo al cerrar en BITGET: $err. BD NO actualizada.\n";
         }
     } else {
         // Actualizar trailing SL y PnL en BD
@@ -177,3 +177,4 @@ foreach ($positions as $pos) {
     }
 }
 ?>
+

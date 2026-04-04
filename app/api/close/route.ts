@@ -6,6 +6,8 @@ import {
   bitgetGetPrice, 
   bitgetCancelAllOrders, 
   bitgetClosePosition, 
+  bitgetFlashClosePosition,
+  bitgetGetSinglePosition,
   bitgetOrderSuccess,
   bitgetGetCommissionRate
 } from '@/lib/bitget';
@@ -30,10 +32,27 @@ export async function POST(req: NextRequest) {
     const entryComm = (pos as any).commission ?? 0.0004;
 
     const closeSide = pos.positionType === 'buy' ? 'SELL' : 'BUY';
+    const holdSide = pos.positionType === 'buy' ? 'long' : 'short';
     await bitgetCancelAllOrders(symbol, mode);
-    const closeResp = await bitgetClosePosition(symbol, closeSide, pos.quantity, mode);
+    let closeResp = await bitgetFlashClosePosition(symbol, holdSide, mode);
+
+    if (!bitgetOrderSuccess(closeResp)) {
+      closeResp = await bitgetClosePosition(symbol, closeSide, pos.quantity, mode);
+    }
+
+    await bitgetCancelAllOrders(symbol, mode);
 
     if (bitgetOrderSuccess(closeResp)) {
+      const verifySnapshot = await bitgetGetSinglePosition(symbol, mode);
+      if (!verifySnapshot.ok) {
+        return NextResponse.json({ error: true, message: 'Bitget close verification failed', details: verifySnapshot.errors }, { status: 502 });
+      }
+
+      const stillOpen = verifySnapshot.positions.some((rp: any) => rp.symbol && parseFloat(rp.positionAmt) !== 0);
+      if (stillOpen) {
+        return NextResponse.json({ error: true, message: 'Position still open on Bitget after close attempt', details: closeResp }, { status: 409 });
+      }
+
       const entryCost = pos.entryPrice * pos.quantity * entryComm;
       const exitCost = currentPrice * pos.quantity * exitComm;
 

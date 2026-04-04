@@ -1,11 +1,11 @@
-<?php
+﻿<?php
 // dashboard.php
 require_once 'config.php';
-require_once 'binance_api.php';
+require_once 'BITGET_api.php';
 
 /**
- * Cierra una posición: cancela órdenes, envía orden de cierre a Binance,
- * verifica que Binance lo confirme, y solo entonces actualiza la BD.
+ * Cierra una posiciÃ³n: cancela Ã³rdenes, envÃ­a orden de cierre a BITGET,
+ * verifica que BITGET lo confirme, y solo entonces actualiza la BD.
  * Devuelve ['ok'=>true] o ['ok'=>false, 'error'=>'mensaje'].
  */
 function close_position_sync($db, $pos) {
@@ -16,9 +16,9 @@ function close_position_sync($db, $pos) {
     $id         = $pos['id'];
 
     // 1. Obtener precio actual
-    $current_price = binance_get_price($symbol);
+    $current_price = BITGET_get_price($symbol);
     if (!$current_price) {
-        return ['ok' => false, 'error' => "No se pudo obtener el precio de $symbol en Binance."];
+        return ['ok' => false, 'error' => "No se pudo obtener el precio de $symbol en BITGET."];
     }
 
     // 2. Calcular PnL estimado
@@ -32,36 +32,36 @@ function close_position_sync($db, $pos) {
         $close_side     = 'BUY';
     }
 
-    // 3. Cancelar todas las órdenes abiertas del símbolo (SL nativo, etc.)
-    binance_cancel_all_orders($symbol);
+    // 3. Cancelar todas las Ã³rdenes abiertas del sÃ­mbolo (SL nativo, etc.)
+    BITGET_cancel_all_orders($symbol);
 
-    // 4. Enviar orden de cierre a Binance (con retry automático en binance_close_position)
-    $order_resp = binance_close_position($symbol, $close_side, $quantity);
+    // 4. Enviar orden de cierre a BITGET (con retry automÃ¡tico en BITGET_close_position)
+    $order_resp = BITGET_close_position($symbol, $close_side, $quantity);
 
-    // 5. Revisar si la orden fue aceptada por Binance
-    if (!binance_order_success($order_resp)) {
+    // 5. Revisar si la orden fue aceptada por BITGET
+    if (!BITGET_order_success($order_resp)) {
         $error_detail = '';
         if (isset($order_resp['code'])) {
-            $error_detail = "Código Binance: {$order_resp['code']} — " . ($order_resp['msg'] ?? '');
+            $error_detail = "CÃ³digo BITGET: {$order_resp['code']} â€” " . ($order_resp['msg'] ?? '');
         } elseif (isset($order_resp['message'])) {
             $error_detail = $order_resp['message'];
         } else {
             $error_detail = json_encode($order_resp);
         }
-        return ['ok' => false, 'error' => "Binance rechazó la orden de cierre. $error_detail"];
+        return ['ok' => false, 'error' => "BITGET rechazÃ³ la orden de cierre. $error_detail"];
     }
 
-    // 6. Verificar en Binance que la posición quedó realmente en 0
-    // (pequeña pausa para dar tiempo a Binance de procesar)
+    // 6. Verificar en BITGET que la posiciÃ³n quedÃ³ realmente en 0
+    // (pequeÃ±a pausa para dar tiempo a BITGET de procesar)
     usleep(500000); // 0.5 segundos
-    $still_open = binance_position_is_open($symbol);
+    $still_open = BITGET_position_is_open($symbol);
 
     if ($still_open === true) {
-        // La posición sigue abierta en Binance a pesar de la orden
-        return ['ok' => false, 'error' => "Orden enviada a Binance (orderId={$order_resp['orderId']}) pero la posición sigue apareciendo como abierta. Verifica manualmente en Binance."];
+        // La posiciÃ³n sigue abierta en BITGET a pesar de la orden
+        return ['ok' => false, 'error' => "Orden enviada a BITGET (orderId={$order_resp['orderId']}) pero la posiciÃ³n sigue apareciendo como abierta. Verifica manualmente en BITGET."];
     }
 
-    // 7. Binance confirmó el cierre (o null = no se pudo verificar, pero la orden fue aceptada)
+    // 7. BITGET confirmÃ³ el cierre (o null = no se pudo verificar, pero la orden fue aceptada)
     // Actualizar BD local
     $upd = $db->prepare(
         "UPDATE positions SET status = 'closed', closed_at = CURRENT_TIMESTAMP, 
@@ -74,7 +74,7 @@ function close_position_sync($db, $pos) {
 
 // ---- Handlers POST ----
 
-// Cierre forzado de una posición individual
+// Cierre forzado de una posiciÃ³n individual
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'force_close') {
     $id_to_close = intval($_POST['position_id']);
     $stmt = $db->prepare("SELECT * FROM positions WHERE id = ? AND status = 'open'");
@@ -84,12 +84,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     if ($pos) {
         $result = close_position_sync($db, $pos);
         if ($result['ok']) {
-            $msg_success = "✅ Posición #{$id_to_close} cerrada correctamente en Binance y BD a precio {$result['price']}. PnL: " . number_format($result['pnl'], 2) . " USDT";
+            $msg_success = "âœ… PosiciÃ³n #{$id_to_close} cerrada correctamente en BITGET y BD a precio {$result['price']}. PnL: " . number_format($result['pnl'], 2) . " USDT";
         } else {
-            $msg_error = "❌ " . $result['error'];
+            $msg_error = "âŒ " . $result['error'];
         }
     } else {
-        $msg_error = "Posición no encontrada o ya cerrada.";
+        $msg_error = "PosiciÃ³n no encontrada o ya cerrada.";
     }
 
 // Cierre de emergencia de todas las posiciones
@@ -109,10 +109,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     }
 
     if ($closed_count > 0) {
-        $msg_success = "✅ Cierre de emergencia: $closed_count posición(es) cerrada(s) correctamente.";
+        $msg_success = "âœ… Cierre de emergencia: $closed_count posiciÃ³n(es) cerrada(s) correctamente.";
     }
     if (!empty($errors)) {
-        $msg_error = "❌ Errores en cierre masivo:\n" . implode("\n", $errors);
+        $msg_error = "âŒ Errores en cierre masivo:\n" . implode("\n", $errors);
     }
 
 // Borrar historial
@@ -149,7 +149,7 @@ $total_fiat = $stmt->fetchColumn() ?: 0;
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Binance Trading Bot</title>
+    <title>BITGET Trading Bot</title>
     <link rel="icon" type="image/png" href="favicon.png">
     <style>
         :root {
@@ -510,8 +510,8 @@ $total_fiat = $stmt->fetchColumn() ?: 0;
                 </div>
 
                 <button class="btn btn-primary" style="margin: 0; width: auto;" onclick="openModal()">+ Nueva
-                    Posición</button>
-                <button type="button" class="btn" style="margin: 0; width: auto; background-color: #991b1b;" onclick="emergencyCloseAll()">⚠️ Cierre de Emergencia</button>
+                    PosiciÃ³n</button>
+                <button type="button" class="btn" style="margin: 0; width: auto; background-color: #991b1b;" onclick="emergencyCloseAll()">âš ï¸ Cierre de Emergencia</button>
                 <div class="total-pnl" style="margin-left: auto;">
                     Balance Total:
                     <span class="<?= $total_fiat >= 0 ? 'text-success' : 'text-danger' ?>">
@@ -531,21 +531,21 @@ $total_fiat = $stmt->fetchColumn() ?: 0;
         <h2>Posiciones Activas (<?= count($open_positions) ?>)</h2>
         <div class="grid">
         <?php foreach ($open_positions as $pos):
-                $symbol_data = binance_get_price($pos['symbol']);
+                $symbol_data = BITGET_get_price($pos['symbol']);
                 $current_price = $symbol_data ? $symbol_data : $pos['entry_price'];
 
-                // Calcular si el SL garantiza algún beneficio mínimo
+                // Calcular si el SL garantiza algÃºn beneficio mÃ­nimo
                 $sl_profit_fiat = 0;
                 $is_safe        = false;
                 $is_breakeven   = false;
 
                 if ($pos['position_type'] === 'buy') {
                     $profit_percent = (($current_price - $pos['entry_price']) / $pos['entry_price']) * 100;
-                    // PnL si la posición se cerrase al precio del SL actual
+                    // PnL si la posiciÃ³n se cerrase al precio del SL actual
                     $sl_profit_fiat = ($pos['stop_loss'] - $pos['entry_price']) * floatval($pos['quantity']);
                     if ($pos['stop_loss'] >= $pos['entry_price']) {
                         $is_safe = true;
-                        $is_breakeven = (abs($sl_profit_fiat) < 0.01); // prácticamente cero → breakeven
+                        $is_breakeven = (abs($sl_profit_fiat) < 0.01); // prÃ¡cticamente cero â†’ breakeven
                     }
                 } else {
                     $profit_percent = (($pos['entry_price'] - $current_price) / $pos['entry_price']) * 100;
@@ -593,9 +593,9 @@ $total_fiat = $stmt->fetchColumn() ?: 0;
                     <?php if ($is_safe): ?>
                         <div class="stat-row" style="margin-top: 10px; justify-content: center;">
                             <?php if ($is_breakeven): ?>
-                                <span class="badge safe">⚖️ Breakeven Asegurado</span>
+                                <span class="badge safe">âš–ï¸ Breakeven Asegurado</span>
                             <?php else: ?>
-                                <span class="badge safe">✓ Beneficio <?= number_format($sl_profit_fiat, 2) ?> USDT Asegurado</span>
+                                <span class="badge safe">âœ“ Beneficio <?= number_format($sl_profit_fiat, 2) ?> USDT Asegurado</span>
                             <?php endif; ?>
                         </div>
                     <?php endif; ?>
@@ -610,11 +610,11 @@ $total_fiat = $stmt->fetchColumn() ?: 0;
         </div><!-- /.grid -->
 
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-            <h2 style="margin: 0;">Histórico de Posiciones Cerradas</h2>
+            <h2 style="margin: 0;">HistÃ³rico de Posiciones Cerradas</h2>
             <?php if (!empty($closed_positions)): ?>
                 <button type="button" class="btn"
                         style="background-color: #475569; margin-top: 0; width: auto; font-size: 0.8em; padding: 6px 12px; border-radius: 4px;"
-                        onclick="confirmClearHistory()">🗑️ Borrar Historial</button>
+                        onclick="confirmClearHistory()">ðŸ—‘ï¸ Borrar Historial</button>
             <?php endif; ?>
         </div>
 
@@ -623,14 +623,14 @@ $total_fiat = $stmt->fetchColumn() ?: 0;
                 <thead>
                     <tr>
                         <th>ID</th>
-                        <th>Símbolo</th>
+                        <th>SÃ­mbolo</th>
                         <th>Tipo</th>
                         <th>Entrada</th>
                         <th>Monto (USDT)</th>
                         <th>PnL %</th>
                         <th>PnL (USDT)</th>
                         <th>Fecha Cierre</th>
-                        <th>Duración</th>
+                        <th>DuraciÃ³n</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -667,7 +667,7 @@ $total_fiat = $stmt->fetchColumn() ?: 0;
                     <?php endforeach; ?>
                     <?php if (empty($closed_positions)): ?>
                         <tr>
-                            <td colspan="8" style="text-align: center; color: var(--text-muted);">Aún no hay posiciones
+                            <td colspan="8" style="text-align: center; color: var(--text-muted);">AÃºn no hay posiciones
                                 cerradas.</td>
                         </tr>
                     <?php endif; ?>
@@ -678,9 +678,9 @@ $total_fiat = $stmt->fetchColumn() ?: 0;
         <!-- Modal -->
         <div class="modal-overlay" id="newPosModal">
             <div class="modal">
-                <h3>Abrir Nueva Posición</h3>
+                <h3>Abrir Nueva PosiciÃ³n</h3>
                 <div class="form-group">
-                    <label>Símbolo (ej. BTCUSDT)</label>
+                    <label>SÃ­mbolo (ej. BTCUSDT)</label>
                     <input type="text" id="new_symbol" placeholder="BTCUSDT" style="text-transform: uppercase;">
                 </div>
                 <div class="form-group">
@@ -688,7 +688,7 @@ $total_fiat = $stmt->fetchColumn() ?: 0;
                     <input type="number" id="new_amount" placeholder="100" step="0.01">
                 </div>
                 <div class="form-group">
-                    <label>Tipo de Posición</label>
+                    <label>Tipo de PosiciÃ³n</label>
                     <select id="new_type">
                         <option value="buy">BUY (Long)</option>
                         <option value="sell">SELL (Short)</option>
@@ -697,7 +697,7 @@ $total_fiat = $stmt->fetchColumn() ?: 0;
                 <div class="modal-actions">
                     <button class="btn btn-secondary" style="margin: 0;" onclick="closeModal()">Cancelar</button>
                     <button class="btn btn-primary" style="margin: 0;" onclick="submitNewPosition()"
-                        id="btnSubmitPos">Abrir Posición</button>
+                        id="btnSubmitPos">Abrir PosiciÃ³n</button>
                 </div>
             </div>
         </div>
@@ -705,11 +705,11 @@ $total_fiat = $stmt->fetchColumn() ?: 0;
         <!-- Confirm Modal -->
         <div class="modal-overlay" id="confirmModal">
             <div class="modal">
-                <h3 id="confirmTitle">Confirmación</h3>
+                <h3 id="confirmTitle">ConfirmaciÃ³n</h3>
                 <p id="confirmMessage" style="color: var(--text-muted); margin-bottom: 25px;"></p>
                 <div class="modal-actions">
                     <button class="btn btn-secondary" style="margin: 0;" onclick="closeConfirm()">No, Cancelar</button>
-                    <button class="btn btn-primary" style="margin: 0; background-color: var(--danger);" id="confirmBtnAction">Sí, Proceder</button>
+                    <button class="btn btn-primary" style="margin: 0; background-color: var(--danger);" id="confirmBtnAction">SÃ­, Proceder</button>
                 </div>
             </div>
         </div>
@@ -763,7 +763,7 @@ $total_fiat = $stmt->fetchColumn() ?: 0;
                 .then(r => r.json())
                 .then(data => {
                     btn.disabled = false;
-                    btn.innerText = 'Abrir Posición';
+                    btn.innerText = 'Abrir PosiciÃ³n';
                     if (data.error) {
                         alert('Error: ' + data.message);
                     } else {
@@ -776,12 +776,12 @@ $total_fiat = $stmt->fetchColumn() ?: 0;
                 })
                 .catch(err => {
                     btn.disabled = false;
-                    btn.innerText = 'Abrir Posición';
-                    alert('Error en conexión con la API interna.');
+                    btn.innerText = 'Abrir PosiciÃ³n';
+                    alert('Error en conexiÃ³n con la API interna.');
                 });
         }
 
-        // Función para cierre forzado vía AJAX con modal propio
+        // FunciÃ³n para cierre forzado vÃ­a AJAX con modal propio
         let confirmActionCallback = null;
 
         function showConfirm(title, message, onConfirm) {
@@ -803,8 +803,8 @@ $total_fiat = $stmt->fetchColumn() ?: 0;
 
         function forceClose(id, symbol) {
             showConfirm(
-                'Cerrar Posición', 
-                `¿Estás seguro de que deseas forzar el cierre de ${symbol}? Esta acción es irreversible.`,
+                'Cerrar PosiciÃ³n', 
+                `Â¿EstÃ¡s seguro de que deseas forzar el cierre de ${symbol}? Esta acciÃ³n es irreversible.`,
                 () => {
                     const formData = new FormData();
                     formData.append('action', 'force_close');
@@ -815,16 +815,16 @@ $total_fiat = $stmt->fetchColumn() ?: 0;
                         body: formData
                     })
                     .then(() => fetchDashboard())
-                    .catch(err => alert('Error al intentar cerrar la posición.'));
+                    .catch(err => alert('Error al intentar cerrar la posiciÃ³n.'));
                 }
             );
         }
 
-        // Función para cierre de emergencia AJAX con modal propio
+        // FunciÃ³n para cierre de emergencia AJAX con modal propio
         function emergencyCloseAll() {
             showConfirm(
                 'CIERRE DE EMERGENCIA',
-                '¡PELIGRO! Esta acción cerrará TODAS tus posiciones abiertas a precio de mercado inmediatamente. ¿Deseas continuar?',
+                'Â¡PELIGRO! Esta acciÃ³n cerrarÃ¡ TODAS tus posiciones abiertas a precio de mercado inmediatamente. Â¿Deseas continuar?',
                 () => {
                     const formData = new FormData();
                     formData.append('action', 'force_close_all');
@@ -839,11 +839,11 @@ $total_fiat = $stmt->fetchColumn() ?: 0;
             );
         }
 
-        // Función para borrar historial AJAX con modal propio
+        // FunciÃ³n para borrar historial AJAX con modal propio
         function confirmClearHistory() {
             showConfirm(
                 'Borrar Historial',
-                '¿Deseas eliminar permanentemente el historial de posiciones cerradas? Esto también reiniciará el balance total acumulado.',
+                'Â¿Deseas eliminar permanentemente el historial de posiciones cerradas? Esto tambiÃ©n reiniciarÃ¡ el balance total acumulado.',
                 () => {
                     const formData = new FormData();
                     formData.append('action', 'clear_history');
@@ -890,13 +890,13 @@ $total_fiat = $stmt->fetchColumn() ?: 0;
                 .catch(err => console.error('Error actualizando dashboard:', err));
         }
 
-        // Refresco de información cada 10 segundos
+        // Refresco de informaciÃ³n cada 10 segundos
         setInterval(function () {
             // 1. Ejecutar el script monitor.php en segundo plano 
             // (esto actualiza los Stop Loss sin bloquear la UI)
             fetch('monitor.php')
                 .then(() => {
-                    // 2. Transcurridos los cálculos, refrescar el dashboard visualmente
+                    // 2. Transcurridos los cÃ¡lculos, refrescar el dashboard visualmente
                     fetchDashboard();
                 })
                 .catch(err => console.error('Error ejecutando monitor:', err));
