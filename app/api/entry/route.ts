@@ -29,7 +29,7 @@ import {
 
 type TradingMode = 'demo' | 'live';
 
-const MAKER_RETRY_DELAYS_MS = [600, 900];
+const DEFAULT_MAKER_RETRY_DELAYS_MS = [1200, 1800, 2500];
 const DEFAULT_MAX_SPREAD_PERCENT = 0.12;
 const DEFAULT_MAX_TAKER_COST_PERCENT = 0.2;
 
@@ -38,6 +38,19 @@ const createClientOid = (symbol: string) =>
   `bgd-${symbol.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 const extractOrderData = (detailResponse: any) => detailResponse?.data?.[0] || detailResponse?.data || {};
+const getMakerRetryDelays = () => {
+  const rawValue = process.env.BITGET_MAKER_RETRY_DELAYS_MS;
+  if (!rawValue) {
+    return DEFAULT_MAKER_RETRY_DELAYS_MS;
+  }
+
+  const parsed = rawValue
+    .split(',')
+    .map((item) => Number.parseInt(item.trim(), 10))
+    .filter((value) => Number.isFinite(value) && value > 0);
+
+  return parsed.length > 0 ? parsed : DEFAULT_MAKER_RETRY_DELAYS_MS;
+};
 
 export async function POST(req: NextRequest) {
   const auth = await getAuthContext(req);
@@ -152,6 +165,7 @@ export async function POST(req: NextRequest) {
     const spreadPercent = midPrice > 0 ? ((bestAsk - bestBid) / midPrice) * 100 : 0;
     const maxSpreadPercent = Number.parseFloat(process.env.BITGET_MAX_SPREAD_PERCENT || `${DEFAULT_MAX_SPREAD_PERCENT}`);
     const maxTakerCostPercent = Number.parseFloat(process.env.BITGET_MAX_TAKER_COST_PERCENT || `${DEFAULT_MAX_TAKER_COST_PERCENT}`);
+    const makerRetryDelays = getMakerRetryDelays();
 
     const vipFees = await bitgetGetVipFeeRates();
     const makerFeeRate = await bitgetGetMakerCommissionRate(symbol, tradingMode);
@@ -202,7 +216,7 @@ export async function POST(req: NextRequest) {
     let realEntryFee = expectedMakerFee;
     let lastOrderResponse: any = null;
 
-    for (const delayMs of MAKER_RETRY_DELAYS_MS) {
+    for (const delayMs of makerRetryDelays) {
       const attemptDepth = await bitgetGetMergeDepth(symbol, tradingMode);
       if (!attemptDepth.ok || attemptDepth.bids.length === 0 || attemptDepth.asks.length === 0) {
         continue;

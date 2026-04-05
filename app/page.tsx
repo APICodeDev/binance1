@@ -137,6 +137,14 @@ interface StatsPayload {
   timestamp: string;
 }
 
+interface NewPositionForm {
+  symbol: string;
+  amount: string;
+  type: 'buy' | 'sell';
+  allowTakerFallback: boolean;
+  takerFallbackMode: 'ioc' | 'market';
+}
+
 function formatPrice(value: number, precision?: number | null) {
   return value.toFixed(typeof precision === 'number' ? precision : 4);
 }
@@ -197,7 +205,13 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [showModal, setShowModal] = useState(false);
-  const [newPos, setNewPos] = useState({ symbol: '', amount: '100', type: 'buy' });
+  const [newPos, setNewPos] = useState<NewPositionForm>({
+    symbol: '',
+    amount: '100',
+    type: 'buy',
+    allowTakerFallback: true,
+    takerFallbackMode: 'ioc',
+  });
   const [showSymbolOptions, setShowSymbolOptions] = useState(false);
   const [totalPnl, setTotalPnl] = useState(0);
   const [showSplash, setShowSplash] = useState(true);
@@ -531,10 +545,16 @@ export default function Dashboard() {
     try {
       await apiClient.openPosition(newPos);
       setShowModal(false);
-      setNewPos({ symbol: '', amount: '100', type: 'buy' });
+      setNewPos({
+        symbol: '',
+        amount: '100',
+        type: 'buy',
+        allowTakerFallback: true,
+        takerFallbackMode: 'ioc',
+      });
       fetchData();
     } catch (error) {
-      setErrorPopup('Error de red al intentar abrir la posición.');
+      setErrorPopup(getApiErrorMessage(error, 'Error de red al intentar abrir la posicion.'));
     }
   };
 
@@ -1594,6 +1614,59 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
                     >
                       SHORT / SELL
                     </button>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 space-y-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Execution Policy</p>
+                        <p className="mt-1 text-sm font-bold text-slate-200">Maker first with controlled fallback</p>
+                        <p className="mt-1 text-xs text-slate-500">Intentaremos entrar como maker y, si no ejecuta a tiempo, podra usar un fallback taker acotado.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setNewPos({ ...newPos, allowTakerFallback: !newPos.allowTakerFallback })}
+                        className={cn(
+                          "min-w-[116px] rounded-2xl border px-3 py-2 text-[11px] font-black uppercase tracking-widest transition-colors",
+                          newPos.allowTakerFallback
+                            ? "border-amber-400 bg-amber-400 text-slate-950"
+                            : "border-slate-700 bg-slate-900 text-slate-400"
+                        )}
+                      >
+                        {newPos.allowTakerFallback ? 'Fallback On' : 'Fallback Off'}
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        disabled={!newPos.allowTakerFallback}
+                        onClick={() => setNewPos({ ...newPos, takerFallbackMode: 'ioc' })}
+                        className={cn(
+                          "rounded-2xl border p-3 text-xs font-black uppercase tracking-widest transition-all",
+                          newPos.allowTakerFallback && newPos.takerFallbackMode === 'ioc'
+                            ? "border-emerald-400 bg-emerald-500 text-slate-950"
+                            : "border-slate-800 bg-slate-950/50 text-slate-400",
+                          !newPos.allowTakerFallback && "cursor-not-allowed opacity-40"
+                        )}
+                      >
+                        IOC Fallback
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!newPos.allowTakerFallback}
+                        onClick={() => setNewPos({ ...newPos, takerFallbackMode: 'market' })}
+                        className={cn(
+                          "rounded-2xl border p-3 text-xs font-black uppercase tracking-widest transition-all",
+                          newPos.allowTakerFallback && newPos.takerFallbackMode === 'market'
+                            ? "border-rose-400 bg-rose-500 text-white"
+                            : "border-slate-800 bg-slate-950/50 text-slate-400",
+                          !newPos.allowTakerFallback && "cursor-not-allowed opacity-40"
+                        )}
+                      >
+                        Market Fallback
+                      </button>
+                    </div>
                   </div>
 
                   <div className="flex gap-4 pt-4">

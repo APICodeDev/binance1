@@ -130,7 +130,7 @@ export const apiClient = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  openPosition: (payload: Record<string, unknown>) =>
+  openPosition: (payload: object) =>
     request<any>('/api/entry', {
       method: 'POST',
       body: JSON.stringify(payload),
