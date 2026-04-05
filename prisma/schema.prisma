@@ -25,6 +25,7 @@ model Position {
   origin               String?   // Added origin
   timeframe            String?   // Added timeframe
   commission           Float?    @default(0) // Entry commission rate (e.g., 0.0004 for 0.04%)
+  pricePrecision       Int?      @default(4) @map("price_precision")
 
   @@map("positions")
 }

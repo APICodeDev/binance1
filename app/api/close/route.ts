@@ -60,7 +60,9 @@ export async function POST(req: NextRequest) {
         ? ((currentPrice - pos.entryPrice) * pos.quantity) - entryCost - exitCost
         : ((pos.entryPrice - currentPrice) * pos.quantity) - entryCost - exitCost;
       
-      const profitPercent = (profitFiat / (pos.entryPrice * pos.quantity)) * 100;
+      const profitPercent = pos.positionType === 'buy'
+        ? ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100
+        : ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100;
 
       await prisma.position.update({
         where: { id: pos.id },

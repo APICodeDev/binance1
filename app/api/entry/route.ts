@@ -107,7 +107,9 @@ export async function POST(req: NextRequest) {
             ? ((currentPrice - existing.entryPrice) * existing.quantity) - entryCost - exitCost
             : ((existing.entryPrice - currentPrice) * existing.quantity) - entryCost - exitCost;
           
-          const profitPercent = (profitFiat / (existing.entryPrice * existing.quantity)) * 100;
+          const profitPercent = existing.positionType === 'buy'
+            ? ((currentPrice - existing.entryPrice) / existing.entryPrice) * 100
+            : ((existing.entryPrice - currentPrice) / existing.entryPrice) * 100;
 
           await prisma.position.update({
             where: { id: existing.id },
@@ -137,6 +139,7 @@ export async function POST(req: NextRequest) {
 
     const exchangeInfo = await bitgetGetExchangeInfo(symbol, tradingMode);
     const commission = await bitgetGetCommissionRate(symbol, tradingMode);
+    const pricePrecision = parseInt(exchangeInfo?.pricePlace || '4', 10);
     
     let quantityRaw = 0;
     if (incomingQuantity > 0) {
@@ -200,6 +203,7 @@ export async function POST(req: NextRequest) {
         origin,
         timeframe,
         commission: commission as any,
+        pricePrecision,
       },
     } as any);
 

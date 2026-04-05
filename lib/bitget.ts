@@ -240,9 +240,67 @@ export const bitgetPlaceStopMarket = async (symbol: string, side: 'BUY' | 'SELL'
   return bitgetRequest('/api/v2/mix/order/place-plan-order', params, 'POST', true, tradingMode);
 };
 
+export const bitgetGetPendingStopOrders = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo') => {
+  const sym = symbol.toUpperCase();
+  const resp = await bitgetRequest('/api/v2/mix/order/orders-plan-pending', {
+    symbol: sym,
+    planType: 'normal_plan',
+    productType: getProductType(sym),
+  }, 'GET', true, tradingMode);
+
+  if (!bitgetOrderSuccess(resp)) {
+    return { ok: false, orders: [], error: resp?.msg || resp?.message || JSON.stringify(resp) };
+  }
+
+  return {
+    ok: true,
+    orders: Array.isArray(resp?.data?.entrustedList) ? resp.data.entrustedList : [],
+    error: null,
+  };
+};
+
+export const bitgetModifyStopOrder = async (
+  symbol: string,
+  orderId: string,
+  stopPrice: number,
+  tradingMode: 'demo' | 'live' = 'demo'
+) => {
+  const sym = symbol.toUpperCase();
+  const precision = await bitgetGetPricePrecision(sym, tradingMode);
+
+  return bitgetRequest('/api/v2/mix/order/modify-plan-order', {
+    orderId,
+    planType: 'normal_plan',
+    symbol: sym,
+    productType: getProductType(sym),
+    marginCoin: getMarginCoin(sym),
+    newTriggerPrice: stopPrice.toFixed(precision),
+    newTriggerType: 'mark_price',
+  }, 'POST', true, tradingMode);
+};
+
+export const bitgetCancelPlanOrdersByIds = async (
+  symbol: string,
+  orderIds: string[],
+  tradingMode: 'demo' | 'live' = 'demo'
+) => {
+  const sym = symbol.toUpperCase();
+  if (orderIds.length === 0) {
+    return { code: '00000', msg: 'success', data: { successList: [], failureList: [] } };
+  }
+
+  return bitgetRequest('/api/v2/mix/order/cancel-plan-order', {
+    symbol: sym,
+    productType: getProductType(sym),
+    marginCoin: getMarginCoin(sym),
+    orderIdList: orderIds.map((orderId) => ({ orderId, clientOid: '' })),
+  }, 'POST', true, tradingMode);
+};
+
 export const bitgetCancelAlgoOrders = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo') => {
   const sym = symbol.toUpperCase();
   return bitgetRequest('/api/v2/mix/order/cancel-all-plan-order', {
+    symbol: sym,
     productType: getProductType(sym),
     marginCoin: getMarginCoin(sym),
     planType: 'normal_plan'

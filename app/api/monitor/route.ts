@@ -8,6 +8,9 @@ import {
   bitgetGetSinglePosition,
   bitgetCancelAllOrders, 
   bitgetCancelAlgoOrders,
+  bitgetGetPendingStopOrders,
+  bitgetModifyStopOrder,
+  bitgetCancelPlanOrdersByIds,
   bitgetOrderSuccess, 
   bitgetClosePosition, 
   bitgetPlaceStopMarket,
@@ -41,6 +44,42 @@ export async function GET() {
   const liveMap = buildMap(realLive.positions);
 
   const results: string[] = [];
+
+  const syncStopOrder = async (
+    symbol: string,
+    side: 'BUY' | 'SELL',
+    stopPrice: number,
+    quantity: number,
+    mode: 'demo' | 'live'
+  ) => {
+    const pending = await bitgetGetPendingStopOrders(symbol, mode);
+    if (!pending.ok) {
+      return { ok: false, message: pending.error || 'Unable to fetch pending stop orders' };
+    }
+
+    const stopOrders = pending.orders.filter((order: any) => order.planType === 'normal_plan');
+    const primary = stopOrders[0];
+    const extras = stopOrders.slice(1).map((order: any) => order.orderId).filter(Boolean);
+
+    if (extras.length > 0) {
+      await bitgetCancelPlanOrdersByIds(symbol, extras, mode);
+    }
+
+    if (primary?.orderId) {
+      const modifyResp = await bitgetModifyStopOrder(symbol, primary.orderId, stopPrice, mode);
+      if (bitgetOrderSuccess(modifyResp)) {
+        return { ok: true, message: 'modified' };
+      }
+    }
+
+    await bitgetCancelAlgoOrders(symbol, mode);
+    const placeResp = await bitgetPlaceStopMarket(symbol, side, stopPrice, quantity, mode);
+    if (bitgetOrderSuccess(placeResp)) {
+      return { ok: true, message: 'placed' };
+    }
+
+    return { ok: false, message: placeResp?.msg || placeResp?.message || JSON.stringify(placeResp) };
+  };
 
   for (const pos of positions) {
     const mode = ((pos as any).tradingMode || 'demo') as 'demo' | 'live';
@@ -76,7 +115,9 @@ export async function GET() {
         ? ((currentPrice - pos.entryPrice) * pos.quantity) - entryCost - exitCost
         : ((pos.entryPrice - currentPrice) * pos.quantity) - entryCost - exitCost;
       
-      const profitPercent = (profitFiat / (pos.entryPrice * pos.quantity)) * 100;
+      const profitPercent = pos.positionType === 'buy'
+        ? ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100
+        : ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100;
 
       await bitgetCancelAllOrders(symbol, mode);
       await prisma.position.update({
@@ -107,7 +148,9 @@ export async function GET() {
       ? ((currentPrice - pos.entryPrice) * pos.quantity) - entryCost - exitCost
       : ((pos.entryPrice - currentPrice) * pos.quantity) - entryCost - exitCost;
     
-    const profitPercent = (profitFiat / (pos.entryPrice * pos.quantity)) * 100;
+    const profitPercent = pos.positionType === 'buy'
+      ? ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100
+      : ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100;
     const marketMovePercent = pos.positionType === 'buy'
       ? ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100
       : ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100;
@@ -123,19 +166,19 @@ export async function GET() {
         const crossedPrice = pos.entryPrice * (1 + crossedStep / 100);
         const targetSlPrice = crossedPrice * (1 - 0.5 / 100);
         if (targetSlPrice > pos.stopLoss) {
-          await bitgetCancelAlgoOrders(symbol, mode);
-          const slResp = await bitgetPlaceStopMarket(symbol, 'SELL', targetSlPrice, pos.quantity, mode);
-          if (bitgetOrderSuccess(slResp)) {
+          const slResp = await syncStopOrder(symbol, 'SELL', targetSlPrice, pos.quantity, mode);
+          if (slResp.ok) {
             newSl = targetSlPrice;
+            results.push(`SL_UPDATE (${mode}): ${symbol} trailing -> ${targetSlPrice}`);
           }
         }
       } else if (marketMovePercent >= 0.5) {
-        const targetSlPrice = pos.entryPrice;
+        const targetSlPrice = pos.entryPrice * (1 + ((pos as any).commission ?? 0.0004)) / (1 - comm);
         if (targetSlPrice > pos.stopLoss) {
-          await bitgetCancelAlgoOrders(symbol, mode);
-          const slResp = await bitgetPlaceStopMarket(symbol, 'SELL', targetSlPrice, pos.quantity, mode);
-          if (bitgetOrderSuccess(slResp)) {
+          const slResp = await syncStopOrder(symbol, 'SELL', targetSlPrice, pos.quantity, mode);
+          if (slResp.ok) {
             newSl = targetSlPrice;
+            results.push(`SL_UPDATE (${mode}): ${symbol} -> breakeven+fees`);
           }
         }
       }
@@ -147,19 +190,19 @@ export async function GET() {
         const crossedPrice = pos.entryPrice * (1 - crossedStep / 100);
         const targetSlPrice = crossedPrice * (1 + 0.5 / 100);
         if (targetSlPrice < pos.stopLoss) {
-          await bitgetCancelAlgoOrders(symbol, mode);
-          const slResp = await bitgetPlaceStopMarket(symbol, 'BUY', targetSlPrice, pos.quantity, mode);
-          if (bitgetOrderSuccess(slResp)) {
+          const slResp = await syncStopOrder(symbol, 'BUY', targetSlPrice, pos.quantity, mode);
+          if (slResp.ok) {
             newSl = targetSlPrice;
+            results.push(`SL_UPDATE (${mode}): ${symbol} trailing -> ${targetSlPrice}`);
           }
         }
       } else if (marketMovePercent >= 0.5) {
-        const targetSlPrice = pos.entryPrice;
+        const targetSlPrice = pos.entryPrice * (1 - ((pos as any).commission ?? 0.0004)) / (1 + comm);
         if (targetSlPrice < pos.stopLoss) {
-          await bitgetCancelAlgoOrders(symbol, mode);
-          const slResp = await bitgetPlaceStopMarket(symbol, 'BUY', targetSlPrice, pos.quantity, mode);
-          if (bitgetOrderSuccess(slResp)) {
+          const slResp = await syncStopOrder(symbol, 'BUY', targetSlPrice, pos.quantity, mode);
+          if (slResp.ok) {
             newSl = targetSlPrice;
+            results.push(`SL_UPDATE (${mode}): ${symbol} -> breakeven+fees`);
           }
         }
       }

@@ -28,6 +28,26 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+const AVAILABLE_SYMBOLS = [
+  'ADAUSDT',
+  'ATOMUSD',
+  'AVAXUSDT',
+  'DOGEUSDT',
+  'ETCUSDT',
+  'ETHUSDT',
+  'FILUSDT',
+  'HBARUSDT',
+  'LINKUSDT',
+  'LTCUSDT',
+  'NEARUSDT',
+  'RENDERUSDT',
+  'SANDUSDT',
+  'SOLUSDT',
+  'SUIUSDT',
+  'UNIUSDT',
+  'XRPUSDT',
+];
+
 function BitgetMark({ className = 'w-[100px] h-[100px]' }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -60,6 +80,11 @@ interface Position {
   origin?: string | null;
   timeframe?: string | null;
   commission?: number;
+  pricePrecision?: number | null;
+}
+
+function formatPrice(value: number, precision?: number | null) {
+  return value.toFixed(typeof precision === 'number' ? precision : 4);
 }
 
 export default function Dashboard() {
@@ -72,11 +97,17 @@ export default function Dashboard() {
   const [syncing, setSyncing] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [newPos, setNewPos] = useState({ symbol: '', amount: '100', type: 'buy' });
+  const [showSymbolOptions, setShowSymbolOptions] = useState(false);
   const [totalPnl, setTotalPnl] = useState(0);
   const [showSplash, setShowSplash] = useState(true);
   const [showEjectModal, setShowEjectModal] = useState<Position | null>(null);
   const [lastEntryError, setLastEntryError] = useState<{timestamp: string; symbol: string; type: string; detail: string} | null>(null);
+  const [hiddenEntryErrorKey, setHiddenEntryErrorKey] = useState<string | null>(null);
   const [errorPopup, setErrorPopup] = useState<string | null>(null);
+
+  const filteredSymbols = AVAILABLE_SYMBOLS.filter((symbol) =>
+    symbol.includes(newPos.symbol.toUpperCase())
+  );
 
   useEffect(() => {
     const timer = setTimeout(() => setShowSplash(false), 4100);
@@ -106,9 +137,12 @@ export default function Dashboard() {
         try {
           const parsed = JSON.parse(settings.last_entry_error);
           setLastEntryError(parsed);
+          const nextKey = `${parsed.timestamp}-${parsed.symbol}-${parsed.type}-${parsed.detail}`;
+          setHiddenEntryErrorKey((current) => current === nextKey ? current : null);
         } catch { setLastEntryError(null); }
       } else {
         setLastEntryError(null);
+        setHiddenEntryErrorKey(null);
       }
     } catch (error) {
       console.error('Fetch error:', error);
@@ -428,8 +462,12 @@ export default function Dashboard() {
 
           <section>
             {/* Last entry error banner */}
-            {lastEntryError && lastEntryError.detail && (
-              <div className="mb-4 px-4 py-3 bg-rose-950/40 border border-rose-800/40 rounded-xl flex items-start gap-3">
+            {lastEntryError && lastEntryError.detail && hiddenEntryErrorKey !== `${lastEntryError.timestamp}-${lastEntryError.symbol}-${lastEntryError.type}-${lastEntryError.detail}` && (
+              <button
+                type="button"
+                onClick={() => setHiddenEntryErrorKey(`${lastEntryError.timestamp}-${lastEntryError.symbol}-${lastEntryError.type}-${lastEntryError.detail}`)}
+                className="mb-4 w-full px-4 py-3 bg-rose-950/40 border border-rose-800/40 rounded-xl flex items-start gap-3 text-left"
+              >
                 <AlertTriangle size={16} className="text-rose-400 mt-0.5 shrink-0" />
                 <div className="min-w-0">
                   <p className="text-[11px] text-rose-400 font-bold uppercase tracking-wider mb-1">Último error de entrada</p>
@@ -438,7 +476,7 @@ export default function Dashboard() {
                     {lastEntryError.symbol} · {lastEntryError.type?.toUpperCase()} · {new Date(lastEntryError.timestamp).toLocaleString()}
                   </p>
                 </div>
-              </div>
+              </button>
             )}
 
             <div className="flex items-center justify-between mb-6">
@@ -559,8 +597,8 @@ Amount: ${pos.amount} ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}
 Symbol: ${pos.symbol}
 Type: ${pos.positionType.toUpperCase()}
 Quantity: ${pos.quantity}
-Entry Price: ${pos.entryPrice}
-Stop Target: ${pos.stopLoss}
+Entry Price: ${formatPrice(pos.entryPrice, pos.pricePrecision)}
+Stop Target: ${formatPrice(pos.stopLoss, pos.pricePrecision)}
 Commission: ${((pos.commission ?? 0.0004) * 100).toFixed(4)}%
 PnL %: ${pos.profitLossPercent.toFixed(2)}%
 PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixed(2)} ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}`;
@@ -581,7 +619,7 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
                           {pos.positionType}
                         </span>
                       </td>
-                      <td className="px-6 py-4 font-mono text-xs text-slate-400">{pos.entryPrice.toFixed(4)}</td>
+                      <td className="px-6 py-4 font-mono text-xs text-slate-400">{formatPrice(pos.entryPrice, pos.pricePrecision)}</td>
                       <td className={cn("px-6 py-4 font-black", pos.profitLossPercent >= 0 ? "text-emerald-400" : "text-rose-400")}>
                         {pos.profitLossPercent > 0 ? '+' : ''}{pos.profitLossPercent.toFixed(2)}%
                       </td>
@@ -643,14 +681,42 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Instrument Pairing</label>
                     <div className="relative">
-                      <input 
-                        type="text" 
-                        placeholder={tradingMode === 'live' ? "BTCUSDC" : "BTCUSDT"} 
+                      <input
+                        type="text"
+                        placeholder="Select or search symbol"
                         className="w-full bg-slate-950/50 border border-slate-700 p-4 rounded-2xl outline-none focus:border-amber-400 transition-colors placeholder:text-slate-700 font-black"
                         value={newPos.symbol}
-                        onChange={(e) => setNewPos({...newPos, symbol: e.target.value.toUpperCase()})}
+                        onFocus={() => setShowSymbolOptions(true)}
+                        onBlur={() => setTimeout(() => setShowSymbolOptions(false), 120)}
+                        onChange={(e) => {
+                          setNewPos({...newPos, symbol: e.target.value.toUpperCase()});
+                          setShowSymbolOptions(true);
+                        }}
                       />
                       <TrendingUp className="absolute right-4 top-4 text-slate-700" size={18} />
+                      {showSymbolOptions && (
+                        <div className="absolute z-20 mt-2 w-full max-h-64 overflow-y-auto rounded-2xl border border-slate-700 bg-slate-950/95 shadow-2xl shadow-slate-950/50">
+                          {filteredSymbols.length > 0 ? (
+                            filteredSymbols.map((symbol) => (
+                              <button
+                                key={symbol}
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  setNewPos({ ...newPos, symbol });
+                                  setShowSymbolOptions(false);
+                                }}
+                                className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-black text-slate-200 transition-colors hover:bg-slate-800 hover:text-amber-300"
+                              >
+                                <span>{symbol}</span>
+                                <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Bitget</span>
+                              </button>
+                            ))
+                          ) : (
+                            <div className="px-4 py-3 text-sm text-slate-500">No matching symbols.</div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -754,14 +820,20 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
   const comm = pos.commission ?? 0.0004;
   const entryCost = pos.entryPrice * pos.quantity * comm;
   const exitCost = pos.stopLoss * pos.quantity * comm;
+  const grossPercent = pos.profitLossPercent;
+  const netPercent = pos.entryPrice > 0 && pos.quantity > 0
+    ? (pos.profitLossFiat / (pos.entryPrice * pos.quantity)) * 100
+    : 0;
   const pnlSafe = isBuy 
     ? ((pos.stopLoss - pos.entryPrice) * pos.quantity) - entryCost - exitCost
     : ((pos.entryPrice - pos.stopLoss) * pos.quantity) - entryCost - exitCost;
   
   const isSafe = pnlSafe > 0;
   const isBreakeven = Math.abs(pnlSafe) < 0.05;
+  const slAtEntry = Math.abs(pos.stopLoss - pos.entryPrice) < Math.max(0.0000001, pos.entryPrice * 0.0001);
+  const slInProfit = isBuy ? pos.stopLoss > pos.entryPrice : pos.stopLoss < pos.entryPrice;
 
-  const exchangeUrl = `https://www.bitget.com/en/mix/usdt/${pos.symbol}`;
+  const exchangeUrl = `https://www.bitget.com/en/futures/usdt/${pos.symbol}`;
 
   return (
     <motion.div 
@@ -806,12 +878,12 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-1">
           <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider">Entry Level</p>
-          <p className="text-sm font-mono text-slate-300">{pos.entryPrice.toFixed(4)}</p>
+          <p className="text-sm font-mono text-slate-300">{formatPrice(pos.entryPrice, pos.pricePrecision)}</p>
         </div>
         <div className="space-y-1 text-right">
           <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider">Stop Target</p>
           <p className={cn("text-sm font-mono", isSafe ? "text-emerald-400" : "text-rose-400/80")}>
-            {pos.stopLoss.toFixed(4)}
+            {formatPrice(pos.stopLoss, pos.pricePrecision)}
           </p>
         </div>
       </div>
@@ -823,16 +895,21 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
       )}
 
       <div className="bg-slate-950/50 rounded-2xl p-3 border border-slate-800/50">
-        <div className="flex justify-between items-end">
+        <div className="flex justify-between items-start gap-4">
           <div className="space-y-1">
              <p className="text-[10px] text-emerald-400/50 font-black uppercase tracking-tighter">Real-time PnL</p>
-             <p className={cn("text-2xl font-black", pos.profitLossPercent >= 0 ? "text-emerald-400" : "text-rose-400")}>
-                {pos.profitLossPercent > 0 ? '+' : ''}{pos.profitLossPercent.toFixed(2)}<span className="text-xs opacity-50">%</span>
+             <p className={cn("text-2xl font-black", grossPercent >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                {grossPercent > 0 ? '+' : ''}{grossPercent.toFixed(2)}<span className="text-xs opacity-50">%</span>
+             </p>
+             <p className={cn("text-[11px] font-bold uppercase tracking-wide", netPercent >= 0 ? "text-emerald-500/80" : "text-rose-500/80")}>
+                Net {netPercent > 0 ? '+' : ''}{netPercent.toFixed(2)}%
              </p>
           </div>
-          <p className={cn("text-sm font-black mb-1 opacity-70", pos.profitLossPercent >= 0 ? "text-emerald-600" : "text-rose-600")}>
-            {pos.profitLossFiat.toFixed(2)} {pos.tradingMode === 'live' ? 'USDC' : 'USDT'}
-          </p>
+          <div className="text-right">
+            <p className={cn("text-sm font-black opacity-90", pos.profitLossFiat >= 0 ? "text-emerald-500" : "text-rose-500")}>
+              Net {pos.profitLossFiat > 0 ? '+' : ''}{pos.profitLossFiat.toFixed(2)} {pos.tradingMode === 'live' ? 'USDC' : 'USDT'}
+            </p>
+          </div>
         </div>
       </div>
 
@@ -840,6 +917,18 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
         <div className="badge-safe justify-center py-2 animate-none bg-emerald-500/10 border-emerald-500/10">
           <ShieldCheck size={14} className="text-emerald-400" /> 
           {isBreakeven ? 'BREAKEVEN SECURED' : `+${pnlSafe.toFixed(2)} ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'} SECURED`}
+        </div>
+      )}
+
+      {slAtEntry && (
+        <div className="px-3 py-2 rounded-xl border border-amber-500/20 bg-amber-500/10 text-center text-[11px] font-black uppercase tracking-[0.2em] text-amber-300">
+          Breakeven Plus Fees
+        </div>
+      )}
+
+      {!slAtEntry && slInProfit && (
+        <div className="px-3 py-2 rounded-xl border border-cyan-500/20 bg-cyan-500/10 text-center text-[11px] font-black uppercase tracking-[0.2em] text-cyan-300">
+          Trailing Stop Active
         </div>
       )}
 
