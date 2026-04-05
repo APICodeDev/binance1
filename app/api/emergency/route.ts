@@ -1,6 +1,8 @@
 // app/api/emergency/route.ts
 export const dynamic = 'force-dynamic';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { requireRole } from '@/lib/auth';
+import { writeAuditLog } from '@/lib/audit';
 import { prisma } from '@/lib/db';
 import { 
   bitgetGetPrice, 
@@ -10,7 +12,12 @@ import {
   bitgetGetCommissionRate
 } from '@/lib/bitget';
 
-export async function POST() {
+export async function POST(req: NextRequest) {
+  const auth = await requireRole(req, ['admin']);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
   const openPositions = await prisma.position.findMany({ where: { status: 'open' } });
   const results: string[] = [];
 
@@ -54,6 +61,14 @@ export async function POST() {
       results.push(`Failed to close #${pos.id} (${symbol}) in ${mode}`);
     }
   }
+
+  await writeAuditLog({
+    action: 'positions.emergency_close',
+    userId: auth.auth.user.id,
+    targetType: 'position',
+    metadata: { count: openPositions.length, results },
+    req,
+  });
 
   return NextResponse.json({ success: true, results });
 }

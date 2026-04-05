@@ -1,9 +1,16 @@
 // app/api/positions/route.ts  
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
+import { fail, ok } from '@/lib/apiResponse';
+import { requireAuth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 
 export async function GET(req: NextRequest) {
+  const auth = await requireAuth(req);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
   const { searchParams } = new URL(req.url);
   let mode = searchParams.get('mode');
 
@@ -38,15 +45,20 @@ export async function GET(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const auth = await requireAuth(req);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
   const { searchParams } = new URL(req.url);
   const mode = searchParams.get('mode');
 
   if (!mode) {
-    return NextResponse.json({ error: true, message: 'Mode is required for deletion' }, { status: 400 });
+    return fail(400, 'Mode is required for deletion');
   }
 
   await prisma.position.deleteMany({
     where: { status: 'closed', tradingMode: mode } as any,
   });
-  return NextResponse.json({ success: true });
+  return ok(undefined, 'History cleared');
 }

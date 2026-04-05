@@ -1,6 +1,9 @@
 // app/api/monitor/route.ts
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
+import { writeAuditLog } from '@/lib/audit';
+import { fail, ok } from '@/lib/apiResponse';
+import { requireAuth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { 
   bitgetGetPrice, 
@@ -17,11 +20,13 @@ import {
   bitgetGetCommissionRate
 } from '@/lib/bitget';
 
-export async function GET() {
+const MONITOR_INTERNAL_SECRET = process.env.MONITOR_INTERNAL_SECRET || '';
+
+async function runMonitor(req: NextRequest, actorUserId?: number) {
   const positions = await prisma.position.findMany({ where: { status: 'open' } });
 
   if (positions.length === 0) {
-    return NextResponse.json({ message: 'No open positions to monitor.' });
+    return ok({ results: [] }, 'No open positions to monitor.');
   }
 
   // Fetch real positions for both worlds
@@ -238,5 +243,36 @@ export async function GET() {
     }
   }
 
-  return NextResponse.json({ results });
+  await writeAuditLog({
+    action: 'monitor.run',
+    userId: actorUserId,
+    targetType: 'monitor',
+    metadata: { resultCount: results.length },
+    req,
+  });
+
+  return ok({ results }, 'Monitor run completed');
+}
+
+export async function GET(req: NextRequest) {
+  const internalSecret = req.headers.get('x-monitor-secret');
+  if (MONITOR_INTERNAL_SECRET && internalSecret === MONITOR_INTERNAL_SECRET) {
+    return runMonitor(req);
+  }
+
+  const auth = await requireAuth(req);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
+  return runMonitor(req, auth.auth.user.id);
+}
+
+export async function POST(req: NextRequest) {
+  const internalSecret = req.headers.get('x-monitor-secret');
+  if (!MONITOR_INTERNAL_SECRET || internalSecret !== MONITOR_INTERNAL_SECRET) {
+    return fail(401, 'Invalid monitor secret');
+  }
+
+  return runMonitor(req);
 }

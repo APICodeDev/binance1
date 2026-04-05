@@ -1,9 +1,17 @@
 // app/api/settings/route.ts
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
+import { ok } from '@/lib/apiResponse';
+import { requireAuth, requireRole } from '@/lib/auth';
+import { writeAuditLog } from '@/lib/audit';
 import { prisma } from '@/lib/db';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = await requireAuth(req);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
   const botEnabled = await prisma.setting.findUnique({ where: { key: 'bot_enabled' } });
   const customAmount = await prisma.setting.findUnique({ where: { key: 'custom_amount' } });
   const lastEntryError = await prisma.setting.findUnique({ where: { key: 'last_entry_error' } });
@@ -18,7 +26,19 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireAuth(req);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
   const body = await req.json();
+
+  if (body.trading_mode === 'live') {
+    const roleCheck = await requireRole(req, ['admin']);
+    if (!roleCheck.ok) {
+      return roleCheck.response;
+    }
+  }
   
   const settingsToUpdate = [
     { key: 'bot_enabled', value: body.bot_enabled },
@@ -36,5 +56,13 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ success: true });
+  await writeAuditLog({
+    action: 'settings.update',
+    userId: auth.auth.user.id,
+    targetType: 'setting',
+    metadata: body,
+    req,
+  });
+
+  return ok(undefined, 'Settings updated');
 }

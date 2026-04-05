@@ -1,0 +1,6 @@
+@echo off
+echo Generando imagen...
+npm run build
+echo generando Docker container...
+docker-compose up -d --build 
+pause 1

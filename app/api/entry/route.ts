@@ -1,6 +1,8 @@
 // app/api/entry/route.ts
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAuth } from '@/lib/auth';
+import { writeAuditLog } from '@/lib/audit';
 import { prisma } from '@/lib/db';
 import { 
   bitgetGetPrice, 
@@ -18,6 +20,11 @@ import {
 type TradingMode = 'demo' | 'live';
 
 export async function POST(req: NextRequest) {
+  const auth = await requireAuth(req);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
   try {
     let data;
     try {
@@ -206,6 +213,14 @@ export async function POST(req: NextRequest) {
         pricePrecision,
       },
     } as any);
+
+    await writeAuditLog({
+      action: 'position.open',
+      userId: auth.auth.user.id,
+      targetType: 'position',
+      metadata: { symbol, tradingMode, type, amount, quantity: quantityFormatted },
+      req,
+    });
 
     // Clear last entry error on success
     await prisma.setting.upsert({

@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -21,7 +22,9 @@ import {
   Hammer
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
+import { apiClient } from '@/lib/apiClient';
 import { buildInfo } from '@/lib/buildInfo';
+import appLogo from '@/logo1.png';
 import { twMerge } from 'tailwind-merge';
 
 function cn(...inputs: ClassValue[]) {
@@ -48,20 +51,6 @@ const AVAILABLE_SYMBOLS = [
   'XRPUSDT',
 ];
 
-function BitgetMark({ className = 'w-[100px] h-[100px]' }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect x="50" y="10" width="18" height="18" transform="rotate(45 50 10)" fill="currentColor" />
-      <rect x="81" y="41" width="18" height="18" transform="rotate(45 81 41)" fill="currentColor" />
-      <rect x="50" y="72" width="18" height="18" transform="rotate(45 50 72)" fill="currentColor" />
-      <rect x="19" y="41" width="18" height="18" transform="rotate(45 19 41)" fill="currentColor" />
-      <rect x="50" y="30" width="18" height="18" transform="rotate(45 50 30)" fill="currentColor" />
-      <rect x="50" y="50" width="18" height="18" transform="rotate(45 50 50)" fill="currentColor" />
-      <rect x="50" y="41" width="10" height="10" transform="rotate(45 50 41)" fill="#0f172a" />
-    </svg>
-  );
-}
-
 // Typing for positions from API
 interface Position {
   id: number;
@@ -83,8 +72,87 @@ interface Position {
   pricePrecision?: number | null;
 }
 
+interface AuthUser {
+  id: number;
+  email: string;
+  username: string | null;
+  role: string;
+  authType?: 'session' | 'api-token';
+}
+
+interface ApiTokenItem {
+  id: string;
+  name: string;
+  lastFour: string;
+  isActive: boolean;
+  createdAt: string;
+  lastUsedAt?: string | null;
+  expiresAt?: string | null;
+}
+
+interface AuditLogItem {
+  id: number;
+  action: string;
+  targetType?: string | null;
+  targetId?: string | null;
+  metadata?: Record<string, unknown> | null;
+  createdAt: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  user?: {
+    email: string;
+    username?: string | null;
+    role: string;
+  } | null;
+}
+
 function formatPrice(value: number, precision?: number | null) {
   return value.toFixed(typeof precision === 'number' ? precision : 4);
+}
+
+function formatOpenDuration(createdAt: string) {
+  const diffMs = Date.now() - new Date(createdAt).getTime();
+  const totalSeconds = Math.max(0, Math.floor(diffMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function formatAuditAction(action: string) {
+  return action.replace(/\./g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatAuditActor(log: AuditLogItem) {
+  if (!log.user) {
+    return 'System';
+  }
+
+  return log.user.username || log.user.email;
+}
+
+function formatAuditMetadata(metadata?: Record<string, unknown> | null) {
+  if (!metadata || Object.keys(metadata).length === 0) {
+    return 'No extra details';
+  }
+
+  return Object.entries(metadata)
+    .slice(0, 3)
+    .map(([key, value]) => `${key}: ${String(value)}`)
+    .join(' | ');
+}
+
+function formatClosedDuration(createdAt: string, closedAt?: string) {
+  if (!closedAt) {
+    return '-';
+  }
+
+  const diffMs = new Date(closedAt).getTime() - new Date(createdAt).getTime();
+  const totalSeconds = Math.max(0, Math.floor(diffMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
 }
 
 export default function Dashboard() {
@@ -104,30 +172,148 @@ export default function Dashboard() {
   const [lastEntryError, setLastEntryError] = useState<{timestamp: string; symbol: string; type: string; detail: string} | null>(null);
   const [hiddenEntryErrorKey, setHiddenEntryErrorKey] = useState<string | null>(null);
   const [errorPopup, setErrorPopup] = useState<string | null>(null);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [loginIdentifier, setLoginIdentifier] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [mobileTokenInput, setMobileTokenInput] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loginSubmitting, setLoginSubmitting] = useState(false);
+  const [loginMode, setLoginMode] = useState<'account' | 'token'>('account');
+  const [apiTokens, setApiTokens] = useState<ApiTokenItem[]>([]);
+  const [tokenName, setTokenName] = useState('');
+  const [tokenLoading, setTokenLoading] = useState(false);
+  const [tokenSubmitting, setTokenSubmitting] = useState(false);
+  const [tokenMessage, setTokenMessage] = useState<string | null>(null);
+  const [newTokenValue, setNewTokenValue] = useState<string | null>(null);
+  const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditMessage, setAuditMessage] = useState<string | null>(null);
+  const [isOnline, setIsOnline] = useState(true);
+  const [isDocumentVisible, setIsDocumentVisible] = useState(true);
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
+  const [syncStatusLabel, setSyncStatusLabel] = useState<'live' | 'paused' | 'offline'>('live');
 
   const filteredSymbols = AVAILABLE_SYMBOLS.filter((symbol) =>
     symbol.includes(newPos.symbol.toUpperCase())
   );
+
+  const resetSessionState = useCallback(() => {
+    apiClient.setApiToken(null);
+    setAuthUser(null);
+    setOpenPositions([]);
+    setClosedPositions([]);
+    setApiTokens([]);
+    setNewTokenValue(null);
+    setAuditLogs([]);
+  }, []);
+
+  const getApiErrorMessage = useCallback((error: unknown, fallback: string) => {
+    if (apiClient.isAuthError(error)) {
+      resetSessionState();
+      return 'Your session is no longer valid. Please sign in again.';
+    }
+
+    return apiClient.getErrorMessage(error, fallback);
+  }, [resetSessionState]);
 
   useEffect(() => {
     const timer = setTimeout(() => setShowSplash(false), 4100);
     return () => clearTimeout(timer);
   }, []);
 
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      return;
+    }
+
+    const updateNetworkState = () => {
+      const online = window.navigator.onLine;
+      setIsOnline(online);
+      setSyncStatusLabel(online ? (document.visibilityState === 'visible' ? 'live' : 'paused') : 'offline');
+    };
+
+    const updateVisibilityState = () => {
+      const visible = document.visibilityState === 'visible';
+      setIsDocumentVisible(visible);
+      setSyncStatusLabel(window.navigator.onLine ? (visible ? 'live' : 'paused') : 'offline');
+    };
+
+    updateNetworkState();
+    updateVisibilityState();
+
+    window.addEventListener('online', updateNetworkState);
+    window.addEventListener('offline', updateNetworkState);
+    document.addEventListener('visibilitychange', updateVisibilityState);
+
+    return () => {
+      window.removeEventListener('online', updateNetworkState);
+      window.removeEventListener('offline', updateNetworkState);
+      document.removeEventListener('visibilitychange', updateVisibilityState);
+    };
+  }, []);
+
+  const fetchAuth = useCallback(async () => {
+    setAuthLoading(true);
+    try {
+      const payload = await apiClient.authMe();
+      const user = payload.data?.user || null;
+      setAuthUser(user ? { ...user, authType: payload.data?.authType } : null);
+      return true;
+    } catch (error) {
+      resetSessionState();
+      return false;
+    } finally {
+      setAuthLoading(false);
+    }
+  }, [resetSessionState]);
+
+  const fetchApiTokens = useCallback(async () => {
+    if (authUser?.role !== 'admin') {
+      setApiTokens([]);
+      return;
+    }
+
+    setTokenLoading(true);
+    try {
+      const payload = await apiClient.getApiTokens();
+      setApiTokens(payload.data?.tokens || []);
+    } catch (error) {
+      setTokenMessage(getApiErrorMessage(error, 'Unable to load API tokens'));
+    } finally {
+      setTokenLoading(false);
+    }
+  }, [authUser, getApiErrorMessage]);
+
+  const fetchAuditLogs = useCallback(async () => {
+    if (authUser?.role !== 'admin') {
+      setAuditLogs([]);
+      return;
+    }
+
+    setAuditLoading(true);
+    try {
+      const payload = await apiClient.getAuditLogs(30);
+      setAuditLogs(payload.data?.logs || []);
+    } catch (error) {
+      setAuditMessage(getApiErrorMessage(error, 'Unable to load audit logs'));
+    } finally {
+      setAuditLoading(false);
+    }
+  }, [authUser, getApiErrorMessage]);
+
   const fetchData = useCallback(async (isSilent = false, overrideMode?: 'demo' | 'live') => {
     if (!isSilent) setLoading(true);
     const modeToUse = overrideMode || tradingMode;
     try {
       // Fetch positions with mode filter
-      const res = await fetch(`/api/positions?mode=${modeToUse}`);
-      const data = await res.json();
+      const data = await apiClient.getPositions(modeToUse);
       setOpenPositions(data.open || []);
       setClosedPositions(data.history || []);
       setTotalPnl(data.totalPnl || 0);
 
       // Fetch bot status and global mode
-      const settingsRes = await fetch('/api/settings');
-      const settings = await settingsRes.json();
+      const settings = await apiClient.getSettings();
       setBotEnabled(settings.bot_enabled === '1');
       setCustomAmount(settings.custom_amount || '');
       setTradingMode(settings.trading_mode || 'demo');
@@ -144,17 +330,28 @@ export default function Dashboard() {
         setLastEntryError(null);
         setHiddenEntryErrorKey(null);
       }
+      setLastSyncAt(new Date().toISOString());
     } catch (error) {
+      if (apiClient.isAuthError(error)) {
+        resetSessionState();
+        return;
+      }
       console.error('Fetch error:', error);
     } finally {
       if (!isSilent) setLoading(false);
     }
-  }, [tradingMode]);
+  }, [resetSessionState, tradingMode]);
 
   const runMonitor = useCallback(async () => {
+    if (!isOnline || !isDocumentVisible) {
+      setSyncStatusLabel(isOnline ? 'paused' : 'offline');
+      return;
+    }
+
     setSyncing(true);
+    setSyncStatusLabel('live');
     try {
-      await fetch('/api/monitor');
+      await apiClient.runMonitor();
       await fetchData(true);
     } catch (error) {
       console.error('Monitor sync error:', error);
@@ -165,24 +362,90 @@ export default function Dashboard() {
 
   // Initial load and polling
   useEffect(() => {
+    fetchAuth();
+  }, [fetchAuth]);
+
+  useEffect(() => {
+    if (!authUser) {
+      return;
+    }
+
     fetchData();
+    fetchApiTokens();
+    fetchAuditLogs();
+
+    if (!isOnline || !isDocumentVisible) {
+      return;
+    }
+
     const interval = setInterval(() => {
       runMonitor();
     }, 10000); 
     return () => clearInterval(interval);
-  }, [fetchData, runMonitor]);
+  }, [authUser, fetchApiTokens, fetchAuditLogs, fetchData, isDocumentVisible, isOnline, runMonitor]);
+
+  useEffect(() => {
+    if (!authUser || !isOnline || !isDocumentVisible) {
+      return;
+    }
+
+    fetchData(true);
+  }, [authUser, fetchData, isDocumentVisible, isOnline]);
+
+  const submitLogin = async () => {
+    setLoginSubmitting(true);
+    setLoginError(null);
+    try {
+      const payload = await apiClient.login(loginIdentifier, loginPassword);
+      apiClient.setApiToken(null);
+      setAuthUser(payload.data?.user ? { ...payload.data.user, authType: payload.data?.authType } : null);
+      setLoginPassword('');
+    } catch (error) {
+      setLoginError(getApiErrorMessage(error, 'Network error during login'));
+    } finally {
+      setLoginSubmitting(false);
+    }
+  };
+
+  const submitTokenLogin = async () => {
+    const token = mobileTokenInput.trim();
+    if (!token) {
+      setLoginError('Paste a valid API token first');
+      return;
+    }
+
+    setLoginSubmitting(true);
+    setLoginError(null);
+    try {
+      apiClient.setApiToken(token);
+      const ok = await fetchAuth();
+      if (!ok) {
+        apiClient.setApiToken(null);
+        setLoginError('Token invalid, expired or revoked');
+        return;
+      }
+      setMobileTokenInput('');
+    } catch (error) {
+      apiClient.setApiToken(null);
+      setLoginError(getApiErrorMessage(error, 'Unable to authenticate with token'));
+    } finally {
+      setLoginSubmitting(false);
+    }
+  };
+
+  const logout = async () => {
+    await apiClient.logout();
+    resetSessionState();
+  };
 
   const toggleBot = async () => {
     const newValue = botEnabled ? '0' : '1';
     try {
-      await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bot_enabled: newValue }),
-      });
+      await apiClient.updateSettings({ bot_enabled: newValue });
       setBotEnabled(!botEnabled);
     } catch (error) {
       console.error('Toggle bot error:', error);
+      setErrorPopup(getApiErrorMessage(error, 'Unable to update bot status.'));
     }
   };
 
@@ -192,49 +455,32 @@ export default function Dashboard() {
       return;
     }
     try {
-      await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ trading_mode: newMode }),
-      });
+      await apiClient.updateSettings({ trading_mode: newMode });
       setTradingMode(newMode);
       // Refetch immediately for the new mode
       fetchData(false, newMode);
     } catch (error) {
       console.error('Toggle mode error:', error);
+      setErrorPopup(getApiErrorMessage(error, 'Unable to switch trading mode.'));
     }
   };
 
   const saveCustomAmount = async (val: string) => {
     setCustomAmount(val);
     try {
-      await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ custom_amount: val }),
-      });
+      await apiClient.updateSettings({ custom_amount: val });
     } catch (error) {
       console.error('Save custom amount error:', error);
+      setErrorPopup(getApiErrorMessage(error, 'Unable to save custom amount.'));
     }
   };
 
   const submitNewPosition = async () => {
     try {
-      const res = await fetch('/api/entry', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newPos),
-      });
-      const data = await res.json();
-      if (!data.error) {
-        setShowModal(false);
-        setNewPos({ symbol: '', amount: '100', type: 'buy' });
-        fetchData();
-      } else {
-        setShowModal(false);
-        setErrorPopup(data.detail || data.message || 'Unknown error');
-        fetchData();
-      }
+      await apiClient.openPosition(newPos);
+      setShowModal(false);
+      setNewPos({ symbol: '', amount: '100', type: 'buy' });
+      fetchData();
     } catch (error) {
       setErrorPopup('Error de red al intentar abrir la posición.');
     }
@@ -248,31 +494,22 @@ export default function Dashboard() {
     if (!showEjectModal) return;
     const { id } = showEjectModal;
     try {
-      const res = await fetch('/api/close', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id }),
-      });
-      const data = await res.json();
-      if (!data.error) {
-        setShowEjectModal(null);
-        fetchData();
-      } else {
-        alert('Error: ' + data.message);
-      }
+      await apiClient.closePosition(id);
+      setShowEjectModal(null);
+      fetchData();
     } catch (error) {
       console.error('Manual eject error:', error);
-      alert('Network error ejecting');
+      alert(getApiErrorMessage(error, 'Network error ejecting'));
     }
   };
 
   const emergencyCloseAll = async () => {
     if (confirm('⚠️ ERES CONSCIENTE DE QUE ESTO CERRARÁ TODAS LAS POSICIONES (REALES Y DEMO)?')) {
       try {
-        await fetch('/api/emergency', { method: 'POST' });
+        await apiClient.emergencyClose();
         fetchData();
       } catch (error) {
-        alert('Error in emergency stop');
+        alert(getApiErrorMessage(error, 'Error in emergency stop'));
       }
     }
   };
@@ -280,11 +517,49 @@ export default function Dashboard() {
   const clearHistory = async () => {
     if (confirm(`Are you sure you want to clear ${tradingMode.toUpperCase()} history and set Net Profit to zero?`)) {
       try {
-        await fetch(`/api/positions?mode=${tradingMode}`, { method: 'DELETE' });
+        await apiClient.clearHistory(tradingMode);
         fetchData();
       } catch (error) {
-        alert('Error clearing history');
+        alert(getApiErrorMessage(error, 'Error clearing history'));
       }
+    }
+  };
+
+  const createApiToken = async () => {
+    const name = tokenName.trim();
+    if (!name) {
+      setTokenMessage('Please add a token name first');
+      return;
+    }
+
+    setTokenSubmitting(true);
+    setTokenMessage(null);
+    setNewTokenValue(null);
+    try {
+      const payload = await apiClient.createApiToken(name);
+      setNewTokenValue(payload.data?.token?.value || null);
+      setTokenName('');
+      setTokenMessage('New iOS token created. Copy it now because it will not be shown again.');
+      await fetchApiTokens();
+    } catch (error) {
+      setTokenMessage(getApiErrorMessage(error, 'Unable to create token'));
+    } finally {
+      setTokenSubmitting(false);
+    }
+  };
+
+  const revokeApiToken = async (id: string) => {
+    if (!confirm('This will revoke the token immediately. Continue?')) {
+      return;
+    }
+
+    setTokenMessage(null);
+    try {
+      await apiClient.revokeApiToken(id);
+      setTokenMessage('Token revoked');
+      await fetchApiTokens();
+    } catch (error) {
+      setTokenMessage(getApiErrorMessage(error, 'Unable to revoke token'));
     }
   };
 
@@ -315,13 +590,113 @@ export default function Dashboard() {
           <motion.div
             animate={{ y: [0, -15, 0], scale: [1, 1.05, 1] }}
             transition={{ duration: 1, ease: "easeInOut", repeat: Infinity }}
-            className="mb-5 text-amber-400 drop-shadow-[0_0_24px_rgba(251,191,36,0.25)]"
+            className="mb-5 drop-shadow-[0_0_24px_rgba(251,191,36,0.25)]"
           >
-            <BitgetMark />
+            <Image src={appLogo} alt="Bitget Desk" className="w-[100px] h-[100px] object-contain" priority />
           </motion.div>
           <h1 className="text-[40px] font-black tracking-[2px] m-0">BITGET<span className="text-amber-400">DESK</span></h1>
           <div className="mt-2.5 text-base text-slate-400 tracking-[4px] uppercase">Signal Engine Initializing</div>
         </motion.div>
+      </div>
+    );
+  }
+
+  if (authLoading) {
+    return <div className="min-h-screen bg-slate-950" />;
+  }
+
+  if (!authUser) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-50 flex items-center justify-center p-6">
+        <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-[2rem] p-8 shadow-2xl">
+          <div className="flex flex-col items-center text-center gap-4 mb-8">
+            <Image src={appLogo} alt="Bitget Desk" className="w-20 h-20 object-contain" priority />
+            <div>
+              <h1 className="text-3xl font-black uppercase tracking-tight">Bitget Desk</h1>
+              <p className="text-xs text-slate-400 uppercase tracking-[0.25em] mt-2">Secure Dashboard Access</p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-2 rounded-2xl border border-slate-800 bg-slate-950/60 p-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setLoginMode('account');
+                  setLoginError(null);
+                }}
+                className={cn(
+                  "rounded-2xl px-3 py-3 text-xs font-black uppercase tracking-[0.2em] transition-colors",
+                  loginMode === 'account' ? "bg-amber-400 text-slate-950" : "text-slate-400"
+                )}
+              >
+                Account
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLoginMode('token');
+                  setLoginError(null);
+                }}
+                className={cn(
+                  "rounded-2xl px-3 py-3 text-xs font-black uppercase tracking-[0.2em] transition-colors",
+                  loginMode === 'token' ? "bg-cyan-400 text-slate-950" : "text-slate-400"
+                )}
+              >
+                iOS Token
+              </button>
+            </div>
+
+            {loginMode === 'account' ? (
+              <>
+                <input
+                  type="text"
+                  placeholder="Email or username"
+                  value={loginIdentifier}
+                  onChange={(e) => setLoginIdentifier(e.target.value)}
+                  className="w-full bg-slate-950/50 border border-slate-700 p-4 rounded-2xl outline-none focus:border-amber-400 transition-colors placeholder:text-slate-700 font-black"
+                />
+                <input
+                  type="password"
+                  placeholder="Password"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
+                  className="w-full bg-slate-950/50 border border-slate-700 p-4 rounded-2xl outline-none focus:border-amber-400 transition-colors placeholder:text-slate-700 font-black"
+                />
+              </>
+            ) : (
+              <div className="space-y-3">
+                <textarea
+                  placeholder="Paste your mobile API token"
+                  value={mobileTokenInput}
+                  onChange={(e) => setMobileTokenInput(e.target.value)}
+                  rows={4}
+                  className="w-full resize-none bg-slate-950/50 border border-slate-700 p-4 rounded-2xl outline-none focus:border-cyan-400 transition-colors placeholder:text-slate-700 font-mono text-sm text-slate-100"
+                />
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  Use this mode in your future iPhone app. Tokens are revocable from the dashboard and stop working immediately if revoked or expired.
+                </p>
+              </div>
+            )}
+            {loginError && (
+              <div className="px-4 py-3 rounded-2xl bg-rose-950/40 border border-rose-800/40 text-sm text-rose-300">
+                {loginError}
+              </div>
+            )}
+            <button
+              onClick={loginMode === 'account' ? submitLogin : submitTokenLogin}
+              disabled={loginSubmitting}
+              className={cn(
+                "w-full p-4 rounded-2xl font-black shadow-lg disabled:opacity-60",
+                loginMode === 'account'
+                  ? "bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-amber-400/20"
+                  : "bg-cyan-400 hover:bg-cyan-300 text-slate-950 shadow-cyan-400/20"
+              )}
+            >
+              {loginSubmitting ? 'SIGNING IN...' : loginMode === 'account' ? 'SIGN IN' : 'ENTER WITH TOKEN'}
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -333,120 +708,377 @@ export default function Dashboard() {
     )}>
       <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-8">
         {/* Header */}
-        <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-slate-800 pb-8">
-          <div className="flex items-center gap-4">
-            <div className={cn(
-              "w-12 h-12 rounded-xl flex items-center justify-center shadow-lg shadow-inner rotate-3 transition-colors",
-              tradingMode === 'live' ? "bg-amber-500 shadow-amber-500/20" : "bg-amber-400 shadow-amber-400/20"
-            )}>
-              <BitgetMark className="w-7 h-7 text-slate-950" />
+        <header className="flex flex-col gap-5 border-b border-slate-800 pb-8">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="flex flex-col gap-4">
+            <div className="flex items-center gap-4">
+              <div className={cn(
+                "w-12 h-12 rounded-xl flex items-center justify-center shadow-lg shadow-inner rotate-3 transition-colors",
+                tradingMode === 'live' ? "bg-amber-500 shadow-amber-500/20" : "bg-amber-400 shadow-amber-400/20"
+              )}>
+                <Image src={appLogo} alt="Bitget Desk" className="w-7 h-7 object-contain" priority />
+              </div>
+              <div>
+                <h1 className="text-3xl font-black italic tracking-tighter uppercase">
+                  {tradingMode === 'live' ? (
+                    <>BITGET<span className="text-amber-500">LIVE</span></>
+                  ) : (
+                    <>BITGET<span className="text-amber-400">SIGNALS</span></>
+                  )}
+                </h1>
+                <div className="flex flex-wrap items-center gap-2 mt-1">
+                  <p className="text-xs text-slate-400 font-medium uppercase tracking-[0.2em]">Automated trading command center for Bitget Futures</p>
+                  <span className="px-2 py-1 rounded-full border border-amber-400/30 bg-amber-400/10 text-[10px] font-black uppercase tracking-[0.2em] text-amber-300">
+                    {authUser.role}
+                  </span>
+                  <span className={cn(
+                    "px-2 py-1 rounded-full border text-[10px] font-black uppercase tracking-[0.2em]",
+                    authUser.authType === 'api-token'
+                      ? "border-cyan-400/30 bg-cyan-400/10 text-cyan-300"
+                      : "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+                  )}>
+                    {authUser.authType === 'api-token' ? 'TOKEN SESSION' : 'WEB SESSION'}
+                  </span>
+                </div>
+              </div>
             </div>
-            <div>
-              <h1 className="text-3xl font-black italic tracking-tighter uppercase">
-                {tradingMode === 'live' ? (
-                  <>BITGET<span className="text-amber-500">LIVE</span></>
-                ) : (
-                  <>BITGET<span className="text-amber-400">SIGNALS</span></>
+
+              <div className="flex flex-wrap items-center gap-3">
+              <div className={cn(
+                "flex items-center gap-3 px-5 py-2.5 rounded-full border transition-all duration-500 shadow-lg",
+                tradingMode === 'live' ? "bg-rose-500/10 border-rose-500/30 text-rose-400" : "bg-slate-900 border-slate-800 text-slate-400"
+              )}>
+                {tradingMode === 'live' ? <Zap size={18} className="animate-pulse" /> : <Globe size={18} />}
+                <span className="text-sm font-bold uppercase tracking-widest hidden sm:inline">{tradingMode.toUpperCase()} MODE</span>
+                <span className="text-sm font-bold uppercase tracking-widest sm:hidden">MODE</span>
+                <div 
+                  className={cn(
+                    "w-10 h-5 rounded-full relative cursor-pointer transition-colors shadow-inner",
+                    tradingMode === 'live' ? "bg-rose-600" : "bg-slate-700"
+                  )}
+                  onClick={toggleMode}
+                >
+                  <div className={cn(
+                    "absolute top-1 left-1 w-3 h-3 bg-white rounded-full transition-transform shadow-sm",
+                    tradingMode === 'live' ? "translate-x-5" : "translate-x-0"
+                  )} />
+                </div>
+              </div>
+
+              <div className={cn(
+                "flex items-center gap-2 px-4 py-2 rounded-full border transition-all duration-500",
+                botEnabled ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" : "bg-rose-500/10 border-rose-500/30 text-rose-400"
+              )}>
+                <Bot size={18} className={cn(botEnabled && "animate-pulse")} />
+                <span className="text-sm font-bold uppercase hidden sm:inline">{botEnabled ? 'BOT ACTIVE' : 'BOT DISABLED'}</span>
+                <span className="text-sm font-bold uppercase sm:hidden">{botEnabled ? 'ACTIVE' : 'DISABLED'}</span>
+                <div 
+                  className={cn(
+                    "w-10 h-5 rounded-full relative cursor-pointer transition-colors",
+                    botEnabled ? "bg-emerald-500" : "bg-slate-600"
+                  )}
+                  onClick={toggleBot}
+                >
+                  <div className={cn(
+                    "absolute top-1 left-1 w-3 h-3 bg-white rounded-full transition-transform",
+                    botEnabled ? "translate-x-5" : "translate-x-0"
+                  )} />
+                </div>
+              </div>
+            </div>
+            </div>
+
+            <div className="flex items-center gap-3 self-start lg:self-auto">
+              <button 
+                onClick={() => setShowModal(true)}
+                className={cn(
+                  "px-4 py-3 rounded-xl font-black flex items-center justify-center gap-2 transition-all transform hover:scale-105 active:scale-95 shadow-lg",
+                  "bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-amber-400/20"
                 )}
-              </h1>
-              <p className="text-xs text-slate-400 font-medium uppercase tracking-[0.2em]">Automated trading command center for Bitget Futures</p>
+              >
+                {tradingMode === 'live' ? <Zap size={20} className="md:w-5 md:h-5" /> : <Plus size={20} className="md:w-5 md:h-5" />}
+                <span className="text-xs sm:text-sm">NEW POSITION</span>
+              </button>
+
+              <button 
+                onClick={emergencyCloseAll}
+                className="bg-rose-600 hover:bg-rose-500 text-white px-4 py-3 rounded-xl font-bold flex items-center gap-2 transition-transform transform hover:scale-105 active:scale-95"
+              >
+                <AlertTriangle size={18} />
+              </button>
+
+              <button
+                onClick={logout}
+                className="bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-300 px-4 py-3 rounded-xl font-bold transition-colors text-xs sm:text-sm"
+              >
+                LOG OUT
+              </button>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-4">
-            {/* Mode Toggle Switch (Prominent) */}
-            <div className={cn(
-              "flex items-center gap-3 px-5 py-2.5 rounded-full border transition-all duration-500 shadow-lg",
-              tradingMode === 'live' ? "bg-rose-500/10 border-rose-500/30 text-rose-400" : "bg-slate-900 border-slate-800 text-slate-400"
-            )}>
-              {tradingMode === 'live' ? <Zap size={18} className="animate-pulse" /> : <Globe size={18} />}
-              <span className="text-sm font-bold uppercase tracking-widest">{tradingMode.toUpperCase()} MODE</span>
-              <div 
-                className={cn(
-                  "w-10 h-5 rounded-full relative cursor-pointer transition-colors shadow-inner",
-                  tradingMode === 'live' ? "bg-rose-600" : "bg-slate-700"
-                )}
-                onClick={toggleMode}
-              >
-                <div className={cn(
-                  "absolute top-1 left-1 w-3 h-3 bg-white rounded-full transition-transform shadow-sm",
-                  tradingMode === 'live' ? "translate-x-5" : "translate-x-0"
-                )} />
-              </div>
-            </div>
-
-            {/* Bot Enabled Toggle */}
-            <div className={cn(
-              "flex items-center gap-2 px-4 py-2 rounded-full border transition-all duration-500",
-              botEnabled ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" : "bg-rose-500/10 border-rose-500/30 text-rose-400"
-            )}>
-              <Bot size={18} className={cn(botEnabled && "animate-pulse")} />
-              <span className="text-sm font-bold uppercase">{botEnabled ? 'BOT ACTIVE' : 'BOT DISABLED'}</span>
-              <div 
-                className={cn(
-                  "w-10 h-5 rounded-full relative cursor-pointer transition-colors",
-                  botEnabled ? "bg-emerald-500" : "bg-slate-600"
-                )}
-                onClick={toggleBot}
-              >
-                <div className={cn(
-                  "absolute top-1 left-1 w-3 h-3 bg-white rounded-full transition-transform",
-                  botEnabled ? "translate-x-5" : "translate-x-0"
-                )} />
-              </div>
-            </div>
-
-            <div className="bg-slate-900 border border-slate-800 px-4 py-2 rounded-xl hidden md:flex items-center gap-3">
-              <Settings size={18} className="text-slate-500" />
-              <div className="flex flex-col">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="bg-slate-900 border border-slate-800 px-4 py-3 rounded-2xl flex items-center gap-3">
+              <Settings size={18} className="text-slate-500 shrink-0" />
+              <div className="flex flex-col min-w-0">
                 <span className="text-[9px] uppercase font-black text-slate-500 tracking-widest">Entry Amount ({tradingMode === 'live' ? 'USDC' : 'USDT'})</span>
                 <input 
                   type="number"
                   placeholder="Auto (JSON)"
                   value={customAmount}
                   onChange={(e) => saveCustomAmount(e.target.value)}
-                  className="bg-transparent border-none text-sm font-black text-amber-400 w-28 outline-none placeholder:text-slate-700 p-0 m-0"
+                  className="bg-transparent border-none text-sm font-black text-amber-400 outline-none placeholder:text-slate-700 p-0 m-0 w-full"
                 />
               </div>
             </div>
 
-            <div className="bg-slate-900 border border-slate-800 px-6 py-2 rounded-xl flex items-center gap-3">
-              <div className="text-right">
-                  <p className="text-[10px] text-blue-400/60 uppercase font-black tracking-wider">Secured Profit</p>
-                  <p className="text-xl font-black text-blue-400">
-                    {totalSecuredProfit > 0 ? '+' : ''}{totalSecuredProfit.toFixed(2)} <span className="text-[10px] opacity-70">{tradingMode === 'live' ? 'USDC' : 'USDT'}</span>
-                  </p>
-              </div>
+            <div className="bg-slate-900 border border-slate-800 px-4 py-3 rounded-2xl">
+              <p className="text-[10px] text-blue-400/60 uppercase font-black tracking-wider">Secured Profit</p>
+              <p className="text-2xl font-black text-blue-400 mt-1">
+                {totalSecuredProfit > 0 ? '+' : ''}{totalSecuredProfit.toFixed(2)} <span className="text-[10px] opacity-70">{tradingMode === 'live' ? 'USDC' : 'USDT'}</span>
+              </p>
             </div>
 
-            <div className="bg-slate-900 border border-slate-800 px-6 py-2 rounded-xl flex items-center gap-3">
-              <div className="text-right">
-                  <p className="text-[10px] text-slate-500 uppercase font-black">Net Profit/Loss</p>
-                  <p className={cn("text-xl font-black", totalPnl >= 0 ? "text-emerald-400" : "text-rose-400")}>
-                    {totalPnl.toFixed(2)} <span className="text-[10px] opacity-70">{tradingMode === 'live' ? 'USDC' : 'USDT'}</span>
-                  </p>
-              </div>
+            <div className="bg-slate-900 border border-slate-800 px-4 py-3 rounded-2xl">
+              <p className="text-[10px] text-slate-500 uppercase font-black">Net Profit/Loss</p>
+              <p className={cn("text-2xl font-black mt-1", totalPnl >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                {totalPnl.toFixed(2)} <span className="text-[10px] opacity-70">{tradingMode === 'live' ? 'USDC' : 'USDT'}</span>
+              </p>
             </div>
-            
-            <button 
-              onClick={() => setShowModal(true)}
-              className={cn(
-                "p-3 md:px-6 md:py-3 rounded-xl font-black flex items-center justify-center gap-2 transition-all transform hover:scale-105 active:scale-95 shadow-lg",
-                "bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-amber-400/20"
-              )}
-            >
-              {tradingMode === 'live' ? <Zap size={22} className="md:w-5 md:h-5" /> : <Plus size={22} className="md:w-5 md:h-5" />}
-              <span className="hidden md:inline">NEW {tradingMode.toUpperCase()} POSITION</span>
-            </button>
-
-            <button 
-              onClick={emergencyCloseAll}
-              className="bg-rose-600 hover:bg-rose-500 text-white px-4 py-3 rounded-xl font-bold flex items-center gap-2 transition-transform transform hover:scale-105 active:scale-95"
-            >
-              <AlertTriangle size={18} />
-            </button>
           </div>
         </header>
+
+        {authUser.role === 'admin' && (
+          <section className="rounded-[2rem] border border-slate-800 bg-slate-900/70 p-5 md:p-6 shadow-xl shadow-slate-950/20">
+            <div className="flex flex-col gap-5">
+              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.3em] text-amber-400">iOS Access Tokens</p>
+                  <h2 className="text-xl font-black uppercase tracking-tight text-white">Mobile Token Control</h2>
+                </div>
+                <p className="text-xs text-slate-500 uppercase tracking-[0.2em]">
+                  {tokenLoading ? 'Loading tokens...' : `${apiTokens.filter((token) => token.isActive).length} active tokens`}
+                </p>
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,320px)_1fr]">
+                <div className="space-y-3 rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-4">
+                  <label className="block text-[10px] font-black uppercase tracking-[0.25em] text-slate-500">
+                    New iOS token name
+                  </label>
+                  <input
+                    type="text"
+                    value={tokenName}
+                    onChange={(e) => setTokenName(e.target.value)}
+                    placeholder="iPhone principal"
+                    className="w-full rounded-2xl border border-slate-700 bg-slate-950/60 p-4 text-sm font-black text-slate-100 outline-none transition-colors placeholder:text-slate-700 focus:border-amber-400"
+                  />
+                  <button
+                    onClick={createApiToken}
+                    disabled={tokenSubmitting}
+                    className="w-full rounded-2xl bg-amber-400 px-4 py-3 text-sm font-black uppercase tracking-[0.2em] text-slate-950 transition-colors hover:bg-amber-300 disabled:opacity-60"
+                  >
+                    {tokenSubmitting ? 'Creating...' : 'Create token'}
+                  </button>
+                  {tokenMessage && (
+                    <div className="rounded-2xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-xs font-bold text-slate-300">
+                      {tokenMessage}
+                    </div>
+                  )}
+                  {newTokenValue && (
+                    <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
+                      <p className="text-[10px] font-black uppercase tracking-[0.25em] text-emerald-300">Copy now</p>
+                      <p className="mt-2 break-all font-mono text-xs text-emerald-100">{newTokenValue}</p>
+                    </div>
+                  )}
+                </div>
+
+              <div className="overflow-hidden rounded-[1.5rem] border border-slate-800 bg-slate-950/30">
+                <div className="divide-y divide-slate-800 md:hidden">
+                  {apiTokens.map((token) => (
+                    <div key={token.id} className="px-4 py-4 space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-black text-white">{token.name}</p>
+                          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">
+                            ...{token.lastFour} · {token.isActive ? 'Active' : 'Revoked'}
+                          </p>
+                        </div>
+                        {token.isActive ? (
+                          <button
+                            onClick={() => revokeApiToken(token.id)}
+                            className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-rose-300"
+                          >
+                            Revoke
+                          </button>
+                        ) : (
+                          <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-600">Inactive</span>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 text-xs">
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-600">Created</p>
+                          <p className="text-slate-300">{new Date(token.createdAt).toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-600">Last used</p>
+                          <p className="text-slate-300">{token.lastUsedAt ? new Date(token.lastUsedAt).toLocaleString() : 'Never'}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="hidden grid-cols-[1.4fr_0.7fr_0.9fr_0.9fr_0.8fr] gap-4 border-b border-slate-800 px-4 py-3 text-[10px] font-black uppercase tracking-[0.25em] text-slate-500 md:grid">
+                  <span>Name</span>
+                  <span>Ending</span>
+                  <span>Created</span>
+                    <span>Last used</span>
+                    <span className="text-right">Action</span>
+                  </div>
+                  <div className="divide-y divide-slate-800">
+                    {apiTokens.map((token) => (
+                      <div key={token.id} className="grid gap-3 px-4 py-4 md:grid-cols-[1.4fr_0.7fr_0.9fr_0.9fr_0.8fr] md:items-center">
+                        <div>
+                          <p className="font-black text-white">{token.name}</p>
+                          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">
+                            {token.isActive ? 'Active token' : 'Revoked'}
+                          </p>
+                        </div>
+                        <div className="text-sm font-mono text-slate-300">...{token.lastFour}</div>
+                        <div className="text-xs text-slate-400">{new Date(token.createdAt).toLocaleString()}</div>
+                        <div className="text-xs text-slate-500">
+                          {token.lastUsedAt ? new Date(token.lastUsedAt).toLocaleString() : 'Never'}
+                        </div>
+                        <div className="flex md:justify-end">
+                          {token.isActive ? (
+                            <button
+                              onClick={() => revokeApiToken(token.id)}
+                              className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-rose-300 transition-colors hover:bg-rose-500/20"
+                            >
+                              Revoke
+                            </button>
+                          ) : (
+                            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-600">Inactive</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    {!tokenLoading && apiTokens.length === 0 && (
+                      <div className="px-4 py-8 text-center text-sm italic text-slate-500">
+                        No mobile tokens created yet.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {authUser.role === 'admin' && (
+          <section className="rounded-[2rem] border border-slate-800 bg-slate-900/60 p-5 md:p-6 shadow-xl shadow-slate-950/20">
+            <div className="flex flex-col gap-5">
+              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-400">Audit Trail</p>
+                  <h2 className="text-xl font-black uppercase tracking-tight text-white">Recent Critical Activity</h2>
+                </div>
+                <div className="flex items-center gap-3">
+                  <p className="text-xs text-slate-500 uppercase tracking-[0.2em]">
+                    {auditLoading ? 'Loading activity...' : `${auditLogs.length} records`}
+                  </p>
+                  <button
+                    onClick={fetchAuditLogs}
+                    className="rounded-xl border border-slate-700 bg-slate-950/50 px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-300 transition-colors hover:border-cyan-400/40 hover:text-cyan-300"
+                  >
+                    Refresh
+                  </button>
+                </div>
+              </div>
+
+              {auditMessage && (
+                <div className="rounded-2xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-xs font-bold text-slate-300">
+                  {auditMessage}
+                </div>
+              )}
+
+              <div className="overflow-hidden rounded-[1.5rem] border border-slate-800 bg-slate-950/30">
+                <div className="divide-y divide-slate-800 md:hidden">
+                  {auditLogs.map((log) => (
+                    <div key={log.id} className="px-4 py-4 space-y-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-black text-white">{formatAuditAction(log.action)}</p>
+                          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">
+                            {log.targetType || 'general'}{log.targetId ? ` #${log.targetId}` : ''}
+                          </p>
+                        </div>
+                        <span className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-400/80">
+                          {log.user?.role || 'system'}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 gap-2 text-xs text-slate-300">
+                        <p>{new Date(log.createdAt).toLocaleString()}</p>
+                        <p>{formatAuditActor(log)}</p>
+                        <p>{formatAuditMetadata(log.metadata || null)}</p>
+                        {log.ipAddress && (
+                          <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-600">{log.ipAddress}</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  {!auditLoading && auditLogs.length === 0 && (
+                    <div className="px-4 py-8 text-center text-sm italic text-slate-500">
+                      No audit events recorded yet.
+                    </div>
+                  )}
+                </div>
+                <div className="hidden grid-cols-[1fr_1.1fr_1.2fr_1.7fr] gap-4 border-b border-slate-800 px-4 py-3 text-[10px] font-black uppercase tracking-[0.25em] text-slate-500 md:grid">
+                  <span>When</span>
+                  <span>Action</span>
+                  <span>Actor</span>
+                  <span>Details</span>
+                </div>
+                <div className="divide-y divide-slate-800">
+                  {auditLogs.map((log) => (
+                    <div key={log.id} className="grid gap-3 px-4 py-4 md:grid-cols-[1fr_1.1fr_1.2fr_1.7fr] md:items-start">
+                      <div>
+                        <p className="text-sm font-bold text-slate-200">{new Date(log.createdAt).toLocaleString()}</p>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-600">
+                          {log.ipAddress || 'No IP'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="font-black text-white">{formatAuditAction(log.action)}</p>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">
+                          {log.targetType || 'general'}{log.targetId ? ` #${log.targetId}` : ''}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="font-bold text-slate-200">{formatAuditActor(log)}</p>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-400/80">
+                          {log.user?.role || 'system'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-slate-300">{formatAuditMetadata(log.metadata || null)}</p>
+                        {log.userAgent && (
+                          <p className="mt-1 line-clamp-1 text-[10px] font-bold uppercase tracking-[0.15em] text-slate-600">
+                            {log.userAgent}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  {!auditLoading && auditLogs.length === 0 && (
+                    <div className="px-4 py-8 text-center text-sm italic text-slate-500">
+                      No audit events recorded yet.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
 
         {/* Main Grid */}
         <main className="space-y-12">
@@ -479,12 +1111,16 @@ export default function Dashboard() {
               </button>
             )}
 
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-black flex items-center gap-3 text-slate-300">
-                <Activity className={cn(tradingMode === 'live' ? "text-amber-500" : "text-amber-400")} /> ACTIVE POSITIONS ({tradingMode.toUpperCase()})
-                <span className="bg-slate-800 text-[10px] py-1 px-3 rounded-full text-white">{openPositions.length}</span>
+            <div className="flex flex-col gap-3 mb-6 sm:flex-row sm:items-center sm:justify-between">
+              <h2 className="text-xl font-black flex flex-wrap items-center gap-3 text-slate-300">
+                <Activity className={cn(tradingMode === 'live' ? "text-amber-500" : "text-amber-400")} />
+                <span>{openPositions.length}</span>
+                <span>ACTIVE POSITIONS</span>
                 {syncing && <RefreshCw size={14} className="animate-spin text-blue-400 ml-2" />}
               </h2>
+              <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
+                Tap any card to monitor live risk
+              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -555,7 +1191,7 @@ export default function Dashboard() {
 
           {/* History */}
           <section className="bg-slate-900/30 border border-slate-800/50 rounded-3xl overflow-hidden shadow-2xl">
-            <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
+            <div className="p-6 border-b border-slate-800 flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center bg-slate-900/50">
               <h2 className="text-lg font-black flex items-center gap-3">
                 <History className="text-amber-400" /> {tradingMode.toUpperCase()} TRADE LOGS
               </h2>
@@ -563,8 +1199,57 @@ export default function Dashboard() {
                 <Trash2 size={14} /> Clear {tradingMode} History
               </button>
             </div>
-            
-            <div className="overflow-x-auto">
+
+            <div className="divide-y divide-slate-800/40 md:hidden">
+              {closedPositions.map((pos) => {
+                const durationStr = formatClosedDuration(pos.createdAt, pos.closedAt);
+                return (
+                  <div key={pos.id} className="px-4 py-4 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-black text-white">{pos.symbol}</p>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">
+                          {pos.origin || '-'}{pos.timeframe ? ` / ${pos.timeframe}` : ''}
+                        </p>
+                      </div>
+                      <span className={cn(pos.positionType === 'buy' ? 'text-emerald-400' : 'text-rose-400', "font-bold text-xs uppercase")}>
+                        {pos.positionType}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-600">Entry</p>
+                        <p className="font-mono text-slate-300">{formatPrice(pos.entryPrice, pos.pricePrecision)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-600">PnL %</p>
+                        <p className={cn("font-black", pos.profitLossPercent >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                          {pos.profitLossPercent > 0 ? '+' : ''}{pos.profitLossPercent.toFixed(2)}%
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-600">Net</p>
+                        <p className={cn("font-black", pos.profitLossFiat >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                          {pos.profitLossFiat > 0 ? '+' : ''}{pos.profitLossFiat.toFixed(2)} {tradingMode === 'live' ? 'USDC' : 'USDT'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-600">Duration</p>
+                        <p className="font-mono text-slate-400">{durationStr}</p>
+                      </div>
+                    </div>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-500">
+                      Closed {pos.closedAt ? new Date(pos.closedAt).toLocaleString() : '-'}
+                    </p>
+                  </div>
+                );
+              })}
+              {closedPositions.length === 0 && (
+                <div className="px-6 py-12 text-center text-slate-600 italic text-sm">No missions completed yet in {tradingMode}.</div>
+              )}
+            </div>
+
+            <div className="hidden overflow-x-auto md:block">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="text-[10px] text-slate-500 uppercase tracking-widest font-black border-b border-slate-800/50">
@@ -580,15 +1265,7 @@ export default function Dashboard() {
                 </thead>
                 <tbody className="divide-y divide-slate-800/30">
                   {closedPositions?.map(pos => {
-                    let durationStr = '-';
-                    if (pos.closedAt) {
-                      const diffMs = new Date(pos.closedAt).getTime() - new Date(pos.createdAt).getTime();
-                      const totalSeconds = Math.max(0, Math.floor(diffMs / 1000));
-                      const hours = Math.floor(totalSeconds / 3600);
-                      const minutes = Math.floor((totalSeconds % 3600) / 60);
-                      const seconds = totalSeconds % 60;
-                      durationStr = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-                    }
+                    const durationStr = formatClosedDuration(pos.createdAt, pos.closedAt);
 
                     const tooltipData = `Entry Time: ${new Date(pos.createdAt).toLocaleString()}
 Close Time: ${pos.closedAt ? new Date(pos.closedAt).toLocaleString() : '-'}
@@ -646,8 +1323,19 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
         </main>
 
         <footer className="pt-4 pb-12 flex flex-col items-center gap-2">
+          <div className="text-[10px] uppercase flex items-center gap-2 font-black tracking-widest">
+            <span className={cn(
+              "inline-block w-2 h-2 rounded-full",
+              syncStatusLabel === 'live' ? "bg-emerald-400" : syncStatusLabel === 'paused' ? "bg-amber-400" : "bg-rose-400"
+            )} />
+            <span className={cn(
+              syncStatusLabel === 'live' ? "text-emerald-400/80" : syncStatusLabel === 'paused' ? "text-amber-400/80" : "text-rose-400/80"
+            )}>
+              {syncStatusLabel === 'live' ? 'Foreground sync active' : syncStatusLabel === 'paused' ? 'Sync paused in background' : 'Offline mode'}
+            </span>
+          </div>
           <div className="text-[10px] text-slate-500 uppercase flex items-center gap-2 opacity-60 font-black tracking-widest">
-            <Clock size={12} /> Last heartbeat: Every 10s
+            <Clock size={12} /> Last heartbeat: {lastSyncAt ? new Date(lastSyncAt).toLocaleTimeString() : 'Pending first sync'}
           </div>
           <div className="text-[10px] text-slate-500/40 uppercase flex items-center gap-2 font-black tracking-[0.2em]">
             <Hammer size={12} /> Build Bitget Sync Rev: {buildInfo.timestamp}
@@ -831,7 +1519,6 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
   const isSafe = pnlSafe > 0;
   const isBreakeven = Math.abs(pnlSafe) < 0.05;
   const slAtEntry = Math.abs(pos.stopLoss - pos.entryPrice) < Math.max(0.0000001, pos.entryPrice * 0.0001);
-  const slInProfit = isBuy ? pos.stopLoss > pos.entryPrice : pos.stopLoss < pos.entryPrice;
 
   const exchangeUrl = `https://www.bitget.com/en/futures/usdt/${pos.symbol}`;
 
@@ -875,10 +1562,13 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
         </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
         <div className="space-y-1">
           <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider">Entry Level</p>
           <p className="text-sm font-mono text-slate-300">{formatPrice(pos.entryPrice, pos.pricePrecision)}</p>
+          <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider">
+            {new Date(pos.createdAt).toLocaleString()}
+          </p>
         </div>
         <div className="space-y-1 text-right">
           <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider">Stop Target</p>
@@ -895,7 +1585,7 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
       )}
 
       <div className="bg-slate-950/50 rounded-2xl p-3 border border-slate-800/50">
-        <div className="flex justify-between items-start gap-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-start">
           <div className="space-y-1">
              <p className="text-[10px] text-emerald-400/50 font-black uppercase tracking-tighter">Real-time PnL</p>
              <p className={cn("text-2xl font-black", grossPercent >= 0 ? "text-emerald-400" : "text-rose-400")}>
@@ -905,9 +1595,12 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
                 Net {netPercent > 0 ? '+' : ''}{netPercent.toFixed(2)}%
              </p>
           </div>
-          <div className="text-right">
+          <div className="text-left sm:text-right">
             <p className={cn("text-sm font-black opacity-90", pos.profitLossFiat >= 0 ? "text-emerald-500" : "text-rose-500")}>
               Net {pos.profitLossFiat > 0 ? '+' : ''}{pos.profitLossFiat.toFixed(2)} {pos.tradingMode === 'live' ? 'USDC' : 'USDT'}
+            </p>
+            <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider mt-1">
+              Duration {formatOpenDuration(pos.createdAt)}
             </p>
           </div>
         </div>
@@ -923,12 +1616,6 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
       {slAtEntry && (
         <div className="px-3 py-2 rounded-xl border border-amber-500/20 bg-amber-500/10 text-center text-[11px] font-black uppercase tracking-[0.2em] text-amber-300">
           Breakeven Plus Fees
-        </div>
-      )}
-
-      {!slAtEntry && slInProfit && (
-        <div className="px-3 py-2 rounded-xl border border-cyan-500/20 bg-cyan-500/10 text-center text-[11px] font-black uppercase tracking-[0.2em] text-cyan-300">
-          Trailing Stop Active
         </div>
       )}
 

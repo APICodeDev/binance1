@@ -1,6 +1,8 @@
 // app/api/close/route.ts
 export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAuth } from '@/lib/auth';
+import { writeAuditLog } from '@/lib/audit';
 import { prisma } from '@/lib/db';
 import { 
   bitgetGetPrice, 
@@ -13,6 +15,11 @@ import {
 } from '@/lib/bitget';
 
 export async function POST(req: NextRequest) {
+  const auth = await requireAuth(req);
+  if (!auth.ok) {
+    return auth.response;
+  }
+
   try {
     const { id } = await req.json();
     if (!id) return NextResponse.json({ error: true, message: 'ID required' }, { status: 400 });
@@ -72,6 +79,15 @@ export async function POST(req: NextRequest) {
           profitLossPercent: profitPercent,
           profitLossFiat: profitFiat,
         },
+      });
+
+      await writeAuditLog({
+        action: 'position.close.manual',
+        userId: auth.auth.user.id,
+        targetType: 'position',
+        targetId: String(pos.id),
+        metadata: { symbol, mode },
+        req,
       });
 
       return NextResponse.json({ success: true, message: `Position ejected in ${mode}.` });
