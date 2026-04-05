@@ -159,6 +159,7 @@ export const apiClient = {
       method: 'DELETE',
     }),
   getAuditLogs: (take = 30) => request<{ data?: { logs: any[] } }>(`/api/audit?take=${take}`),
+  getStats: () => request<{ data?: any }>('/api/stats'),
 };
 
 export type { ApiClientError };

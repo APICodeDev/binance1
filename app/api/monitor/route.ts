@@ -113,7 +113,8 @@ async function runMonitor(req: NextRequest, actorUserId?: number) {
 
       const currentPrice = (await bitgetGetPrice(symbol, mode)) || pos.entryPrice;
       const comm = await bitgetGetCommissionRate(symbol, mode);
-      const entryCost = pos.entryPrice * pos.quantity * ((pos as any).commission ?? 0.0004);
+      const entryComm = (pos as any).commission ?? comm;
+      const entryCost = pos.entryPrice * pos.quantity * entryComm;
       const exitCost = currentPrice * pos.quantity * comm;
 
       const profitFiat = pos.positionType === 'buy'
@@ -146,7 +147,8 @@ async function runMonitor(req: NextRequest, actorUserId?: number) {
     }
 
     const comm = await bitgetGetCommissionRate(symbol, mode);
-    const entryCost = pos.entryPrice * pos.quantity * ((pos as any).commission ?? 0.0004);
+    const entryComm = (pos as any).commission ?? comm;
+    const entryCost = pos.entryPrice * pos.quantity * entryComm;
     const exitCost = currentPrice * pos.quantity * comm;
 
     const profitFiat = pos.positionType === 'buy'
@@ -178,7 +180,7 @@ async function runMonitor(req: NextRequest, actorUserId?: number) {
           }
         }
       } else if (marketMovePercent >= 0.5) {
-        const targetSlPrice = pos.entryPrice * (1 + ((pos as any).commission ?? 0.0004)) / (1 - comm);
+        const targetSlPrice = pos.entryPrice * (1 + entryComm) / (1 - comm);
         if (targetSlPrice > pos.stopLoss) {
           const slResp = await syncStopOrder(symbol, 'SELL', targetSlPrice, pos.quantity, mode);
           if (slResp.ok) {
@@ -202,7 +204,7 @@ async function runMonitor(req: NextRequest, actorUserId?: number) {
           }
         }
       } else if (marketMovePercent >= 0.5) {
-        const targetSlPrice = pos.entryPrice * (1 - ((pos as any).commission ?? 0.0004)) / (1 + comm);
+        const targetSlPrice = pos.entryPrice * (1 - entryComm) / (1 + comm);
         if (targetSlPrice < pos.stopLoss) {
           const slResp = await syncStopOrder(symbol, 'BUY', targetSlPrice, pos.quantity, mode);
           if (slResp.ok) {

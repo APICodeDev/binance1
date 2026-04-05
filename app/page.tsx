@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ShieldCheck, 
@@ -19,7 +19,8 @@ import {
   Bot,
   Zap,
   Globe,
-  Hammer
+  Hammer,
+  Menu
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { apiClient } from '@/lib/apiClient';
@@ -106,6 +107,36 @@ interface AuditLogItem {
   } | null;
 }
 
+interface StatsMode {
+  closedCount: number;
+  successCount: number;
+  failedCount: number;
+  successPercent: number;
+  failedPercent: number;
+  profitAmount: number;
+  lossAmount: number;
+  profitPercent: number;
+  lossPercent: number;
+  sourceByCount: Array<{
+    source: string;
+    totalCount: number;
+    winCount: number;
+    effectivenessPercent: number;
+  }>;
+  sourceByDuration: Array<{
+    source: string;
+    totalDurationMs: number;
+    winDurationMs: number;
+    effectivenessPercent: number;
+  }>;
+}
+
+interface StatsPayload {
+  demo: StatsMode;
+  live: StatsMode;
+  timestamp: string;
+}
+
 function formatPrice(value: number, precision?: number | null) {
   return value.toFixed(typeof precision === 'number' ? precision : 4);
 }
@@ -156,6 +187,8 @@ function formatClosedDuration(createdAt: string, closedAt?: string) {
 }
 
 export default function Dashboard() {
+  const [currentView, setCurrentView] = useState<'dashboard' | 'admin' | 'stats'>('dashboard');
+  const [showMenu, setShowMenu] = useState(false);
   const [openPositions, setOpenPositions] = useState<Position[]>([]);
   const [closedPositions, setClosedPositions] = useState<Position[]>([]);
   const [botEnabled, setBotEnabled] = useState(true);
@@ -193,6 +226,9 @@ export default function Dashboard() {
   const [isDocumentVisible, setIsDocumentVisible] = useState(true);
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [syncStatusLabel, setSyncStatusLabel] = useState<'live' | 'paused' | 'offline'>('live');
+  const [statsData, setStatsData] = useState<StatsPayload | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [statsMessage, setStatsMessage] = useState<string | null>(null);
 
   const filteredSymbols = AVAILABLE_SYMBOLS.filter((symbol) =>
     symbol.includes(newPos.symbol.toUpperCase())
@@ -302,6 +338,19 @@ export default function Dashboard() {
     }
   }, [authUser, getApiErrorMessage]);
 
+  const fetchStats = useCallback(async () => {
+    setStatsLoading(true);
+    try {
+      const payload = await apiClient.getStats();
+      setStatsData(payload.data || null);
+      setStatsMessage(null);
+    } catch (error) {
+      setStatsMessage(getApiErrorMessage(error, 'Unable to load statistics'));
+    } finally {
+      setStatsLoading(false);
+    }
+  }, [getApiErrorMessage]);
+
   const fetchData = useCallback(async (isSilent = false, overrideMode?: 'demo' | 'live') => {
     if (!isSilent) setLoading(true);
     const modeToUse = overrideMode || tradingMode;
@@ -373,6 +422,7 @@ export default function Dashboard() {
     fetchData();
     fetchApiTokens();
     fetchAuditLogs();
+    fetchStats();
 
     if (!isOnline || !isDocumentVisible) {
       return;
@@ -382,7 +432,7 @@ export default function Dashboard() {
       runMonitor();
     }, 10000); 
     return () => clearInterval(interval);
-  }, [authUser, fetchApiTokens, fetchAuditLogs, fetchData, isDocumentVisible, isOnline, runMonitor]);
+  }, [authUser, fetchApiTokens, fetchAuditLogs, fetchData, fetchStats, isDocumentVisible, isOnline, runMonitor]);
 
   useEffect(() => {
     if (!authUser || !isOnline || !isDocumentVisible) {
@@ -435,6 +485,8 @@ export default function Dashboard() {
 
   const logout = async () => {
     await apiClient.logout();
+    setCurrentView('dashboard');
+    setShowMenu(false);
     resetSessionState();
   };
 
@@ -565,7 +617,7 @@ export default function Dashboard() {
 
   const totalSecuredProfit = openPositions.reduce((acc, pos) => {
     const isBuy = pos.positionType === 'buy';
-    const comm = pos.commission ?? 0.0004;
+    const comm = pos.commission ?? 0.0006;
     const isSafe = (isBuy && pos.stopLoss > pos.entryPrice) || (!isBuy && pos.stopLoss < pos.entryPrice);
     if (isSafe) {
       const entryCost = pos.entryPrice * pos.quantity * comm;
@@ -707,6 +759,66 @@ export default function Dashboard() {
       tradingMode === 'live' ? "bg-rose-950/20" : "bg-transparent"
     )}>
       <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-8">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setShowMenu((current) => !current)}
+              className="rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 text-slate-300 transition-colors hover:border-slate-700 hover:text-white"
+            >
+              <Menu size={18} />
+            </button>
+            <div className="text-[11px] font-black uppercase tracking-[0.25em] text-slate-500">
+              {currentView === 'dashboard' ? 'Main Dashboard' : currentView === 'stats' ? 'Statistics' : 'Admin Center'}
+            </div>
+          </div>
+          {showMenu && (
+            <div className="grid w-full grid-cols-1 gap-2 rounded-2xl border border-slate-800 bg-slate-900/95 px-2 py-2 shadow-xl shadow-slate-950/30 sm:w-auto sm:grid-cols-3 sm:items-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setCurrentView('dashboard');
+                  setShowMenu(false);
+                }}
+                className={cn(
+                  "rounded-xl px-4 py-3 text-[11px] font-black uppercase tracking-[0.2em] transition-colors",
+                  currentView === 'dashboard' ? "bg-amber-400 text-slate-950" : "text-slate-300 hover:text-white"
+                )}
+                >
+                  Dashboard
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentView('stats');
+                    setShowMenu(false);
+                  }}
+                  className={cn(
+                    "rounded-xl px-4 py-3 text-[11px] font-black uppercase tracking-[0.2em] transition-colors",
+                    currentView === 'stats' ? "bg-emerald-400 text-slate-950" : "text-slate-300 hover:text-white"
+                  )}
+                >
+                  Statistics
+                </button>
+              {authUser.role === 'admin' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentView('admin');
+                    setShowMenu(false);
+                  }}
+                  className={cn(
+                    "rounded-xl px-4 py-3 text-[11px] font-black uppercase tracking-[0.2em] transition-colors",
+                    currentView === 'admin' ? "bg-cyan-400 text-slate-950" : "text-slate-300 hover:text-white"
+                  )}
+                >
+                  Admin
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* Header */}
         <header className="flex flex-col gap-5 border-b border-slate-800 pb-8">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -847,7 +959,7 @@ export default function Dashboard() {
           </div>
         </header>
 
-        {authUser.role === 'admin' && (
+        {authUser.role === 'admin' && currentView === 'admin' && (
           <section className="rounded-[2rem] border border-slate-800 bg-slate-900/70 p-5 md:p-6 shadow-xl shadow-slate-950/20">
             <div className="flex flex-col gap-5">
               <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
@@ -974,7 +1086,7 @@ export default function Dashboard() {
           </section>
         )}
 
-        {authUser.role === 'admin' && (
+        {authUser.role === 'admin' && currentView === 'admin' && (
           <section className="rounded-[2rem] border border-slate-800 bg-slate-900/60 p-5 md:p-6 shadow-xl shadow-slate-950/20">
             <div className="flex flex-col gap-5">
               <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
@@ -1080,7 +1192,7 @@ export default function Dashboard() {
           </section>
         )}
 
-        {/* Main Grid */}
+        {currentView === 'dashboard' ? (
         <main className="space-y-12">
           {tradingMode === 'live' && (
             <motion.div 
@@ -1276,7 +1388,7 @@ Type: ${pos.positionType.toUpperCase()}
 Quantity: ${pos.quantity}
 Entry Price: ${formatPrice(pos.entryPrice, pos.pricePrecision)}
 Stop Target: ${formatPrice(pos.stopLoss, pos.pricePrecision)}
-Commission: ${((pos.commission ?? 0.0004) * 100).toFixed(4)}%
+Commission: ${((pos.commission ?? 0.0006) * 100).toFixed(4)}%
 PnL %: ${pos.profitLossPercent.toFixed(2)}%
 PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixed(2)} ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}`;
                     
@@ -1321,6 +1433,50 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
             </div>
           </section>
         </main>
+        ) : currentView === 'stats' ? (
+          <main className="space-y-8">
+            <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-[2rem] border border-slate-800 bg-slate-900/40 p-6 shadow-xl shadow-slate-950/20">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.3em] text-emerald-400">Statistics</p>
+                <h2 className="mt-2 text-2xl font-black uppercase tracking-tight text-white">Closed Positions Analytics</h2>
+                <p className="mt-2 text-sm text-slate-400">Separated between demo and live using all closed positions recorded so far.</p>
+              </div>
+              <button
+                onClick={fetchStats}
+                className="rounded-xl border border-slate-700 bg-slate-950/50 px-4 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-slate-300 transition-colors hover:border-emerald-400/40 hover:text-emerald-300"
+              >
+                Refresh stats
+              </button>
+            </section>
+
+            {statsMessage && (
+              <div className="rounded-2xl border border-rose-800/40 bg-rose-950/20 px-4 py-3 text-sm text-rose-300">
+                {statsMessage}
+              </div>
+            )}
+
+            {statsLoading && !statsData ? (
+              <section className="rounded-[2rem] border border-slate-800 bg-slate-900/40 p-8 text-center text-slate-400">
+                Loading statistics...
+              </section>
+            ) : statsData ? (
+              <div className="grid gap-8 xl:grid-cols-2">
+                <StatsModeSection title="Demo Statistics" mode="demo" stats={statsData.demo} />
+                <StatsModeSection title="Live Statistics" mode="live" stats={statsData.live} />
+              </div>
+            ) : null}
+          </main>
+        ) : (
+          <main className="space-y-6">
+            <section className="rounded-[2rem] border border-slate-800 bg-slate-900/40 p-8 text-center shadow-xl shadow-slate-950/20">
+              <p className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-400">Admin View</p>
+              <h2 className="mt-3 text-2xl font-black uppercase tracking-tight text-white">Management Center</h2>
+              <p className="mt-3 text-sm text-slate-400">
+                Here you can manage iOS access tokens and review the audit trail without loading the main trading dashboard.
+              </p>
+            </section>
+          </main>
+        )}
 
         <footer className="pt-4 pb-12 flex flex-col items-center gap-2">
           <div className="text-[10px] uppercase flex items-center gap-2 font-black tracking-widest">
@@ -1505,7 +1661,7 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
 
 function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position) => void }) {
   const isBuy = pos.positionType === 'buy';
-  const comm = pos.commission ?? 0.0004;
+  const comm = pos.commission ?? 0.0006;
   const entryCost = pos.entryPrice * pos.quantity * comm;
   const exitCost = pos.stopLoss * pos.quantity * comm;
   const grossPercent = pos.profitLossPercent;
@@ -1628,3 +1784,180 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
     </motion.div>
   );
 }
+
+function StatsModeSection({ title, mode, stats }: { title: string; mode: 'demo' | 'live'; stats: StatsMode }) {
+  const currency = mode === 'live' ? 'USDC' : 'USDT';
+
+  return (
+    <section className="rounded-[2rem] border border-slate-800 bg-slate-900/50 p-6 shadow-xl shadow-slate-950/20">
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <p className={cn(
+            "text-[10px] font-black uppercase tracking-[0.3em]",
+            mode === 'live' ? "text-rose-400" : "text-emerald-400"
+          )}>
+            {mode}
+          </p>
+          <h3 className="mt-2 text-xl font-black uppercase tracking-tight text-white">{title}</h3>
+        </div>
+        <div className="rounded-2xl border border-slate-800 bg-slate-950/40 px-4 py-3 text-right">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Closed trades</p>
+          <p className="text-2xl font-black text-white">{stats.closedCount}</p>
+        </div>
+      </div>
+
+      <div className="grid gap-6 md:grid-cols-2">
+        <StatsCard
+          title="Success vs Failure"
+          chart={<DonutChart values={[stats.successCount, stats.failedCount]} colors={['#10b981', '#f43f5e']} />}
+          lines={[
+            `${stats.successCount} successful · ${stats.successPercent.toFixed(1)}%`,
+            `${stats.failedCount} failed · ${stats.failedPercent.toFixed(1)}%`,
+          ]}
+        />
+        <StatsCard
+          title={`Profit vs Loss (${currency})`}
+          chart={<DonutChart values={[stats.profitAmount, stats.lossAmount]} colors={['#22c55e', '#ef4444']} />}
+          lines={[
+            `+${stats.profitAmount.toFixed(2)} ${currency} · ${stats.profitPercent.toFixed(1)}%`,
+            `-${stats.lossAmount.toFixed(2)} ${currency} · ${stats.lossPercent.toFixed(1)}%`,
+          ]}
+        />
+      </div>
+
+      <div className="mt-6 grid gap-6 lg:grid-cols-2">
+        <SourceStatsCard
+          title="Source effectiveness by usage"
+          subtitle="Win rate based on how many times each source was used"
+          items={stats.sourceByCount.map((item) => ({
+            label: item.source,
+            percent: item.effectivenessPercent,
+            detail: `${item.winCount}/${item.totalCount} winning signals`,
+          }))}
+        />
+        <SourceStatsCard
+          title="Source effectiveness by duration"
+          subtitle="Winning time divided by total closed-trade time for each source"
+          items={stats.sourceByDuration.map((item) => ({
+            label: item.source,
+            percent: item.effectivenessPercent,
+            detail: `${formatDurationMs(item.winDurationMs)} win time / ${formatDurationMs(item.totalDurationMs)} total`,
+          }))}
+        />
+      </div>
+    </section>
+  );
+}
+
+function StatsCard({ title, chart, lines }: { title: string; chart: ReactNode; lines: string[] }) {
+  return (
+    <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-5">
+      <p className="text-sm font-black uppercase tracking-[0.15em] text-white">{title}</p>
+      <div className="mt-4 flex flex-col items-center gap-4 sm:flex-row">
+        {chart}
+        <div className="space-y-2 text-sm text-slate-300">
+          {lines.map((line) => (
+            <p key={line}>{line}</p>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SourceStatsCard({
+  title,
+  subtitle,
+  items,
+}: {
+  title: string;
+  subtitle: string;
+  items: Array<{ label: string; percent: number; detail: string }>;
+}) {
+  return (
+    <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-5">
+      <p className="text-sm font-black uppercase tracking-[0.15em] text-white">{title}</p>
+      <p className="mt-2 text-xs text-slate-500">{subtitle}</p>
+      <div className="mt-5 space-y-4">
+        {items.length === 0 ? (
+          <p className="text-sm italic text-slate-500">No source data available yet.</p>
+        ) : (
+          items.map((item) => (
+            <div key={item.label} className="flex items-center gap-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+              <DonutChart values={[item.percent, Math.max(0, 100 - item.percent)]} colors={['#06b6d4', '#1f2937']} size={84} strokeWidth={12} centerLabel={`${item.percent.toFixed(0)}%`} />
+              <div>
+                <p className="font-black text-white">{item.label}</p>
+                <p className="mt-1 text-xs text-slate-400">{item.detail}</p>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DonutChart({
+  values,
+  colors,
+  size = 128,
+  strokeWidth = 16,
+  centerLabel,
+}: {
+  values: number[];
+  colors: string[];
+  size?: number;
+  strokeWidth?: number;
+  centerLabel?: string;
+}) {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const total = values.reduce((sum, value) => sum + Math.max(0, value), 0);
+  let offset = 0;
+
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="#1f2937"
+          strokeWidth={strokeWidth}
+        />
+        {values.map((value, index) => {
+          const safeValue = Math.max(0, value);
+          const dash = total > 0 ? (safeValue / total) * circumference : 0;
+          const segment = (
+            <circle
+              key={`${index}-${value}`}
+              cx={size / 2}
+              cy={size / 2}
+              r={radius}
+              fill="none"
+              stroke={colors[index] || '#94a3b8'}
+              strokeWidth={strokeWidth}
+              strokeDasharray={`${dash} ${circumference - dash}`}
+              strokeDashoffset={-offset}
+              strokeLinecap="round"
+            />
+          );
+          offset += dash;
+          return segment;
+        })}
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center text-center">
+        <span className="text-sm font-black text-white">{centerLabel || `${total.toFixed(0)}`}</span>
+      </div>
+    </div>
+  );
+}
+
+function formatDurationMs(durationMs: number) {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  return `${hours}h ${minutes}m`;
+}
+

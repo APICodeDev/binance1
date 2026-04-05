@@ -10,6 +10,51 @@ const BITGET_DEMO_SECRET_KEY = process.env.BITGET_DEMO_SECRET_KEY || '';
 const BITGET_DEMO_PASSPHRASE = process.env.BITGET_DEMO_PASSPHRASE || '';
 
 const BASE_URL = 'https://api.bitget.com';
+const DEFAULT_TAKER_FEE = 0.0006;
+const DEFAULT_MAKER_FEE = 0.0002;
+
+const parseFeeRate = (value?: string) => {
+  const parsed = Number.parseFloat(String(value || '').trim());
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+};
+
+const getConfiguredTakerFee = (symbol: string, tradingMode: 'demo' | 'live') => {
+  const quote = symbol.toUpperCase().endsWith('USDC') ? 'USDC' : symbol.toUpperCase().endsWith('USD') ? 'USD' : 'USDT';
+  const modePrefix = tradingMode === 'live' ? 'BITGET_LIVE' : 'BITGET_DEMO';
+  const candidates = [
+    process.env[`${modePrefix}_${quote}_TAKER_FEE`],
+    process.env[`${modePrefix}_TAKER_FEE`],
+    process.env.BITGET_TAKER_FEE,
+  ];
+
+  for (const candidate of candidates) {
+    const parsed = parseFeeRate(candidate);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  return DEFAULT_TAKER_FEE;
+};
+
+const getConfiguredMakerFee = (symbol: string, tradingMode: 'demo' | 'live') => {
+  const quote = symbol.toUpperCase().endsWith('USDC') ? 'USDC' : symbol.toUpperCase().endsWith('USD') ? 'USD' : 'USDT';
+  const modePrefix = tradingMode === 'live' ? 'BITGET_LIVE' : 'BITGET_DEMO';
+  const candidates = [
+    process.env[`${modePrefix}_${quote}_MAKER_FEE`],
+    process.env[`${modePrefix}_MAKER_FEE`],
+    process.env.BITGET_MAKER_FEE,
+  ];
+
+  for (const candidate of candidates) {
+    const parsed = parseFeeRate(candidate);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  return DEFAULT_MAKER_FEE;
+};
 
 const bitgetRequest = async (
   endpoint: string, 
@@ -215,6 +260,35 @@ export const bitgetGetPricePrecision = async (symbol: string, tradingMode: 'demo
   return 4;
 };
 
+export const bitgetGetTickSize = (exchangeInfo: any) => {
+  const pricePlace = parseInt(exchangeInfo?.pricePlace || '4', 10);
+  const priceEndStep = parseFloat(exchangeInfo?.priceEndStep || '1');
+  return priceEndStep / Math.pow(10, pricePlace);
+};
+
+export const bitgetNormalizePriceByContract = (price: number, exchangeInfo: any) => {
+  const pricePlace = parseInt(exchangeInfo?.pricePlace || '4', 10);
+  const tickSize = bitgetGetTickSize(exchangeInfo);
+  const normalized = Math.floor(price / tickSize) * tickSize;
+  return parseFloat(normalized.toFixed(pricePlace));
+};
+
+export const bitgetNormalizeSizeByContract = (size: number, exchangeInfo: any) => {
+  const minTradeNum = parseFloat(exchangeInfo?.minTradeNum || '0.001');
+  const sizeMultiplier = parseFloat(exchangeInfo?.sizeMultiplier || '0');
+  const volumePlace = parseInt(exchangeInfo?.volumePlace || '3', 10);
+
+  let normalized = size;
+  if (sizeMultiplier > 0) {
+    normalized = Math.floor(normalized / sizeMultiplier) * sizeMultiplier;
+  }
+  if (normalized < minTradeNum) {
+    normalized = minTradeNum;
+  }
+
+  return parseFloat(normalized.toFixed(volumePlace));
+};
+
 export const bitgetPlaceStopMarket = async (symbol: string, side: 'BUY' | 'SELL', stopPrice: number, quantity?: number, tradingMode: 'demo' | 'live' = 'demo') => {
   const sym = symbol.toUpperCase();
   const precision = await bitgetGetPricePrecision(sym, tradingMode);
@@ -238,6 +312,138 @@ export const bitgetPlaceStopMarket = async (symbol: string, side: 'BUY' | 'SELL'
   }
 
   return bitgetRequest('/api/v2/mix/order/place-plan-order', params, 'POST', true, tradingMode);
+};
+
+export const bitgetPlaceLimitOrder = async (
+  symbol: string,
+  side: 'BUY' | 'SELL',
+  quantity: number,
+  price: number,
+  force: 'post_only' | 'ioc' | 'gtc' = 'post_only',
+  clientOid?: string,
+  tradingMode: 'demo' | 'live' = 'demo'
+) => {
+  const sym = symbol.toUpperCase();
+  const params: Record<string, string> = {
+    symbol: sym,
+    productType: getProductType(sym),
+    marginMode: 'crossed',
+    marginCoin: getMarginCoin(sym),
+    side: side.toLowerCase(),
+    orderType: 'limit',
+    size: quantity.toString(),
+    price: price.toString(),
+    force,
+  };
+
+  if (clientOid) {
+    params.clientOid = clientOid;
+  }
+
+  return bitgetRequest('/api/v2/mix/order/place-order', params, 'POST', true, tradingMode);
+};
+
+export const bitgetCancelOrder = async (
+  symbol: string,
+  tradingMode: 'demo' | 'live' = 'demo',
+  orderId?: string,
+  clientOid?: string
+) => {
+  const sym = symbol.toUpperCase();
+  const params: Record<string, string> = {
+    symbol: sym,
+    productType: getProductType(sym),
+    marginCoin: getMarginCoin(sym),
+  };
+
+  if (orderId) params.orderId = orderId;
+  if (clientOid) params.clientOid = clientOid;
+
+  return bitgetRequest('/api/v2/mix/order/cancel-order', params, 'POST', true, tradingMode);
+};
+
+export const bitgetGetOrderDetail = async (
+  symbol: string,
+  tradingMode: 'demo' | 'live' = 'demo',
+  orderId?: string,
+  clientOid?: string
+) => {
+  const sym = symbol.toUpperCase();
+  const params: Record<string, string> = {
+    symbol: sym,
+    productType: getProductType(sym),
+  };
+
+  if (orderId) params.orderId = orderId;
+  if (clientOid) params.clientOid = clientOid;
+
+  return bitgetRequest('/api/v2/mix/order/detail', params, 'GET', true, tradingMode);
+};
+
+export const bitgetGetOrderFills = async (
+  symbol: string,
+  orderId: string,
+  tradingMode: 'demo' | 'live' = 'demo'
+) => {
+  const sym = symbol.toUpperCase();
+  return bitgetRequest('/api/v2/mix/order/fills', {
+    symbol: sym,
+    orderId,
+    productType: getProductType(sym),
+    limit: '100',
+  }, 'GET', true, tradingMode);
+};
+
+export const bitgetGetMergeDepth = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo') => {
+  const sym = symbol.toUpperCase();
+  const resp = await bitgetRequest('/api/v2/mix/market/merge-depth', {
+    symbol: sym,
+    productType: getProductType(sym),
+    limit: '5',
+  }, 'GET', false, tradingMode);
+
+  if (!resp || resp.code !== '00000' || !resp.data) {
+    return { ok: false, bids: [], asks: [], error: resp?.msg || resp?.message || 'merge-depth failed' };
+  }
+
+  return {
+    ok: true,
+    bids: Array.isArray(resp.data.bids) ? resp.data.bids : [],
+    asks: Array.isArray(resp.data.asks) ? resp.data.asks : [],
+    error: null,
+  };
+};
+
+export const bitgetGetVipFeeRates = async () => {
+  const resp = await bitgetRequest('/api/v2/mix/market/vip-fee-rate', {}, 'GET', false, 'live');
+  if (!resp || resp.code !== '00000' || !Array.isArray(resp.data)) {
+    return { ok: false, makerFeeRate: DEFAULT_MAKER_FEE, takerFeeRate: DEFAULT_TAKER_FEE };
+  }
+
+  const levelOne = resp.data[0];
+  return {
+    ok: true,
+    makerFeeRate: parseFeeRate(levelOne?.makerFeeRate) ?? DEFAULT_MAKER_FEE,
+    takerFeeRate: parseFeeRate(levelOne?.takerFeeRate) ?? DEFAULT_TAKER_FEE,
+  };
+};
+
+export const bitgetGetCurrentFundingRate = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo') => {
+  const sym = symbol.toUpperCase();
+  const resp = await bitgetRequest('/api/v2/mix/market/current-fund-rate', {
+    symbol: sym,
+    productType: getProductType(sym),
+  }, 'GET', false, tradingMode);
+
+  if (!resp || resp.code !== '00000' || !Array.isArray(resp.data) || !resp.data[0]) {
+    return { ok: false, fundingRate: 0, nextFundingTime: null };
+  }
+
+  return {
+    ok: true,
+    fundingRate: parseFloat(resp.data[0].fundingRate || '0'),
+    nextFundingTime: resp.data[0].nextFundingTime || null,
+  };
 };
 
 export const bitgetGetPendingStopOrders = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo') => {
@@ -357,7 +563,11 @@ export const bitgetGetExchangeInfo = async (symbol: string, tradingMode: 'demo' 
 };
 
 export const bitgetGetCommissionRate = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo'): Promise<number> => {
-  return 0.0006; // Standard Bitget Taker fee unless overriden. Bitget V2 API doesn't easily expose individual commission rates via public endpoint.
+  return getConfiguredTakerFee(symbol, tradingMode);
+};
+
+export const bitgetGetMakerCommissionRate = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo'): Promise<number> => {
+  return getConfiguredMakerFee(symbol, tradingMode);
 };
 
 export const bitgetNormalizeSymbol = (symbol: string): string => {

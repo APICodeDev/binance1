@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
     if (!currentPrice) return NextResponse.json({ error: true, message: 'Failed to fetch price' }, { status: 500 });
     
     const exitComm = await bitgetGetCommissionRate(symbol, mode);
-    const entryComm = (pos as any).commission ?? 0.0004;
+    const entryComm = (pos as any).commission ?? exitComm;
 
     const closeSide = pos.positionType === 'buy' ? 'SELL' : 'BUY';
     const holdSide = pos.positionType === 'buy' ? 'long' : 'short';
