@@ -169,7 +169,7 @@ const MAX_LEVELS_PER_SIDE = Number.parseInt(process.env.BOOKMAP_MAX_LEVELS_PER_S
 const SYMBOL_STALE_MS = Number.parseInt(process.env.BOOKMAP_STALE_MS || '15000', 10);
 const HEATMAP_CAPTURE_INTERVAL_MS = Number.parseInt(process.env.BOOKMAP_CAPTURE_INTERVAL_MS || '1500', 10);
 const HEATMAP_MAX_FRAMES = Number.parseInt(process.env.BOOKMAP_MAX_FRAMES || '48', 10);
-const HEATMAP_ROW_COUNT = Number.parseInt(process.env.BOOKMAP_HEATMAP_ROWS || '36', 10);
+const HEATMAP_ROW_COUNT = Number.parseInt(process.env.BOOKMAP_HEATMAP_ROWS || '48', 10);
 const HEATMAP_VISIBLE_BAND_PERCENT = Number.parseFloat(process.env.BOOKMAP_VISIBLE_BAND_PERCENT || '0.18');
 const ABSORPTION_LOOKBACK_TRADES = Number.parseInt(process.env.BOOKMAP_ABSORPTION_LOOKBACK_TRADES || '36', 10);
 const PRESIGNAL_MIN_CONFIDENCE = Number.parseFloat(process.env.BOOKMAP_PRESIGNAL_MIN_CONFIDENCE || '0.68');
@@ -356,7 +356,8 @@ const getHeatmapStep = (price: number) => {
   if (price >= 10000) return 1;
   if (price >= 1000) return 0.1;
   if (price >= 100) return 0.01;
-  if (price >= 1) return 0.001;
+  if (price >= 10) return 0.001;
+  if (price >= 1) return 0.0005;
   return 0.0001;
 };
 
@@ -436,10 +437,42 @@ const buildHeatmap = (state: SymbolState, mid: number) => {
   }
 
   const step = getHeatmapStep(mid);
-  const halfRows = Math.floor(HEATMAP_ROW_COUNT / 2);
+  const bucketPrices = Array.from(
+    new Set(
+      frames.flatMap((frame) =>
+        Object.keys(frame.buckets)
+          .map((key) => Number.parseFloat(key))
+          .filter((price) => Number.isFinite(price))
+      )
+    )
+  );
   const centerBucket = roundToStep(mid, step);
-  const rows = Array.from({ length: HEATMAP_ROW_COUNT }, (_, index) => centerBucket + ((halfRows - index) * step))
-    .map((price) => Number(price.toFixed(8)));
+  let top = centerBucket + step * Math.floor(HEATMAP_ROW_COUNT / 2);
+  let bottom = centerBucket - step * Math.floor(HEATMAP_ROW_COUNT / 2);
+
+  if (bucketPrices.length > 0) {
+    const minBucket = Math.min(...bucketPrices);
+    const maxBucket = Math.max(...bucketPrices);
+    const padding = step * 4;
+    top = Math.max(maxBucket + padding, mid + step * 6);
+    bottom = Math.min(minBucket - padding, mid - step * 6);
+
+    const derivedCount = Math.round((top - bottom) / step) + 1;
+    if (derivedCount > HEATMAP_ROW_COUNT) {
+      const span = step * (HEATMAP_ROW_COUNT - 1);
+      const idealCenter = Math.min(
+        Math.max(mid, minBucket + span / 2),
+        maxBucket - span / 2
+      );
+      top = idealCenter + span / 2;
+      bottom = idealCenter - span / 2;
+    }
+  }
+
+  const rows = [];
+  for (let price = top; price >= bottom; price -= step) {
+    rows.push(Number(price.toFixed(8)));
+  }
   const columns = frames.map((frame) => frame.ts);
   const mids = frames.map((frame) => Number(frame.mid.toFixed(8)));
 

@@ -3129,6 +3129,20 @@ function HeatmapChart({ data }: { data: BookmapSummary | null }) {
   const visibleResistances = resistanceZones
     .slice(0, 2)
     .map((zone) => `${zone.price.toFixed(4)} (${zone.distancePercent.toFixed(2)}%)`);
+  const latestProfile = rows.map((_, rowIndex) => cells[rowIndex]?.[columns.length - 1] ?? 0);
+  const latestProfileMax = Math.max(...latestProfile, 0.0001);
+  const currentMid = mids[mids.length - 1] ?? data?.composite.mid ?? rows[Math.floor(rows.length / 2)];
+  const pricePathPoints = priceLine
+    .map((rowIndex, columnIndex) => `${((columnIndex + 0.5) / columns.length) * 100},${((rowIndex + 0.5) / rows.length) * 100}`)
+    .join(' ');
+  const heatColor = (intensity: number) => {
+    if (intensity >= 0.92) return `rgba(245, 248, 255, ${Math.min(1, 0.85 + intensity * 0.15)})`;
+    if (intensity >= 0.78) return `rgba(255, 214, 102, ${0.28 + intensity * 0.5})`;
+    if (intensity >= 0.58) return `rgba(124, 214, 255, ${0.18 + intensity * 0.5})`;
+    if (intensity >= 0.32) return `rgba(44, 154, 255, ${0.12 + intensity * 0.45})`;
+    if (intensity >= 0.12) return `rgba(33, 91, 160, ${0.08 + intensity * 0.35})`;
+    return `rgba(6, 25, 49, ${0.92})`;
+  };
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
@@ -3136,7 +3150,7 @@ function HeatmapChart({ data }: { data: BookmapSummary | null }) {
         <div>
           <p className="text-sm font-black uppercase tracking-[0.2em] text-white">Heatmap</p>
           <p className="mt-1 text-[11px] text-slate-500">
-            Brillo = liquidez resting. Bandas verdes = soportes relevantes. Bandas rojas = resistencias relevantes.
+            Brillo = liquidez resting. La linea blanca sigue el precio medio y la barra lateral muestra donde esta ahora la liquidez mas fuerte.
           </p>
         </div>
         <div className="text-right">
@@ -3145,7 +3159,7 @@ function HeatmapChart({ data }: { data: BookmapSummary | null }) {
         </div>
       </div>
 
-      <div className="mt-4 grid grid-cols-[78px_1fr] gap-3">
+      <div className="mt-4 grid grid-cols-[78px_1fr_88px] gap-3">
         <div className="grid h-[380px]" style={{ gridTemplateRows: `repeat(${rows.length}, minmax(0, 1fr))` }}>
           {rows.map((price, index) => (
             <div key={`${price}-${index}`} className="flex items-center text-[10px] font-black text-slate-500">
@@ -3189,15 +3203,11 @@ function HeatmapChart({ data }: { data: BookmapSummary | null }) {
             {rows.map((_, rowIndex) =>
               columns.map((column, columnIndex) => {
                 const intensity = cells[rowIndex]?.[columnIndex] ?? 0;
-                const alpha = Math.max(0.05, intensity);
-                const color = rowIndex < rows.length / 2
-                  ? `rgba(248, 113, 113, ${alpha})`
-                  : `rgba(52, 211, 153, ${alpha})`;
 
                 return (
                   <div
                     key={`${rowIndex}-${column}`}
-                    style={{ backgroundColor: color }}
+                    style={{ backgroundColor: heatColor(intensity) }}
                     className="border-[0.5px] border-slate-950/30"
                     title={`${rows[rowIndex].toFixed(4)} | ${new Date(column).toLocaleTimeString()} | ${(intensity * 100).toFixed(1)}%`}
                   />
@@ -3206,8 +3216,18 @@ function HeatmapChart({ data }: { data: BookmapSummary | null }) {
             )}
           </div>
 
+          <svg className="pointer-events-none absolute inset-0 z-[2] h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+            <polyline
+              fill="none"
+              stroke="rgba(255,255,255,0.9)"
+              strokeWidth="0.45"
+              points={pricePathPoints}
+              vectorEffect="non-scaling-stroke"
+            />
+          </svg>
+
           <div
-            className="pointer-events-none absolute inset-0 z-[2] grid"
+            className="pointer-events-none absolute inset-0 z-[3] grid"
             style={{
               gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))`,
               gridTemplateRows: `repeat(${rows.length}, minmax(0, 1fr))`,
@@ -3225,7 +3245,7 @@ function HeatmapChart({ data }: { data: BookmapSummary | null }) {
           </div>
 
           <div
-            className="pointer-events-none absolute inset-0 z-[3] grid"
+            className="pointer-events-none absolute inset-0 z-[4] grid"
             style={{
               gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))`,
               gridTemplateRows: `repeat(${rows.length}, minmax(0, 1fr))`,
@@ -3253,21 +3273,29 @@ function HeatmapChart({ data }: { data: BookmapSummary | null }) {
               </div>
             ))}
           </div>
+        </div>
 
-          <div className="pointer-events-none absolute right-2 top-2 z-[4] flex max-w-[38%] flex-col gap-2">
-            {zoneBands.map((band, index) => (
-              <span
-                key={`badge-${band.label}-${index}`}
-                className={cn(
-                  "rounded-full border px-2 py-1 text-[9px] font-black uppercase tracking-[0.15em] text-right",
-                  band.type === 'support'
-                    ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200'
-                    : 'border-rose-400/40 bg-rose-500/10 text-rose-200'
-                )}
-              >
-                {band.label}
-              </span>
-            ))}
+        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-2">
+          <p className="mb-2 text-center text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Now</p>
+          <div className="grid h-[380px]" style={{ gridTemplateRows: `repeat(${rows.length}, minmax(0, 1fr))` }}>
+            {rows.map((price, rowIndex) => {
+              const intensity = latestProfile[rowIndex] ?? 0;
+              const widthPercent = Math.max(4, (intensity / latestProfileMax) * 100);
+              const isAboveMid = price > currentMid;
+              return (
+                <div key={`profile-${price}-${rowIndex}`} className="flex items-center">
+                  <div className="h-[70%] w-full rounded-full bg-slate-900/80">
+                    <div
+                      className={cn(
+                        "h-full rounded-full",
+                        isAboveMid ? 'bg-rose-300/80' : 'bg-emerald-300/80'
+                      )}
+                      style={{ width: `${widthPercent}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
