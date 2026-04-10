@@ -7,6 +7,8 @@
     "dev": "next dev",
     "build": "prisma generate && next build",
     "start": "next start",
+    "marketdata:start": "npx tsx scripts/bitget-ws-service.ts",
+    "bookmap:start": "npx tsx scripts/bookmap-ws-service.ts",
     "lint": "next lint",
     "create-admin": "npx tsx scripts/create-admin.ts",
     "postinstall": "prisma generate",
@@ -23,6 +25,8 @@
     "@capacitor/core": "^8.3.0",
     "@capacitor/ios": "^8.3.0",
     "@prisma/client": "^5.14.0",
+    "@types/ws": "^8.18.1",
+    "@vercel/functions": "^3.4.3",
     "autoprefixer": "^10.4.27",
     "axios": "^1.7.2",
     "clsx": "^2.1.1",
@@ -35,7 +39,8 @@
     "react-dom": "^18.3.1",
     "tailwind-merge": "^2.3.0",
     "tailwindcss": "^3.4.3",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "@types/node": "^20.12.12",

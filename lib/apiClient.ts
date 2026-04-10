@@ -159,7 +159,10 @@ export const apiClient = {
       method: 'DELETE',
     }),
   getAuditLogs: (take = 30) => request<{ data?: { logs: any[] } }>(`/api/audit?take=${take}`),
+  getAccountOverview: () => request<{ data?: any }>('/api/account-overview'),
   getStats: () => request<{ data?: any }>('/api/stats'),
+  getBookmap: (symbol: string) => request<{ data?: any }>(`/api/bookmap?symbol=${encodeURIComponent(symbol)}`),
+  getSounds: () => request<{ data?: { files: string[] } }>('/api/sounds'),
 };
 
 export type { ApiClientError };

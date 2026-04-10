@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
+import { waitUntil } from '@vercel/functions';
 import { getAuthContext } from '@/lib/auth';
 import { writeAuditLog } from '@/lib/audit';
 import { prisma } from '@/lib/db';
@@ -18,6 +19,7 @@ import {
   bitgetGetPrice,
   bitgetGetTickSize,
   bitgetGetVipFeeRates,
+  bitgetGetWsBestBidAsk,
   bitgetNormalizePriceByContract,
   bitgetNormalizeSizeByContract,
   bitgetNormalizeSymbol,
@@ -25,19 +27,34 @@ import {
   bitgetPlaceLimitOrder,
   bitgetPlaceMarketOrder,
   bitgetPlaceStopMarket,
+  bitgetSetLeverage,
 } from '@/lib/bitget';
 
 type TradingMode = 'demo' | 'live';
 
-const DEFAULT_MAKER_RETRY_DELAYS_MS = [1200, 1800, 2500];
-const DEFAULT_MAX_SPREAD_PERCENT = 0.12;
-const DEFAULT_MAX_TAKER_COST_PERCENT = 0.2;
+const DEFAULT_MAKER_RETRY_DELAYS_MS = [500];
+const DEFAULT_MAX_SPREAD_PERCENT = 0.6;
+const DEFAULT_MAX_TAKER_COST_PERCENT = 1.0;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const createClientOid = (symbol: string) =>
   `bgd-${symbol.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 const extractOrderData = (detailResponse: any) => detailResponse?.data?.[0] || detailResponse?.data || {};
+const toDepthFromWsQuote = (quote: any) => {
+  if (!quote?.ok || !Number.isFinite(quote.bestBid) || !Number.isFinite(quote.bestAsk)) {
+    return null;
+  }
+
+  return {
+    ok: true,
+    bids: [[quote.bestBid.toString(), Number.parseFloat(String(quote.bidSize || 0)).toString()]],
+    asks: [[quote.bestAsk.toString(), Number.parseFloat(String(quote.askSize || 0)).toString()]],
+    error: null,
+    source: 'websocket',
+  };
+};
+
 const getMakerRetryDelays = () => {
   const rawValue = process.env.BITGET_MAKER_RETRY_DELAYS_MS;
   if (!rawValue) {
@@ -52,25 +69,22 @@ const getMakerRetryDelays = () => {
   return parsed.length > 0 ? parsed : DEFAULT_MAKER_RETRY_DELAYS_MS;
 };
 
-export async function POST(req: NextRequest) {
-  const auth = await getAuthContext(req);
-
+async function executeEntry(
+  data: any,
+  req: NextRequest,
+  auth: Awaited<ReturnType<typeof getAuthContext>>
+) {
   try {
-    let data: any;
-    try {
-      data = JSON.parse(await req.text());
-    } catch {
-      return NextResponse.json({ error: true, message: 'Invalid JSON syntax from webhook.' }, { status: 400 });
-    }
-
     const symbol = bitgetNormalizeSymbol(data.symbol || '');
     let amount = parseFloat(data.amount) || 0;
     const type = String(data.type || '').toLowerCase();
     const origin = data.origin ? String(data.origin) : null;
     const timeframe = data.timeframe ? String(data.timeframe) : null;
     const incomingQuantity = parseFloat(data.quantity || data.contracts) || 0;
-    const allowTakerFallback = String(data.allowTakerFallback || '').toLowerCase() === 'true';
-    const takerFallbackMode = String(data.takerFallbackMode || 'ioc').toLowerCase() === 'market' ? 'market' : 'ioc';
+    const allowTakerFallback = data.allowTakerFallback === undefined
+      ? true
+      : String(data.allowTakerFallback || '').toLowerCase() === 'true';
+    const takerFallbackMode = String(data.takerFallbackMode || 'market').toLowerCase() === 'ioc' ? 'ioc' : 'market';
 
     const botEnabled = await prisma.setting.findUnique({ where: { key: 'bot_enabled' } });
     if (botEnabled?.value === '0') {
@@ -81,7 +95,11 @@ export async function POST(req: NextRequest) {
     const tradingMode = (modeSetting?.value || 'demo') as TradingMode;
 
     const customAmountSetting = await prisma.setting.findUnique({ where: { key: 'custom_amount' } });
+    const leverageEnabledSetting = await prisma.setting.findUnique({ where: { key: 'leverage_enabled' } });
+    const leverageValueSetting = await prisma.setting.findUnique({ where: { key: 'leverage_value' } });
     const customAmount = parseFloat(String(customAmountSetting?.value || '0').replace(/[^0-9.]/g, ''));
+    const leverageEnabled = leverageEnabledSetting?.value === '1';
+    const configuredLeverage = Number.parseFloat(String(leverageValueSetting?.value || '1'));
     if (customAmount > 0) {
       amount = customAmount;
     }
@@ -151,7 +169,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: true, message: errDetail }, { status: 500 });
     }
 
-    const depth = await bitgetGetMergeDepth(symbol, tradingMode);
+    const wsQuote = await bitgetGetWsBestBidAsk(symbol, tradingMode);
+    const depth = toDepthFromWsQuote(wsQuote) || await bitgetGetMergeDepth(symbol, tradingMode);
+
     if (!depth.ok || depth.bids.length === 0 || depth.asks.length === 0) {
       const errDetail = `No se pudo obtener profundidad para ${symbol}.`;
       await saveLastEntryError(errDetail, symbol, type);
@@ -172,6 +192,18 @@ export async function POST(req: NextRequest) {
     const takerFeeRate = await bitgetGetCommissionRate(symbol, tradingMode);
     const fundingRate = await bitgetGetCurrentFundingRate(symbol, tradingMode);
     const pricePrecision = parseInt(exchangeInfo?.pricePlace || '4', 10);
+    const minLever = Math.max(1, Number.parseFloat(String(exchangeInfo?.minLever || '1')) || 1);
+    const maxLever = Math.max(minLever, Number.parseFloat(String(exchangeInfo?.maxLever || '1')) || 1);
+    const requestedLeverage = leverageEnabled ? (Number.isFinite(configuredLeverage) ? configuredLeverage : 1) : 1;
+    const appliedLeverage = Math.min(maxLever, Math.max(minLever, requestedLeverage));
+    const leverageHoldSide = type === 'buy' ? 'long' : 'short';
+
+    const leverageResp = await bitgetSetLeverage(symbol, appliedLeverage, leverageHoldSide, tradingMode);
+    if (!bitgetOrderSuccess(leverageResp)) {
+      const errDetail = `Bitget no acepto el leverage ${appliedLeverage}x para ${symbol}.`;
+      await saveLastEntryError(errDetail, symbol, type);
+      return NextResponse.json({ error: true, message: errDetail, detail: leverageResp }, { status: 500 });
+    }
 
     const rawSize = incomingQuantity > 0 ? incomingQuantity : amount / midPrice;
     if (!Number.isFinite(rawSize) || rawSize <= 0) {
@@ -185,8 +217,8 @@ export async function POST(req: NextRequest) {
 
     const computeMakerPrice = (bid: number, ask: number) => {
       const raw = type === 'buy'
-        ? Math.min(ask - tickSize, bid + tickSize)
-        : Math.max(bid + tickSize, ask - tickSize);
+        ? ask - tickSize
+        : bid + tickSize;
       const fallback = type === 'buy' ? bid : ask;
       const valid = type === 'buy'
         ? raw > bid && raw < ask
@@ -217,7 +249,8 @@ export async function POST(req: NextRequest) {
     let lastOrderResponse: any = null;
 
     for (const delayMs of makerRetryDelays) {
-      const attemptDepth = await bitgetGetMergeDepth(symbol, tradingMode);
+      const attemptWsQuote = await bitgetGetWsBestBidAsk(symbol, tradingMode);
+      const attemptDepth = toDepthFromWsQuote(attemptWsQuote) || await bitgetGetMergeDepth(symbol, tradingMode);
       if (!attemptDepth.ok || attemptDepth.bids.length === 0 || attemptDepth.asks.length === 0) {
         continue;
       }
@@ -372,6 +405,13 @@ export async function POST(req: NextRequest) {
         expectedMakerFee,
         expectedSpreadCost,
         fundingRisk,
+        leverageEnabled,
+        leverageRequested: requestedLeverage,
+        leverageApplied: appliedLeverage,
+        leverageHoldSide,
+        contractMinLever: minLever,
+        contractMaxLever: maxLever,
+        marketDataSource: wsQuote.ok ? 'websocket' : 'rest',
         vipMakerFee: vipFees.makerFeeRate,
         vipTakerFee: vipFees.takerFeeRate,
         realEntryFee,
@@ -405,6 +445,40 @@ export async function POST(req: NextRequest) {
     } catch {}
     return NextResponse.json({ error: true, message: error.message, detail: errDetail }, { status: 500 });
   }
+}
+
+export async function POST(req: NextRequest) {
+  const auth = await getAuthContext(req);
+
+  let data: any;
+  try {
+    data = JSON.parse(await req.text());
+  } catch {
+    return NextResponse.json({ error: true, message: 'Invalid JSON syntax from webhook.' }, { status: 400 });
+  }
+
+  const isExternalWebhook = !auth?.user;
+
+  if (isExternalWebhook) {
+    waitUntil(
+      executeEntry(data, req, auth).catch(async (error: any) => {
+        try {
+          const symbol = bitgetNormalizeSymbol(data?.symbol || 'N/A');
+          const type = String(data?.type || 'N/A');
+          await saveLastEntryError(`Excepcion async entry: ${error?.message || 'unknown error'}`, symbol, type);
+        } catch {
+          return;
+        }
+      })
+    );
+
+    return NextResponse.json({
+      success: true,
+      message: 'Entry accepted for background processing',
+    });
+  }
+
+  return executeEntry(data, req, auth);
 }
 
 async function saveLastEntryError(detail: string, symbol: string, type: string) {

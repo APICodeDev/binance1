@@ -10,6 +10,7 @@ const BITGET_DEMO_SECRET_KEY = process.env.BITGET_DEMO_SECRET_KEY || '';
 const BITGET_DEMO_PASSPHRASE = process.env.BITGET_DEMO_PASSPHRASE || '';
 
 const BASE_URL = 'https://api.bitget.com';
+const WS_SERVICE_URL = (process.env.BITGET_WS_SERVICE_URL || 'http://127.0.0.1:8787').replace(/\/$/, '');
 const DEFAULT_TAKER_FEE = 0.0006;
 const DEFAULT_MAKER_FEE = 0.0002;
 
@@ -153,6 +154,27 @@ export const bitgetOrderSuccess = (resp: any) => {
   if (resp.error) return false;
   if (resp.code !== '00000') return false;
   return true;
+};
+
+export const bitgetSetLeverage = async (
+  symbol: string,
+  leverage: number,
+  holdSide?: 'long' | 'short',
+  tradingMode: 'demo' | 'live' = 'demo'
+) => {
+  const sym = symbol.toUpperCase();
+  const params: Record<string, string> = {
+    symbol: sym,
+    productType: getProductType(sym),
+    marginCoin: getMarginCoin(sym),
+    leverage: leverage.toString(),
+  };
+
+  if (holdSide) {
+    params.holdSide = holdSide;
+  }
+
+  return bitgetRequest('/api/v2/mix/account/set-leverage', params, 'POST', true, tradingMode);
 };
 
 type BitgetPositionSnapshot = {
@@ -414,6 +436,43 @@ export const bitgetGetMergeDepth = async (symbol: string, tradingMode: 'demo' | 
   };
 };
 
+export const bitgetGetWsBestBidAsk = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo') => {
+  const sym = symbol.toUpperCase();
+
+  try {
+    await axios.get(`${WS_SERVICE_URL}/subscribe`, {
+      params: { symbol: sym, mode: tradingMode },
+      timeout: 1500,
+    });
+
+    const resp = await axios.get(`${WS_SERVICE_URL}/snapshot`, {
+      params: { symbol: sym, mode: tradingMode },
+      timeout: 1500,
+    });
+
+    if (!resp.data?.ok || !resp.data?.snapshot) {
+      return { ok: false, source: 'websocket', error: resp.data?.message || 'snapshot unavailable' };
+    }
+
+    const snapshot = resp.data.snapshot;
+    return {
+      ok: true,
+      source: 'websocket' as const,
+      bestBid: parseFloat(String(snapshot.bestBid)),
+      bestAsk: parseFloat(String(snapshot.bestAsk)),
+      bidSize: parseFloat(String(snapshot.bidSize || '0')),
+      askSize: parseFloat(String(snapshot.askSize || '0')),
+      timestamp: Number.parseInt(String(snapshot.timestamp || Date.now()), 10),
+    };
+  } catch (error: any) {
+    return {
+      ok: false,
+      source: 'websocket',
+      error: error?.response?.data?.message || error?.message || 'ws service unavailable',
+    };
+  }
+};
+
 export const bitgetGetVipFeeRates = async () => {
   const resp = await bitgetRequest('/api/v2/mix/market/vip-fee-rate', {}, 'GET', false, 'live');
   if (!resp || resp.code !== '00000' || !Array.isArray(resp.data)) {
@@ -560,6 +619,21 @@ export const bitgetGetExchangeInfo = async (symbol: string, tradingMode: 'demo' 
   const sym = symbol.toUpperCase();
   const res = await bitgetRequest('/api/v2/mix/market/contracts', { productType: getProductType(sym) }, 'GET', false, tradingMode);
   return res && res.data ? res.data.find((s: any) => s.symbol === sym) || null : null;
+};
+
+export const bitgetGetAllAccountBalance = async (tradingMode: 'demo' | 'live' = 'demo') => {
+  return bitgetRequest('/api/v2/account/all-account-balance', {}, 'GET', true, tradingMode);
+};
+
+export const bitgetGetFuturesAccounts = async (
+  productType: 'USDT-FUTURES' | 'USDC-FUTURES' | 'COIN-FUTURES',
+  tradingMode: 'demo' | 'live' = 'demo'
+) => {
+  return bitgetRequest('/api/v2/mix/account/accounts', { productType }, 'GET', true, tradingMode);
+};
+
+export const bitgetGetSpotAssets = async (tradingMode: 'demo' | 'live' = 'demo') => {
+  return bitgetRequest('/api/v2/spot/account/assets', {}, 'GET', true, tradingMode);
 };
 
 export const bitgetGetCommissionRate = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo'): Promise<number> => {

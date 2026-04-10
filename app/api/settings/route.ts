@@ -16,12 +16,20 @@ export async function GET(req: NextRequest) {
   const customAmount = await prisma.setting.findUnique({ where: { key: 'custom_amount' } });
   const lastEntryError = await prisma.setting.findUnique({ where: { key: 'last_entry_error' } });
   const tradingMode = await prisma.setting.findUnique({ where: { key: 'trading_mode' } });
+  const leverageEnabled = await prisma.setting.findUnique({ where: { key: 'leverage_enabled' } });
+  const leverageValue = await prisma.setting.findUnique({ where: { key: 'leverage_value' } });
+  const profitSoundEnabled = await prisma.setting.findUnique({ where: { key: 'profit_sound_enabled' } });
+  const profitSoundFile = await prisma.setting.findUnique({ where: { key: 'profit_sound_file' } });
   
   return NextResponse.json({ 
     bot_enabled: botEnabled?.value || '1',
     custom_amount: customAmount?.value || '',
     last_entry_error: lastEntryError?.value || '',
-    trading_mode: tradingMode?.value || 'demo'
+    trading_mode: tradingMode?.value || 'demo',
+    leverage_enabled: leverageEnabled?.value || '0',
+    leverage_value: leverageValue?.value || '1',
+    profit_sound_enabled: profitSoundEnabled?.value || '0',
+    profit_sound_file: profitSoundFile?.value || ''
   });
 }
 
@@ -43,7 +51,11 @@ export async function POST(req: NextRequest) {
   const settingsToUpdate = [
     { key: 'bot_enabled', value: body.bot_enabled },
     { key: 'custom_amount', value: body.custom_amount },
-    { key: 'trading_mode', value: body.trading_mode }
+    { key: 'trading_mode', value: body.trading_mode },
+    { key: 'leverage_enabled', value: body.leverage_enabled },
+    { key: 'leverage_value', value: body.leverage_value },
+    { key: 'profit_sound_enabled', value: body.profit_sound_enabled },
+    { key: 'profit_sound_file', value: body.profit_sound_file }
   ];
 
   for (const setting of settingsToUpdate) {

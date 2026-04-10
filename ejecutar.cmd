@@ -1,9 +1,8 @@
 @echo off
-echo Generando imagen...
-npm run build
+cls
+echo GENERANDO IMAGEN DOCKER...
 echo -----------------------------------
-pause 2
-echo generando Docker container...
 docker-compose up -d --build 
 echo -----------------------------------
-pause 1
+echo FINALIZADO.
+@timeout 1

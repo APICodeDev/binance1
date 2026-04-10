@@ -8,4 +8,32 @@ services:
       - "3000:3000"
     env_file:
       - .env
+    environment:
+      BITGET_WS_SERVICE_URL: http://bitget-marketdata:8787
+      BOOKMAP_WS_SERVICE_URL: http://bookmap-service:8788
+    depends_on:
+      - bitget-marketdata
+      - bookmap-service
+    restart: always
+
+  bitget-marketdata:
+    build: .
+    container_name: bitget-marketdata
+    command: npm run marketdata:start
+    env_file:
+      - .env
+    environment:
+      BITGET_WS_SERVICE_HOST: 0.0.0.0
+      BITGET_WS_SERVICE_PORT: 8787
+    restart: always
+
+  bookmap-service:
+    build: .
+    container_name: bookmap-service
+    command: npm run bookmap:start
+    env_file:
+      - .env
+    environment:
+      BOOKMAP_WS_SERVICE_HOST: 0.0.0.0
+      BOOKMAP_WS_SERVICE_PORT: 8788
     restart: always

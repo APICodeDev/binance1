@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { useState, useEffect, useCallback, type ReactNode } from 'react';
+import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ShieldCheck, 
@@ -16,11 +16,17 @@ import {
   RefreshCw,
   Clock,
   ExternalLink,
+  BarChart3,
   Bot,
   Zap,
   Globe,
   Hammer,
-  Menu
+  Menu,
+  CircleHelp,
+  ChevronDown,
+  ChevronUp,
+  Volume2,
+  Play
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { apiClient } from '@/lib/apiClient';
@@ -107,6 +113,56 @@ interface AuditLogItem {
   } | null;
 }
 
+interface AccountOverviewMode {
+  summary: Array<{
+    accountType: string;
+    usdtBalance: number;
+    btcBalance: number;
+  }>;
+  futures: {
+    usdt: Array<{
+      marginCoin: string;
+      available: number;
+      locked: number;
+      accountEquity: number;
+      unrealizedPnl: number;
+      crossedMaxAvailable: number;
+      maxOpenPosAvailable: number;
+    }>;
+    usdc: Array<{
+      marginCoin: string;
+      available: number;
+      locked: number;
+      accountEquity: number;
+      unrealizedPnl: number;
+      crossedMaxAvailable: number;
+      maxOpenPosAvailable: number;
+    }>;
+    coin: Array<{
+      marginCoin: string;
+      available: number;
+      locked: number;
+      accountEquity: number;
+      unrealizedPnl: number;
+      crossedMaxAvailable: number;
+      maxOpenPosAvailable: number;
+    }>;
+  };
+  spotAssets: Array<{
+    coin: string;
+    available: number;
+    frozen: number;
+    total: number;
+  }>;
+  rawStatus: Record<string, boolean>;
+}
+
+interface AccountOverviewPayload {
+  demo: AccountOverviewMode;
+  live: AccountOverviewMode;
+  fetchedAt: string;
+}
+
 interface StatsMode {
   closedCount: number;
   successCount: number;
@@ -129,6 +185,25 @@ interface StatsMode {
     winDurationMs: number;
     effectivenessPercent: number;
   }>;
+  symbolByWins: Array<{
+    symbol: string;
+    totalCount: number;
+    winCount: number;
+    effectivenessPercent: number;
+  }>;
+  symbolByProfit: Array<{
+    symbol: string;
+    totalCount: number;
+    profitAmount: number;
+  }>;
+  tradesByWeekday: Array<{
+    label: string;
+    count: number;
+  }>;
+  tradesByHour: Array<{
+    label: string;
+    count: number;
+  }>;
 }
 
 interface StatsPayload {
@@ -143,6 +218,100 @@ interface NewPositionForm {
   type: 'buy' | 'sell';
   allowTakerFallback: boolean;
   takerFallbackMode: 'ioc' | 'market';
+}
+
+interface BookmapZone {
+  price: number;
+  totalSize: number;
+  totalNotional: number;
+  exchangeCount: number;
+  exchanges: string[];
+  distancePercent: number;
+}
+
+interface BookmapSummary {
+  symbol: string;
+  asOf: number;
+  lastPrice: number | null;
+  composite: {
+    bestBid: number | null;
+    bestAsk: number | null;
+    mid: number;
+    spreadBps: number | null;
+  };
+  exchanges: Array<{
+    exchange: string;
+    status: string;
+    bestBid: number | null;
+    bestAsk: number | null;
+    spreadBps: number | null;
+    lastUpdateAgeMs: number | null;
+    isFresh: boolean;
+  }>;
+  tape: {
+    buyVolume: number;
+    sellVolume: number;
+    imbalance: number;
+    recentTrades: Array<{
+      exchange: string;
+      price: number;
+      size: number;
+      side: 'buy' | 'sell';
+      timestamp: number;
+    }>;
+  };
+  zones: {
+    supports: BookmapZone[];
+    resistances: BookmapZone[];
+  };
+  heatmap: {
+    rows: number[];
+    columns: number[];
+    mids: number[];
+    cells: number[][];
+    maxIntensity: number;
+    step: number;
+  };
+  heatmapTrades: Array<{
+    exchange: string;
+    side: 'buy' | 'sell';
+    price: number;
+    size: number;
+    timestamp: number;
+    columnIndex: number;
+    rowIndex: number;
+  }>;
+  absorptionSignals: Array<{
+    side: 'bullish' | 'bearish';
+    price: number;
+    confidence: number;
+    absorbedVolume: number;
+    tradeCount: number;
+    note: string;
+  }>;
+  preSignal: {
+    actionable: boolean;
+    bias: 'long' | 'short' | 'neutral';
+    confidence: number;
+    entryPrice: number | null;
+    stopPrice: number | null;
+    targetPrice: number | null;
+    rewardRisk: number | null;
+    invalidation: string | null;
+    mode: 'ready' | 'watch' | 'active' | 'invalidated' | 'replaced';
+    reasons: string[];
+    createdAt: number;
+    updatedAt: number;
+    expiresAt: number;
+    invalidatedAt: number | null;
+    invalidationReason: string | null;
+  };
+  trigger: {
+    bias: 'long' | 'short' | 'neutral';
+    confidence: number;
+    reason: string;
+    referencePrice: number | null;
+  };
 }
 
 function formatPrice(value: number, precision?: number | null) {
@@ -202,6 +371,14 @@ export default function Dashboard() {
   const [botEnabled, setBotEnabled] = useState(true);
   const [tradingMode, setTradingMode] = useState<'demo' | 'live'>('demo');
   const [customAmount, setCustomAmount] = useState('');
+  const [leverageEnabled, setLeverageEnabled] = useState(false);
+  const [leverageValue, setLeverageValue] = useState('1');
+  const [showLeverageHelp, setShowLeverageHelp] = useState(false);
+  const [isPhonePortrait, setIsPhonePortrait] = useState(false);
+  const [tradeLogsExpanded, setTradeLogsExpanded] = useState(true);
+  const [profitSoundEnabled, setProfitSoundEnabled] = useState(false);
+  const [profitSoundFile, setProfitSoundFile] = useState('');
+  const [availableSounds, setAvailableSounds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [showModal, setShowModal] = useState(false);
@@ -210,7 +387,7 @@ export default function Dashboard() {
     amount: '100',
     type: 'buy',
     allowTakerFallback: true,
-    takerFallbackMode: 'ioc',
+    takerFallbackMode: 'market',
   });
   const [showSymbolOptions, setShowSymbolOptions] = useState(false);
   const [totalPnl, setTotalPnl] = useState(0);
@@ -236,6 +413,9 @@ export default function Dashboard() {
   const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditMessage, setAuditMessage] = useState<string | null>(null);
+  const [accountOverview, setAccountOverview] = useState<AccountOverviewPayload | null>(null);
+  const [accountOverviewLoading, setAccountOverviewLoading] = useState(false);
+  const [accountOverviewMessage, setAccountOverviewMessage] = useState<string | null>(null);
   const [isOnline, setIsOnline] = useState(true);
   const [isDocumentVisible, setIsDocumentVisible] = useState(true);
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
@@ -243,10 +423,16 @@ export default function Dashboard() {
   const [statsData, setStatsData] = useState<StatsPayload | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
   const [statsMessage, setStatsMessage] = useState<string | null>(null);
+  const [bookmapSymbol, setBookmapSymbol] = useState('ETHUSDT');
+  const [bookmapData, setBookmapData] = useState<BookmapSummary | null>(null);
+  const [bookmapLoading, setBookmapLoading] = useState(false);
+  const [bookmapMessage, setBookmapMessage] = useState<string | null>(null);
 
   const filteredSymbols = AVAILABLE_SYMBOLS.filter((symbol) =>
     symbol.includes(newPos.symbol.toUpperCase())
   );
+  const recentClosedPositions = closedPositions.slice(0, 15);
+  const lastSeenClosedIdRef = useRef<number | null>(null);
 
   const resetSessionState = useCallback(() => {
     apiClient.setApiToken(null);
@@ -303,6 +489,22 @@ export default function Dashboard() {
     };
   }, []);
 
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const updateTradeLogsLayout = () => {
+      const phonePortrait = window.innerWidth < 768 && window.innerHeight > window.innerWidth;
+      setIsPhonePortrait(phonePortrait);
+      setTradeLogsExpanded(!phonePortrait);
+    };
+
+    updateTradeLogsLayout();
+    window.addEventListener('resize', updateTradeLogsLayout);
+    return () => window.removeEventListener('resize', updateTradeLogsLayout);
+  }, []);
+
   const fetchAuth = useCallback(async () => {
     setAuthLoading(true);
     try {
@@ -352,6 +554,24 @@ export default function Dashboard() {
     }
   }, [authUser, getApiErrorMessage]);
 
+  const fetchAccountOverview = useCallback(async () => {
+    if (authUser?.role !== 'admin') {
+      setAccountOverview(null);
+      return;
+    }
+
+    setAccountOverviewLoading(true);
+    try {
+      const payload = await apiClient.getAccountOverview();
+      setAccountOverview(payload.data || null);
+      setAccountOverviewMessage(null);
+    } catch (error) {
+      setAccountOverviewMessage(getApiErrorMessage(error, 'Unable to load account overview'));
+    } finally {
+      setAccountOverviewLoading(false);
+    }
+  }, [authUser, getApiErrorMessage]);
+
   const fetchStats = useCallback(async () => {
     setStatsLoading(true);
     try {
@@ -364,6 +584,33 @@ export default function Dashboard() {
       setStatsLoading(false);
     }
   }, [getApiErrorMessage]);
+
+  const fetchBookmap = useCallback(async (symbol: string, isSilent = false) => {
+    if (!isSilent) {
+      setBookmapLoading(true);
+    }
+
+    try {
+      const payload = await apiClient.getBookmap(symbol);
+      setBookmapData(payload.data || null);
+      setBookmapMessage(null);
+    } catch (error) {
+      setBookmapMessage(getApiErrorMessage(error, 'Unable to load bookmap summary'));
+    } finally {
+      if (!isSilent) {
+        setBookmapLoading(false);
+      }
+    }
+  }, [getApiErrorMessage]);
+
+  const fetchSounds = useCallback(async () => {
+    try {
+      const payload = await apiClient.getSounds();
+      setAvailableSounds(payload.data?.files || []);
+    } catch {
+      setAvailableSounds([]);
+    }
+  }, []);
 
   const fetchData = useCallback(async (isSilent = false, overrideMode?: 'demo' | 'live') => {
     if (!isSilent) setLoading(true);
@@ -380,6 +627,10 @@ export default function Dashboard() {
       setBotEnabled(settings.bot_enabled === '1');
       setCustomAmount(settings.custom_amount || '');
       setTradingMode(settings.trading_mode || 'demo');
+      setLeverageEnabled(settings.leverage_enabled === '1');
+      setLeverageValue(settings.leverage_value || '1');
+      setProfitSoundEnabled(settings.profit_sound_enabled === '1');
+      setProfitSoundFile(settings.profit_sound_file || '');
       
       // Parse last entry error
       if (settings.last_entry_error) {
@@ -436,6 +687,7 @@ export default function Dashboard() {
     fetchData();
     fetchApiTokens();
     fetchAuditLogs();
+    fetchAccountOverview();
     fetchStats();
 
     if (!isOnline || !isDocumentVisible) {
@@ -446,7 +698,15 @@ export default function Dashboard() {
       runMonitor();
     }, 10000); 
     return () => clearInterval(interval);
-  }, [authUser, fetchApiTokens, fetchAuditLogs, fetchData, fetchStats, isDocumentVisible, isOnline, runMonitor]);
+  }, [authUser, fetchApiTokens, fetchAuditLogs, fetchAccountOverview, fetchData, fetchStats, isDocumentVisible, isOnline, runMonitor]);
+
+  useEffect(() => {
+    if (!authUser) {
+      return;
+    }
+
+    fetchSounds();
+  }, [authUser, fetchSounds]);
 
   useEffect(() => {
     if (!authUser || !isOnline || !isDocumentVisible) {
@@ -455,6 +715,56 @@ export default function Dashboard() {
 
     fetchData(true);
   }, [authUser, fetchData, isDocumentVisible, isOnline]);
+
+  useEffect(() => {
+    if (!authUser || !bookmapSymbol) {
+      return;
+    }
+
+    fetchBookmap(bookmapSymbol);
+  }, [authUser, bookmapSymbol, fetchBookmap]);
+
+  useEffect(() => {
+    if (!authUser || !isOnline || !isDocumentVisible || currentView !== 'dashboard' || !bookmapSymbol) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      fetchBookmap(bookmapSymbol, true);
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [authUser, bookmapSymbol, currentView, fetchBookmap, isDocumentVisible, isOnline]);
+
+  useEffect(() => {
+    if (!authUser) {
+      return;
+    }
+
+    const latestClosed = closedPositions[0];
+    if (!latestClosed) {
+      lastSeenClosedIdRef.current = null;
+      return;
+    }
+
+    if (lastSeenClosedIdRef.current === null) {
+      lastSeenClosedIdRef.current = latestClosed.id;
+      return;
+    }
+
+    if (
+      latestClosed.id !== lastSeenClosedIdRef.current &&
+      profitSoundEnabled &&
+      profitSoundFile &&
+      latestClosed.profitLossFiat > 0
+    ) {
+      const audio = new Audio(`/sounds/${encodeURIComponent(profitSoundFile)}`);
+      audio.volume = 0.9;
+      audio.play().catch(() => undefined);
+    }
+
+    lastSeenClosedIdRef.current = latestClosed.id;
+  }, [authUser, closedPositions, profitSoundEnabled, profitSoundFile]);
 
   const submitLogin = async () => {
     setLoginSubmitting(true);
@@ -541,6 +851,57 @@ export default function Dashboard() {
     }
   };
 
+  const toggleLeverage = async () => {
+    const nextValue = !leverageEnabled;
+    try {
+      await apiClient.updateSettings({ leverage_enabled: nextValue ? '1' : '0' });
+      setLeverageEnabled(nextValue);
+    } catch (error) {
+      setErrorPopup(getApiErrorMessage(error, 'Unable to update leverage mode.'));
+    }
+  };
+
+  const saveLeverageValue = async (val: string) => {
+    setLeverageValue(val);
+    try {
+      await apiClient.updateSettings({ leverage_value: val || '1' });
+    } catch (error) {
+      setErrorPopup(getApiErrorMessage(error, 'Unable to save leverage value.'));
+    }
+  };
+
+  const toggleProfitSound = async () => {
+    const nextValue = !profitSoundEnabled;
+    try {
+      await apiClient.updateSettings({ profit_sound_enabled: nextValue ? '1' : '0' });
+      setProfitSoundEnabled(nextValue);
+    } catch (error) {
+      setErrorPopup(getApiErrorMessage(error, 'Unable to update profit sound.'));
+    }
+  };
+
+  const saveProfitSoundFile = async (val: string) => {
+    setProfitSoundFile(val);
+    try {
+      await apiClient.updateSettings({ profit_sound_file: val });
+    } catch (error) {
+      setErrorPopup(getApiErrorMessage(error, 'Unable to save profit sound.'));
+    }
+  };
+
+  const previewProfitSound = () => {
+    if (!profitSoundFile) {
+      setErrorPopup('Select a sound first.');
+      return;
+    }
+
+    const audio = new Audio(`/sounds/${encodeURIComponent(profitSoundFile)}`);
+    audio.volume = 0.9;
+    audio.play().catch(() => {
+      setErrorPopup('Unable to play the selected sound.');
+    });
+  };
+
   const submitNewPosition = async () => {
     try {
       await apiClient.openPosition(newPos);
@@ -550,7 +911,7 @@ export default function Dashboard() {
         amount: '100',
         type: 'buy',
         allowTakerFallback: true,
-        takerFallbackMode: 'ioc',
+        takerFallbackMode: 'market',
       });
       fetchData();
     } catch (error) {
@@ -948,7 +1309,7 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <div className="bg-slate-900 border border-slate-800 px-4 py-3 rounded-2xl flex items-center gap-3">
               <Settings size={18} className="text-slate-500 shrink-0" />
               <div className="flex flex-col min-w-0">
@@ -976,12 +1337,160 @@ export default function Dashboard() {
                 {totalPnl.toFixed(2)} <span className="text-[10px] opacity-70">{tradingMode === 'live' ? 'USDC' : 'USDT'}</span>
               </p>
             </div>
+
+            <div className="bg-slate-900 border border-slate-800 px-4 py-3 rounded-2xl flex items-center gap-3">
+              <Zap size={18} className={cn("shrink-0", leverageEnabled ? "text-amber-400" : "text-slate-500")} />
+              <div className="flex min-w-0 flex-1 flex-col">
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] uppercase font-black text-slate-500 tracking-widest">Leverage</span>
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setShowLeverageHelp((current) => !current)}
+                      onBlur={() => setTimeout(() => setShowLeverageHelp(false), 120)}
+                      className="flex h-5 w-5 items-center justify-center rounded-full border border-slate-700 bg-slate-950/70 text-slate-400 transition-colors hover:border-amber-400 hover:text-amber-300"
+                      aria-label="Leverage help"
+                    >
+                      <CircleHelp size={12} />
+                    </button>
+                    <div
+                      className={cn(
+                        "absolute left-0 top-7 z-20 w-64 rounded-2xl border border-slate-700 bg-slate-950/95 p-4 text-left shadow-2xl shadow-slate-950/60 transition-all",
+                        showLeverageHelp ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
+                      )}
+                    >
+                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-300">How leverage works here</p>
+                      <p className="mt-2 text-xs leading-5 text-slate-300">
+                        Entry Amount is the exposure you want to open. Leverage changes the margin Bitget uses for that exposure.
+                      </p>
+                      <p className="mt-2 text-xs leading-5 text-slate-400">
+                        Example: if you want a 500 USDT position and your account has 100 USDT, use Entry Amount 500 and Leverage x5.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-1 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={toggleLeverage}
+                    className={cn(
+                      "rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] transition-colors",
+                      leverageEnabled
+                        ? "border-amber-400 bg-amber-400 text-slate-950"
+                        : "border-slate-700 bg-slate-950/40 text-slate-400"
+                    )}
+                  >
+                    {leverageEnabled ? 'On' : 'Off'}
+                  </button>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-black text-slate-500">x</span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={leverageValue}
+                      onChange={(e) => saveLeverageValue(e.target.value)}
+                      className="w-20 bg-transparent border-none text-sm font-black text-amber-400 outline-none p-0 m-0"
+                    />
+                  </div>
+                </div>
+                <span className="mt-1 text-[9px] font-bold uppercase tracking-widest text-slate-600">
+                  Amount remains exposure. Leverage changes margin used.
+                </span>
+              </div>
+            </div>
+
           </div>
         </header>
 
         {authUser.role === 'admin' && currentView === 'admin' && (
           <section className="rounded-[2rem] border border-slate-800 bg-slate-900/70 p-5 md:p-6 shadow-xl shadow-slate-950/20">
             <div className="flex flex-col gap-5">
+              <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.3em] text-violet-400">Bitget Account</p>
+                    <h2 className="text-xl font-black uppercase tracking-tight text-white">Account Overview</h2>
+                    <p className="mt-2 text-xs text-slate-500">Live and demo summary based on the Bitget APIs available for balances, futures accounts and spot assets.</p>
+                  </div>
+                  <button
+                    onClick={fetchAccountOverview}
+                    className="rounded-xl border border-slate-700 bg-slate-950/50 px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-300 transition-colors hover:border-violet-400/40 hover:text-violet-300"
+                  >
+                    Refresh balances
+                  </button>
+                </div>
+
+                {accountOverviewMessage && (
+                  <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-xs font-bold text-slate-300">
+                    {accountOverviewMessage}
+                  </div>
+                )}
+
+                {accountOverviewLoading && !accountOverview ? (
+                  <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/50 px-4 py-6 text-sm text-slate-400">
+                    Loading account overview...
+                  </div>
+                ) : accountOverview ? (
+                  <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                    <AccountOverviewCard title="Demo Account" modeData={accountOverview.demo} accent="text-emerald-400" />
+                    <AccountOverviewCard title="Live Account" modeData={accountOverview.live} accent="text-rose-400" />
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.3em] text-emerald-400">Audio Alerts</p>
+                    <h2 className="text-xl font-black uppercase tracking-tight text-white">Profit Sound</h2>
+                    <p className="mt-2 text-xs text-slate-500">Plays when a new closed trade arrives with positive net pnl.</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={toggleProfitSound}
+                      className={cn(
+                        "rounded-xl border px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] transition-colors",
+                        profitSoundEnabled
+                          ? "border-emerald-400 bg-emerald-400 text-slate-950"
+                          : "border-slate-700 bg-slate-950/40 text-slate-400"
+                      )}
+                    >
+                      {profitSoundEnabled ? 'Sound On' : 'Sound Off'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={previewProfitSound}
+                      className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] text-cyan-300 transition-colors hover:bg-cyan-400/20"
+                    >
+                      <span className="flex items-center gap-2">
+                        <Play size={12} /> Preview
+                      </span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-4">
+                  <label className="block text-[10px] font-black uppercase tracking-[0.25em] text-slate-500">
+                    Selected sound
+                  </label>
+                  <select
+                    value={profitSoundFile}
+                    onChange={(e) => saveProfitSoundFile(e.target.value)}
+                    className="mt-2 w-full rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-4 text-sm font-black text-amber-300 outline-none"
+                  >
+                    <option value="">No sound selected</option>
+                    {availableSounds.map((sound) => (
+                      <option key={sound} value={sound}>{sound}</option>
+                    ))}
+                  </select>
+                  <p className="mt-2 text-[10px] font-bold uppercase tracking-[0.15em] text-slate-600">
+                    Add more files in /public/sounds and refresh the dashboard.
+                  </p>
+                </div>
+              </div>
+
               <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                 <div>
                   <p className="text-[10px] font-black uppercase tracking-[0.3em] text-amber-400">iOS Access Tokens</p>
@@ -1321,28 +1830,52 @@ export default function Dashboard() {
             </div>
           </section>
 
+          <BookmapPanel
+            symbol={bookmapSymbol}
+            onSymbolChange={setBookmapSymbol}
+            data={bookmapData}
+            loading={bookmapLoading}
+            message={bookmapMessage}
+          />
+
           {/* History */}
           <section className="bg-slate-900/30 border border-slate-800/50 rounded-3xl overflow-hidden shadow-2xl">
             <div className="p-6 border-b border-slate-800 flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center bg-slate-900/50">
-              <h2 className="text-lg font-black flex items-center gap-3">
-                <History className="text-amber-400" /> {tradingMode.toUpperCase()} TRADE LOGS
-              </h2>
-              <button onClick={clearHistory} className="text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-rose-400 flex items-center gap-2 transition-colors">
-                <Trash2 size={14} /> Clear {tradingMode} History
-              </button>
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-lg font-black flex items-center gap-3">
+                  <History className="text-amber-400" /> {tradingMode.toUpperCase()} TRADE LOGS
+                </h2>
+                {isPhonePortrait && (
+                  <button
+                    type="button"
+                    onClick={() => setTradeLogsExpanded((current) => !current)}
+                    className="inline-flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/40 px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 sm:hidden"
+                  >
+                    {tradeLogsExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                    {tradeLogsExpanded ? 'Hide' : 'Show'}
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-600">
+                  Last {recentClosedPositions.length} {tradingMode}
+                </p>
+                <button onClick={clearHistory} className="text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-rose-400 flex items-center gap-2 transition-colors">
+                  <Trash2 size={14} /> Clear {tradingMode} History
+                </button>
+              </div>
             </div>
 
+            {tradeLogsExpanded && (
+            <>
             <div className="divide-y divide-slate-800/40 md:hidden">
-              {closedPositions.map((pos) => {
+              {recentClosedPositions.map((pos) => {
                 const durationStr = formatClosedDuration(pos.createdAt, pos.closedAt);
                 return (
                   <div key={pos.id} className="px-4 py-4 space-y-3">
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="font-black text-white">{pos.symbol}</p>
-                        <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">
-                          {pos.origin || '-'}{pos.timeframe ? ` / ${pos.timeframe}` : ''}
-                        </p>
                       </div>
                       <span className={cn(pos.positionType === 'buy' ? 'text-emerald-400' : 'text-rose-400', "font-bold text-xs uppercase")}>
                         {pos.positionType}
@@ -1373,10 +1906,13 @@ export default function Dashboard() {
                     <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-500">
                       Closed {pos.closedAt ? new Date(pos.closedAt).toLocaleString() : '-'}
                     </p>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-500">
+                      Origin / TF {pos.origin || '-'}{pos.timeframe ? ` / ${pos.timeframe}` : ''}
+                    </p>
                   </div>
                 );
               })}
-              {closedPositions.length === 0 && (
+              {recentClosedPositions.length === 0 && (
                 <div className="px-6 py-12 text-center text-slate-600 italic text-sm">No missions completed yet in {tradingMode}.</div>
               )}
             </div>
@@ -1386,17 +1922,17 @@ export default function Dashboard() {
                 <thead>
                   <tr className="text-[10px] text-slate-500 uppercase tracking-widest font-black border-b border-slate-800/50">
                     <th className="px-6 py-4">Symbol</th>
-                    <th className="px-6 py-4">Origin / TF</th>
                     <th className="px-6 py-4">Type</th>
                     <th className="px-6 py-4">Entry</th>
                     <th className="px-6 py-4">PnL %</th>
                     <th className="px-6 py-4">PnL {tradingMode === 'live' ? 'USDC' : 'USDT'}</th>
                     <th className="px-6 py-4">Closed At</th>
                     <th className="px-6 py-4">Duration</th>
+                    <th className="px-6 py-4">Origin / TF</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/30">
-                  {closedPositions?.map(pos => {
+                  {recentClosedPositions?.map(pos => {
                     const durationStr = formatClosedDuration(pos.createdAt, pos.closedAt);
 
                     const tooltipData = `Entry Time: ${new Date(pos.createdAt).toLocaleString()}
@@ -1420,9 +1956,6 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
                           <ExternalLink size={12} className="opacity-0 group-hover:opacity-30 transition-opacity" />
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-xs font-bold text-slate-500">
-                        {pos.origin || '-'}{pos.timeframe ? ` / ${pos.timeframe}` : ''}
-                      </td>
                       <td className="px-6 py-4">
                         <span className={cn(pos.positionType === 'buy' ? 'text-emerald-400' : 'text-rose-400', "font-bold text-xs uppercase")}>
                           {pos.positionType}
@@ -1441,9 +1974,12 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
                       <td className="px-6 py-4 font-mono text-xs text-slate-500">
                         {durationStr}
                       </td>
+                      <td className="px-6 py-4 text-xs font-bold text-slate-500">
+                        {pos.origin || '-'}{pos.timeframe ? ` / ${pos.timeframe}` : ''}
+                      </td>
                     </tr>
                   )})}
-                  {closedPositions.length === 0 && (
+                  {recentClosedPositions.length === 0 && (
                     <tr>
                       <td colSpan={8} className="px-6 py-12 text-center text-slate-600 italic text-sm">No missions completed yet in {tradingMode}.</td>
                     </tr>
@@ -1451,6 +1987,8 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
                 </tbody>
               </table>
             </div>
+            </>
+            )}
           </section>
         </main>
         ) : currentView === 'stats' ? (
@@ -1750,6 +2288,7 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
   const slAtEntry = Math.abs(pos.stopLoss - pos.entryPrice) < Math.max(0.0000001, pos.entryPrice * 0.0001);
 
   const exchangeUrl = `https://www.bitget.com/en/futures/usdt/${pos.symbol}`;
+  const tradingViewUrl = `https://www.tradingview.com/chart/?symbol=BITGET%3A${encodeURIComponent(`${pos.symbol}.P`)}`;
 
   return (
     <motion.div 
@@ -1767,18 +2306,32 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
 
       <div className="flex items-center justify-between">
         <div className="flex flex-col">
-          <div className="flex items-center gap-2">
-            <a 
-              href={exchangeUrl} 
-              target="_blank" 
-              rel="noopener noreferrer" 
-              className="group/link flex items-center gap-2"
-            >
-              <span className="text-2xl font-black tracking-tight text-white group-hover/link:text-amber-400 transition-colors">
-                {pos.symbol}
-              </span>
-              <ExternalLink size={16} className="text-slate-600 group-hover/link:text-amber-400 transition-colors" />
-            </a>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-2xl font-black tracking-tight text-white">
+              {pos.symbol}
+            </span>
+            <div className="flex items-center gap-2">
+              <a
+                href={exchangeUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-xl border border-amber-400/25 bg-amber-400/10 p-1 transition-colors hover:border-amber-300/60 hover:bg-amber-400/20"
+                aria-label={`Open ${pos.symbol} on Bitget`}
+                title="Open on Bitget"
+              >
+                <Image src="/bitget-mark.svg" alt="Bitget" width={32} height={32} className="h-8 w-8" />
+              </a>
+              <a
+                href={tradingViewUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-xl border border-cyan-400/25 bg-cyan-400/10 p-1 transition-colors hover:border-cyan-300/60 hover:bg-cyan-400/20"
+                aria-label={`Open ${pos.symbol} on TradingView`}
+                title="Open on TradingView"
+              >
+                <Image src="/tradingview-mark.svg" alt="TradingView" width={32} height={32} className="h-8 w-8" />
+              </a>
+            </div>
             {pos.tradingMode === 'live' && <span className="bg-rose-500 text-[8px] font-black px-1.5 py-0.5 rounded text-white animate-pulse">LIVE</span>}
           </div>
           <span className="text-[10px] text-slate-500 font-bold tracking-widest uppercase flex gap-2">
@@ -1794,7 +2347,12 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
         <div className="space-y-1">
           <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider">Entry Level</p>
-          <p className="text-sm font-mono text-slate-300">{formatPrice(pos.entryPrice, pos.pricePrecision)}</p>
+          <p className="text-sm font-mono text-slate-300">
+            {formatPrice(pos.entryPrice, pos.pricePrecision)}
+            <span className="ml-2 text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">
+              ({pos.amount.toFixed(0)} {pos.tradingMode === 'live' ? 'USDC' : 'USDT'})
+            </span>
+          </p>
           <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider">
             {new Date(pos.createdAt).toLocaleString()}
           </p>
@@ -1918,6 +2476,46 @@ function StatsModeSection({ title, mode, stats }: { title: string; mode: 'demo' 
           }))}
         />
       </div>
+
+      <div className="mt-6 grid gap-6 lg:grid-cols-2">
+        <BarStatsCard
+          title="Trades by weekday"
+          subtitle="Based on the opening date of each closed trade"
+          items={stats.tradesByWeekday}
+          barColor={mode === 'live' ? 'bg-rose-500' : 'bg-emerald-500'}
+        />
+        <BarStatsCard
+          title="Trades by opening hour"
+          subtitle="Based on the opening hour of each closed trade"
+          items={stats.tradesByHour}
+          barColor={mode === 'live' ? 'bg-cyan-500' : 'bg-amber-400'}
+          compact
+        />
+      </div>
+
+      <div className="mt-6 grid gap-6 lg:grid-cols-2">
+        <MetricBarStatsCard
+          title="Symbol effectiveness by winning trades"
+          subtitle="Winning operations by symbol and success rate"
+          items={stats.symbolByWins.map((item) => ({
+            label: item.symbol,
+            value: item.winCount,
+            detail: `${item.winCount}/${item.totalCount} wins · ${item.effectivenessPercent.toFixed(1)}%`,
+          }))}
+          barColor={mode === 'live' ? 'bg-fuchsia-500' : 'bg-lime-500'}
+        />
+        <MetricBarStatsCard
+          title={`Symbol effectiveness by accumulated profit (${currency})`}
+          subtitle="Net accumulated profit for each symbol"
+          items={stats.symbolByProfit.map((item) => ({
+            label: item.symbol,
+            value: item.profitAmount,
+            detail: `${item.profitAmount >= 0 ? '+' : ''}${item.profitAmount.toFixed(2)} ${currency} · ${item.totalCount} trades`,
+          }))}
+          barColor={mode === 'live' ? 'bg-sky-500' : 'bg-amber-500'}
+          valueFormatter={(value) => `${value >= 0 ? '+' : ''}${value.toFixed(2)}`}
+        />
+      </div>
     </section>
   );
 }
@@ -1964,6 +2562,180 @@ function SourceStatsCard({
               </div>
             </div>
           ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BarStatsCard({
+  title,
+  subtitle,
+  items,
+  barColor,
+  compact = false,
+}: {
+  title: string;
+  subtitle: string;
+  items: Array<{ label: string; count: number }>;
+  barColor: string;
+  compact?: boolean;
+}) {
+  const maxCount = Math.max(...items.map((item) => item.count), 1);
+
+  return (
+    <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-5">
+      <p className="text-sm font-black uppercase tracking-[0.15em] text-white">{title}</p>
+      <p className="mt-2 text-xs text-slate-500">{subtitle}</p>
+      <div className={cn("mt-5 grid items-end gap-2", compact ? "grid-cols-12 xl:grid-cols-12" : "grid-cols-7")}>
+        {items.map((item) => {
+          const heightPercent = Math.max(6, (item.count / maxCount) * 100);
+
+          return (
+            <div key={item.label} className="flex min-w-0 flex-col items-center gap-2">
+              <span className="text-[10px] font-black text-slate-400">{item.count}</span>
+              <div className="flex h-40 w-full items-end justify-center rounded-2xl border border-slate-800 bg-slate-900/40 px-1 py-2">
+                <div
+                  className={cn("w-full rounded-xl transition-all", barColor)}
+                  style={{ height: `${heightPercent}%` }}
+                />
+              </div>
+              <span className={cn("text-[10px] font-black uppercase tracking-[0.15em] text-slate-500", compact && "tracking-[0.05em]")}>
+                {item.label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AccountOverviewCard({
+  title,
+  modeData,
+  accent,
+}: {
+  title: string;
+  modeData: AccountOverviewMode;
+  accent: string;
+}) {
+  const totalUsdt = modeData.summary.reduce((sum, item) => sum + item.usdtBalance, 0);
+  const totalBtc = modeData.summary.reduce((sum, item) => sum + item.btcBalance, 0);
+  const futuresRows = modeData.futures.usdt;
+
+  return (
+    <div className="rounded-[1.5rem] border border-slate-800 bg-slate-900/40 p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className={cn("text-[10px] font-black uppercase tracking-[0.3em]", accent)}>{title}</p>
+          <h3 className="mt-2 text-lg font-black uppercase tracking-tight text-white">Bitget Balances</h3>
+        </div>
+        <div className="text-right">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Approx Total</p>
+          <p className="text-xl font-black text-white">{totalUsdt.toFixed(2)} USDT</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-600">{totalBtc.toFixed(8)} BTC</p>
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+        {modeData.summary.map((item) => (
+          <div key={item.accountType} className="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
+            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">{item.accountType}</p>
+            <p className="mt-2 text-lg font-black text-white">{item.usdtBalance.toFixed(2)} USDT</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-600">{item.btcBalance.toFixed(8)} BTC</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+        <p className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-500">Futures Accounts · USDT Only</p>
+        {futuresRows.length === 0 ? (
+          <p className="mt-3 text-sm italic text-slate-500">No USDT futures balance data returned.</p>
+        ) : (
+          <div className="mt-4 space-y-3">
+            {futuresRows.map((row, index) => (
+              <div key={`${row.marginCoin}-${index}`} className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="font-black text-white">{row.marginCoin}</p>
+                  <p className="text-sm font-black text-slate-200">{row.accountEquity.toFixed(2)} equity</p>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-400">
+                  <p>Available: {row.available.toFixed(2)}</p>
+                  <p>Locked: {row.locked.toFixed(2)}</p>
+                  <p>Unrealized: {row.unrealizedPnl.toFixed(2)}</p>
+                  <p>Cross avail: {row.crossedMaxAvailable.toFixed(2)}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+        <p className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-500">Spot Assets</p>
+        {modeData.spotAssets.length === 0 ? (
+          <p className="mt-3 text-sm italic text-slate-500">No spot assets returned.</p>
+        ) : (
+          <div className="mt-4 grid gap-2">
+            {modeData.spotAssets.map((asset) => (
+              <div key={asset.coin} className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2 text-sm">
+                <span className="font-black text-white">{asset.coin}</span>
+                <span className="text-slate-300">{asset.total.toFixed(6)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MetricBarStatsCard({
+  title,
+  subtitle,
+  items,
+  barColor,
+  valueFormatter,
+}: {
+  title: string;
+  subtitle: string;
+  items: Array<{ label: string; value: number; detail: string }>;
+  barColor: string;
+  valueFormatter?: (value: number) => string;
+}) {
+  const positiveItems = items.filter((item) => item.value > 0);
+  const data = positiveItems.length > 0 ? positiveItems : items.slice(0, 8);
+  const maxValue = Math.max(...data.map((item) => Math.max(0, item.value)), 1);
+
+  return (
+    <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-5">
+      <p className="text-sm font-black uppercase tracking-[0.15em] text-white">{title}</p>
+      <p className="mt-2 text-xs text-slate-500">{subtitle}</p>
+      <div className="mt-5 space-y-4">
+        {data.length === 0 ? (
+          <p className="text-sm italic text-slate-500">No symbol data available yet.</p>
+        ) : (
+          data.map((item) => {
+            const widthPercent = Math.max(6, (Math.max(0, item.value) / maxValue) * 100);
+            const formattedValue = valueFormatter ? valueFormatter(item.value) : item.value.toString();
+
+            return (
+              <div key={item.label} className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="font-black text-white">{item.label}</p>
+                  <p className="text-xs font-black text-slate-300">{formattedValue}</p>
+                </div>
+                <div className="h-3 overflow-hidden rounded-full border border-slate-800 bg-slate-900/60">
+                  <div
+                    className={cn("h-full rounded-full transition-all", barColor)}
+                    style={{ width: `${widthPercent}%` }}
+                  />
+                </div>
+                <p className="text-[11px] text-slate-500">{item.detail}</p>
+              </div>
+            );
+          })
         )}
       </div>
     </div>
@@ -2032,5 +2804,554 @@ function formatDurationMs(durationMs: number) {
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   return `${hours}h ${minutes}m`;
+}
+
+function formatExchangeLabel(exchange: string) {
+  if (exchange === 'bybit') return 'Bybit';
+  if (exchange === 'binance') return 'Binance';
+  if (exchange === 'bitget') return 'Bitget';
+  return exchange;
+}
+
+function formatAgeMs(ageMs: number | null) {
+  if (ageMs === null) return '-';
+  if (ageMs < 1000) return `${ageMs} ms`;
+  return `${(ageMs / 1000).toFixed(1)} s`;
+}
+
+function HeatmapChart({ data }: { data: BookmapSummary | null }) {
+  const rows = data?.heatmap.rows || [];
+  const columns = data?.heatmap.columns || [];
+  const mids = data?.heatmap.mids || [];
+  const cells = data?.heatmap.cells || [];
+  const overlayTrades = data?.heatmapTrades || [];
+  const supportZones = data?.zones.supports || [];
+  const resistanceZones = data?.zones.resistances || [];
+
+  if (rows.length === 0 || columns.length === 0 || cells.length === 0) {
+    return (
+      <div className="flex h-[380px] items-center justify-center rounded-2xl border border-slate-800 bg-slate-950/50 text-sm text-slate-500">
+        El heatmap se esta calentando. Esperando suficiente historico de liquidez.
+      </div>
+    );
+  }
+
+  const priceLine = columns.map((_, columnIndex) => {
+    const mid = mids[columnIndex] ?? data?.composite.mid ?? rows[Math.floor(rows.length / 2)];
+    let nearestRow = 0;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+      const distance = Math.abs(rows[rowIndex] - mid);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestRow = rowIndex;
+      }
+    }
+    return nearestRow;
+  });
+
+  const findRowIndex = (price: number) => {
+    let nearestRow = 0;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+      const distance = Math.abs(rows[rowIndex] - price);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestRow = rowIndex;
+      }
+    }
+    return nearestRow;
+  };
+
+  const zoneBands = [
+    ...supportZones.map((zone) => ({
+      type: 'support' as const,
+      rowIndex: findRowIndex(zone.price),
+      label: `BUY ${zone.price.toFixed(4)}`,
+    })),
+    ...resistanceZones.map((zone) => ({
+      type: 'resistance' as const,
+      rowIndex: findRowIndex(zone.price),
+      label: `SELL ${zone.price.toFixed(4)}`,
+    })),
+  ];
+
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-black uppercase tracking-[0.2em] text-white">Heatmap</p>
+          <p className="mt-1 text-[11px] text-slate-500">
+            Tiempo en horizontal, niveles de precio en vertical, brillo segun liquidez agregada.
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Range</p>
+          <p className="text-xs font-black text-slate-300">{rows[0].toFixed(4)} / {rows[rows.length - 1].toFixed(4)}</p>
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-[78px_1fr] gap-3">
+        <div className="grid h-[380px]" style={{ gridTemplateRows: `repeat(${rows.length}, minmax(0, 1fr))` }}>
+          {rows.map((price, index) => (
+            <div key={`${price}-${index}`} className="flex items-center text-[10px] font-black text-slate-500">
+              {price.toFixed(4)}
+            </div>
+          ))}
+        </div>
+
+        <div className="relative overflow-hidden rounded-xl border border-slate-800 bg-slate-950/70">
+          <div
+            className="pointer-events-none absolute inset-0 z-[1] grid"
+            style={{
+              gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))`,
+              gridTemplateRows: `repeat(${rows.length}, minmax(0, 1fr))`,
+            }}
+          >
+            {zoneBands.map((band, index) => (
+              <div
+                key={`${band.type}-${band.rowIndex}-${index}`}
+                className="col-span-full flex items-center"
+                style={{ gridColumn: `1 / span ${columns.length}`, gridRow: band.rowIndex + 1 }}
+              >
+                <div
+                  className={cn(
+                    "h-[2px] w-full",
+                    band.type === 'support' ? 'bg-emerald-300/90' : 'bg-rose-300/90'
+                  )}
+                />
+              </div>
+            ))}
+          </div>
+
+          <div
+            className="grid h-[380px] w-full relative z-0"
+            style={{
+              gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))`,
+              gridTemplateRows: `repeat(${rows.length}, minmax(0, 1fr))`,
+            }}
+          >
+            {rows.map((_, rowIndex) =>
+              columns.map((column, columnIndex) => {
+                const intensity = cells[rowIndex]?.[columnIndex] ?? 0;
+                const alpha = Math.max(0.05, intensity);
+                const color = rowIndex < rows.length / 2
+                  ? `rgba(248, 113, 113, ${alpha})`
+                  : `rgba(52, 211, 153, ${alpha})`;
+
+                return (
+                  <div
+                    key={`${rowIndex}-${column}`}
+                    style={{ backgroundColor: color }}
+                    className="border-[0.5px] border-slate-950/30"
+                    title={`${rows[rowIndex].toFixed(4)} | ${new Date(column).toLocaleTimeString()} | ${(intensity * 100).toFixed(1)}%`}
+                  />
+                );
+              })
+            )}
+          </div>
+
+          <div
+            className="pointer-events-none absolute inset-0 z-[2] grid"
+            style={{
+              gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))`,
+              gridTemplateRows: `repeat(${rows.length}, minmax(0, 1fr))`,
+            }}
+          >
+            {priceLine.map((rowIndex, columnIndex) => (
+              <div
+                key={`line-${columnIndex}`}
+                className="flex items-center justify-center"
+                style={{ gridColumn: columnIndex + 1, gridRow: rowIndex + 1 }}
+              >
+                <div className="h-1.5 w-1.5 rounded-full bg-white shadow-[0_0_10px_rgba(255,255,255,0.8)]" />
+              </div>
+            ))}
+          </div>
+
+          <div
+            className="pointer-events-none absolute inset-0 z-[3] grid"
+            style={{
+              gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))`,
+              gridTemplateRows: `repeat(${rows.length}, minmax(0, 1fr))`,
+            }}
+          >
+            {overlayTrades.map((trade, index) => (
+              <div
+                key={`trade-${trade.timestamp}-${index}`}
+                className="flex items-center justify-center"
+                style={{ gridColumn: trade.columnIndex + 1, gridRow: trade.rowIndex + 1 }}
+                title={`${trade.side} ${trade.size.toFixed(4)} @ ${trade.price.toFixed(4)} · ${formatExchangeLabel(trade.exchange)}`}
+              >
+                <div
+                  className={cn(
+                    "rounded-full border shadow-[0_0_10px_rgba(0,0,0,0.4)]",
+                    trade.side === 'buy'
+                      ? "border-emerald-200 bg-emerald-300"
+                      : "border-rose-200 bg-rose-300"
+                  )}
+                  style={{
+                    width: `${Math.min(10, 4 + trade.size * 1.5)}px`,
+                    height: `${Math.min(10, 4 + trade.size * 1.5)}px`,
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+
+          <div className="pointer-events-none absolute inset-x-2 top-2 z-[4] flex flex-wrap gap-2">
+            {zoneBands.map((band, index) => (
+              <span
+                key={`badge-${band.label}-${index}`}
+                className={cn(
+                  "rounded-full border px-2 py-1 text-[9px] font-black uppercase tracking-[0.15em]",
+                  band.type === 'support'
+                    ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200'
+                    : 'border-rose-400/40 bg-rose-500/10 text-rose-200'
+                )}
+              >
+                {band.label}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 flex items-center justify-between gap-3 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
+        <span>{new Date(columns[0]).toLocaleTimeString()}</span>
+        <span>max intensity {data?.heatmap.maxIntensity.toFixed(0) || 0}</span>
+        <span>{new Date(columns[columns.length - 1]).toLocaleTimeString()}</span>
+      </div>
+    </div>
+  );
+}
+
+function BookmapPanel({
+  symbol,
+  onSymbolChange,
+  data,
+  loading,
+  message,
+}: {
+  symbol: string;
+  onSymbolChange: (value: string) => void;
+  data: BookmapSummary | null;
+  loading: boolean;
+  message: string | null;
+}) {
+  return (
+    <section className="rounded-[2rem] border border-cyan-900/50 bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.14),_transparent_30%),linear-gradient(180deg,rgba(2,6,23,0.96),rgba(2,6,23,0.88))] p-6 shadow-2xl shadow-slate-950/40">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.35em] text-cyan-300">Bookmap Lab</p>
+          <h2 className="mt-2 text-2xl font-black uppercase tracking-tight text-white">Cross-Exchange Liquidity Radar</h2>
+          <p className="mt-2 max-w-2xl text-sm text-slate-400">
+            Bybit y Binance alimentan el mapa de liquidez. Bitget queda expuesto como referencia del venue de ejecucion.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <select
+            value={symbol}
+            onChange={(event) => onSymbolChange(event.target.value)}
+            className="rounded-2xl border border-slate-700 bg-slate-950/80 px-4 py-3 text-sm font-black uppercase tracking-[0.15em] text-white outline-none transition-colors hover:border-cyan-400"
+          >
+            {AVAILABLE_SYMBOLS.map((item) => (
+              <option key={item} value={item}>{item}</option>
+            ))}
+          </select>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3">
+            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Signal Bias</p>
+            <p className={cn(
+              "mt-1 text-sm font-black uppercase",
+              data?.trigger.bias === 'long'
+                ? 'text-emerald-400'
+                : data?.trigger.bias === 'short'
+                  ? 'text-rose-400'
+                  : 'text-amber-300'
+            )}>
+              {data?.trigger.bias || 'loading'}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {message && (
+        <div className="mt-5 rounded-2xl border border-rose-800/40 bg-rose-950/30 px-4 py-3 text-sm text-rose-300">
+          {message}
+        </div>
+      )}
+
+      <div className="mt-6 grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+        <div className="grid gap-4">
+          <div className={cn(
+            "rounded-2xl border p-4",
+            data?.preSignal.actionable
+              ? data.preSignal.bias === 'long'
+                ? 'border-emerald-700/50 bg-emerald-950/20'
+                : 'border-rose-700/50 bg-rose-950/20'
+              : 'border-slate-800 bg-slate-950/60'
+          )}>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-500">Pre-Signal</p>
+                <h3 className={cn(
+                  "mt-2 text-xl font-black uppercase",
+                  data?.preSignal.bias === 'long'
+                    ? 'text-emerald-300'
+                    : data?.preSignal.bias === 'short'
+                      ? 'text-rose-300'
+                      : 'text-white'
+                )}>
+                  {data?.preSignal.actionable
+                    ? `${data.preSignal.bias.toUpperCase()} ${data.preSignal.mode}`
+                    : 'Watching setup'}
+                </h3>
+                <p className="mt-2 text-sm text-slate-300">
+                  {data?.preSignal.actionable
+                    ? 'La microestructura ya permite preparar una entrada condicionada.'
+                    : 'Aun no hay suficiente confluencia para tratarlo como setup ejecutable.'}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 lg:min-w-[320px]">
+                <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Confidence</p>
+                  <p className="mt-1 text-lg font-black text-cyan-300">{data ? `${(data.preSignal.confidence * 100).toFixed(0)}%` : '-'}</p>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Mode</p>
+                  <p className="mt-1 text-lg font-black text-white">{data?.preSignal.mode || '-'}</p>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Entry</p>
+                  <p className="mt-1 text-sm font-black text-white">{data?.preSignal.entryPrice?.toFixed(4) || '-'}</p>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">R/R</p>
+                  <p className="mt-1 text-sm font-black text-white">{data?.preSignal.rewardRisk?.toFixed(2) || '-'}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-3 md:grid-cols-3">
+              <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Stop</p>
+                <p className="mt-1 text-sm font-black text-rose-300">{data?.preSignal.stopPrice?.toFixed(4) || '-'}</p>
+              </div>
+              <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Target</p>
+                <p className="mt-1 text-sm font-black text-emerald-300">{data?.preSignal.targetPrice?.toFixed(4) || '-'}</p>
+              </div>
+              <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Invalidation</p>
+                <p className="mt-1 text-xs font-bold text-slate-300">{data?.preSignal.invalidation || '-'}</p>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              {data?.preSignal.reasons.map((reason, index) => (
+                <span key={`${reason}-${index}`} className="rounded-full border border-slate-700 bg-slate-950/60 px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-slate-300">
+                  {reason}
+                </span>
+              )) || null}
+            </div>
+            {data?.preSignal.invalidationReason && (
+              <p className="mt-3 text-xs font-bold text-amber-300">
+                Ultimo cambio de estado: {data.preSignal.invalidationReason}
+              </p>
+            )}
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Composite Mid</p>
+              <p className="mt-2 text-2xl font-black text-white">
+                {data?.composite.mid ? data.composite.mid.toFixed(4) : '-'}
+              </p>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Spread {data?.composite.spreadBps !== null && data?.composite.spreadBps !== undefined ? `${data.composite.spreadBps.toFixed(2)} bps` : '-'}
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Tape Imbalance</p>
+              <p className={cn(
+                "mt-2 text-2xl font-black",
+                (data?.tape.imbalance || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
+              )}>
+                {data ? `${(data.tape.imbalance * 100).toFixed(1)}%` : '-'}
+              </p>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Buys {data?.tape.buyVolume.toFixed(3) || '-'} / Sells {data?.tape.sellVolume.toFixed(3) || '-'}
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Trigger Confidence</p>
+              <p className="mt-2 text-2xl font-black text-cyan-300">
+                {data ? `${(data.trigger.confidence * 100).toFixed(0)}%` : '-'}
+              </p>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Ref {data?.trigger.referencePrice ? data.trigger.referencePrice.toFixed(4) : 'waiting'}
+              </p>
+            </div>
+          </div>
+
+          <HeatmapChart data={data} />
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-black uppercase tracking-[0.2em] text-white">Absorption</p>
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Tape against resting liquidity</p>
+            </div>
+            <div className="mt-4 space-y-3">
+              {data?.absorptionSignals.length ? data.absorptionSignals.map((signal, index) => (
+                <div key={`${signal.side}-${signal.price}-${index}`} className="rounded-2xl border border-slate-800 bg-slate-900/40 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className={cn(
+                      "text-sm font-black uppercase",
+                      signal.side === 'bullish' ? 'text-emerald-300' : 'text-rose-300'
+                    )}>
+                      {signal.side === 'bullish' ? 'Bullish Absorption' : 'Bearish Absorption'}
+                    </p>
+                    <p className="text-xs font-black text-slate-200">{(signal.confidence * 100).toFixed(0)}%</p>
+                  </div>
+                  <p className="mt-2 text-xs text-slate-300">{signal.note}</p>
+                  <p className="mt-2 text-[11px] text-slate-500">
+                    Nivel {signal.price.toFixed(4)} · volumen absorbido {signal.absorbedVolume.toFixed(4)} · prints {signal.tradeCount}
+                  </p>
+                </div>
+              )) : (
+                <p className="text-sm text-slate-500">
+                  Todavia no hay una absorcion suficientemente clara. Busca repeticion de prints contra una zona que no cede.
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="rounded-2xl border border-emerald-900/40 bg-emerald-950/10 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-black uppercase tracking-[0.2em] text-emerald-300">Support Zones</p>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Top liquidity clusters</p>
+              </div>
+              <div className="mt-4 space-y-3">
+                {data?.zones.supports.length ? data.zones.supports.map((zone) => (
+                  <div key={`support-${zone.price}`} className="rounded-2xl border border-emerald-900/30 bg-slate-950/50 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-black text-white">{zone.price.toFixed(4)}</p>
+                      <p className="text-xs font-black text-emerald-300">{zone.totalNotional.toFixed(0)} notion.</p>
+                    </div>
+                    <p className="mt-2 text-[11px] text-slate-400">
+                      {zone.exchangeCount} venues · {zone.exchanges.map(formatExchangeLabel).join(', ')} · dist {zone.distancePercent.toFixed(3)}%
+                    </p>
+                  </div>
+                )) : (
+                  <p className="text-sm text-slate-500">{loading ? 'Loading support zones...' : 'No support zones ready yet.'}</p>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-rose-900/40 bg-rose-950/10 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-black uppercase tracking-[0.2em] text-rose-300">Resistance Zones</p>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Heavy resting offers</p>
+              </div>
+              <div className="mt-4 space-y-3">
+                {data?.zones.resistances.length ? data.zones.resistances.map((zone) => (
+                  <div key={`resistance-${zone.price}`} className="rounded-2xl border border-rose-900/30 bg-slate-950/50 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-black text-white">{zone.price.toFixed(4)}</p>
+                      <p className="text-xs font-black text-rose-300">{zone.totalNotional.toFixed(0)} notion.</p>
+                    </div>
+                    <p className="mt-2 text-[11px] text-slate-400">
+                      {zone.exchangeCount} venues · {zone.exchanges.map(formatExchangeLabel).join(', ')} · dist {zone.distancePercent.toFixed(3)}%
+                    </p>
+                  </div>
+                )) : (
+                  <p className="text-sm text-slate-500">{loading ? 'Loading resistance zones...' : 'No resistance zones ready yet.'}</p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-4">
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+            <p className="text-sm font-black uppercase tracking-[0.2em] text-white">Venue Snapshot</p>
+            <div className="mt-4 space-y-3">
+              {data?.exchanges.length ? data.exchanges.map((exchange) => (
+                <div key={exchange.exchange} className="rounded-2xl border border-slate-800 bg-slate-900/40 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-black text-white">{formatExchangeLabel(exchange.exchange)}</p>
+                    <span className={cn(
+                      "rounded-full px-2 py-1 text-[10px] font-black uppercase tracking-[0.2em]",
+                      exchange.isFresh
+                        ? 'bg-emerald-500/10 text-emerald-300'
+                        : 'bg-amber-500/10 text-amber-300'
+                    )}>
+                      {exchange.status}
+                    </span>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-400">
+                    <p>Bid: {exchange.bestBid?.toFixed(4) || '-'}</p>
+                    <p>Ask: {exchange.bestAsk?.toFixed(4) || '-'}</p>
+                    <p>Spread: {exchange.spreadBps !== null ? `${exchange.spreadBps.toFixed(2)} bps` : '-'}</p>
+                    <p>Age: {formatAgeMs(exchange.lastUpdateAgeMs)}</p>
+                  </div>
+                </div>
+              )) : (
+                <p className="text-sm text-slate-500">{loading ? 'Connecting to venues...' : 'No venue snapshot yet.'}</p>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+            <p className="text-sm font-black uppercase tracking-[0.2em] text-white">Trigger Notes</p>
+            <p className="mt-3 text-sm leading-6 text-slate-300">
+              {data?.trigger.reason || 'Waiting for a first confirmed confluence between zone and tape.'}
+            </p>
+            <div className="mt-4 h-3 overflow-hidden rounded-full border border-slate-800 bg-slate-900/60">
+              <div
+                className={cn(
+                  "h-full rounded-full transition-all",
+                  data?.trigger.bias === 'long'
+                    ? 'bg-emerald-400'
+                    : data?.trigger.bias === 'short'
+                      ? 'bg-rose-400'
+                      : 'bg-amber-300'
+                )}
+                style={{ width: `${Math.max(8, (data?.trigger.confidence || 0) * 100)}%` }}
+              />
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+            <p className="text-sm font-black uppercase tracking-[0.2em] text-white">Recent Tape</p>
+            <div className="mt-4 space-y-2">
+              {data?.tape.recentTrades.length ? data.tape.recentTrades.slice(-8).reverse().map((trade, index) => (
+                <div key={`${trade.exchange}-${trade.timestamp}-${index}`} className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2 text-xs">
+                  <div>
+                    <p className="font-black text-white">{formatExchangeLabel(trade.exchange)}</p>
+                    <p className="text-slate-500">{new Date(trade.timestamp).toLocaleTimeString()}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className={cn("font-black uppercase", trade.side === 'buy' ? 'text-emerald-300' : 'text-rose-300')}>
+                      {trade.side} {trade.size.toFixed(4)}
+                    </p>
+                    <p className="text-slate-400">{trade.price.toFixed(4)}</p>
+                  </div>
+                </div>
+              )) : (
+                <p className="text-sm text-slate-500">{loading ? 'Loading tape...' : 'No trades yet.'}</p>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
 }
 
