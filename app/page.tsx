@@ -499,6 +499,7 @@ export default function Dashboard() {
   const [showLeverageHelp, setShowLeverageHelp] = useState(false);
   const [isPhonePortrait, setIsPhonePortrait] = useState(false);
   const [tradeLogsExpanded, setTradeLogsExpanded] = useState(true);
+  const [bookmapExpanded, setBookmapExpanded] = useState(true);
   const [profitSoundEnabled, setProfitSoundEnabled] = useState(false);
   const [profitSoundFile, setProfitSoundFile] = useState('');
   const [availableSounds, setAvailableSounds] = useState<string[]>([]);
@@ -560,6 +561,7 @@ export default function Dashboard() {
   );
   const recentClosedPositions = closedPositions.slice(0, 15);
   const lastSeenClosedIdRef = useRef<number | null>(null);
+  const lastBookmapSignalKeyRef = useRef<string | null>(null);
 
   const resetSessionState = useCallback(() => {
     apiClient.setApiToken(null);
@@ -904,6 +906,35 @@ export default function Dashboard() {
 
     lastSeenClosedIdRef.current = latestClosed.id;
   }, [authUser, closedPositions, profitSoundEnabled, profitSoundFile]);
+
+  useEffect(() => {
+    if (!authUser || !bookmapData?.preSignal) {
+      return;
+    }
+
+    const signal = bookmapData.preSignal;
+    const signalKey = signal.actionable
+      ? `${bookmapData.symbol}-${signal.bias}-${signal.createdAt}-${signal.entryPrice || 0}`
+      : null;
+
+    if (!signalKey) {
+      lastBookmapSignalKeyRef.current = null;
+      return;
+    }
+
+    if (
+      signal.actionable &&
+      lastBookmapSignalKeyRef.current !== signalKey &&
+      profitSoundEnabled &&
+      profitSoundFile
+    ) {
+      const audio = new Audio(`/sounds/${encodeURIComponent(profitSoundFile)}`);
+      audio.volume = 0.9;
+      audio.play().catch(() => undefined);
+    }
+
+    lastBookmapSignalKeyRef.current = signalKey;
+  }, [authUser, bookmapData, profitSoundEnabled, profitSoundFile]);
 
   const submitLogin = async () => {
     setLoginSubmitting(true);
@@ -2038,6 +2069,8 @@ export default function Dashboard() {
             data={bookmapData}
             loading={bookmapLoading}
             message={bookmapMessage}
+            expanded={bookmapExpanded}
+            onToggleExpanded={() => setBookmapExpanded((current) => !current)}
             onExecutePreSignal={executeHeatmapPreSignal}
             executingPreSignal={executingHeatmapSignal}
             onTrackPaperSignal={trackHeatmapPreSignalOnPaper}
@@ -3258,6 +3291,8 @@ function BookmapPanel({
   data,
   loading,
   message,
+  expanded,
+  onToggleExpanded,
   onExecutePreSignal,
   executingPreSignal,
   onTrackPaperSignal,
@@ -3270,6 +3305,8 @@ function BookmapPanel({
   data: BookmapSummary | null;
   loading: boolean;
   message: string | null;
+  expanded: boolean;
+  onToggleExpanded: () => void;
   onExecutePreSignal: () => void;
   executingPreSignal: boolean;
   onTrackPaperSignal: () => void;
@@ -3289,6 +3326,14 @@ function BookmapPanel({
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={onToggleExpanded}
+            className="inline-flex items-center gap-2 rounded-2xl border border-slate-700 bg-slate-950/80 px-4 py-3 text-xs font-black uppercase tracking-[0.2em] text-slate-200 transition-colors hover:border-cyan-400 hover:text-white"
+          >
+            {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            {expanded ? 'Hide' : 'Show'}
+          </button>
           <select
             value={symbol}
             onChange={(event) => onSymbolChange(event.target.value)}
@@ -3321,6 +3366,7 @@ function BookmapPanel({
         </div>
       )}
 
+      {expanded ? (
       <div className="mt-6 grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
         <div className="grid gap-4">
           <div className="rounded-2xl border border-cyan-900/40 bg-cyan-950/10 p-4">
@@ -3922,6 +3968,11 @@ function BookmapPanel({
           </div>
         </div>
       </div>
+      ) : (
+        <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950/40 px-4 py-5 text-sm text-slate-400">
+          Panel oculto. Mantiene el seguimiento del simbolo y volvera a abrirse cuando quieras.
+        </div>
+      )}
     </section>
   );
 }
