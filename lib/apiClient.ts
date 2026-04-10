@@ -162,6 +162,12 @@ export const apiClient = {
   getAccountOverview: () => request<{ data?: any }>('/api/account-overview'),
   getStats: () => request<{ data?: any }>('/api/stats'),
   getBookmap: (symbol: string) => request<{ data?: any }>(`/api/bookmap?symbol=${encodeURIComponent(symbol)}`),
+  getHeatmapPaper: () => request<{ data?: any }>('/api/heatmap-paper'),
+  createHeatmapPaper: (payload: object) =>
+    request<{ data?: any }>('/api/heatmap-paper', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
   getSounds: () => request<{ data?: { files: string[] } }>('/api/sounds'),
 };
 

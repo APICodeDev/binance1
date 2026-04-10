@@ -81,6 +81,79 @@ type AbsorptionSignal = {
   note: string;
 };
 
+type SweepSide = 'long_sweep' | 'short_sweep';
+type SetupState = 'REJECTED' | 'WATCH' | 'CANDIDATE' | 'VALID' | 'EXECUTABLE';
+
+type SweepEvent = {
+  detected: boolean;
+  side: SweepSide | null;
+  sweptZonePrice: number | null;
+  penetrationPercent: number;
+  reclaimPercent: number;
+  aggressiveVolume: number;
+  liquidityConsumedNotional: number;
+  timestamp: number | null;
+  notes: string[];
+};
+
+type ReversalAssessment = {
+  confirmed: boolean;
+  absorptionStrength: number;
+  tapeImbalanceScore: number;
+  levelHoldScore: number;
+  microStructureShiftScore: number;
+  notes: string[];
+};
+
+type TargetAssessment = {
+  targetZoneFound: boolean;
+  targetZonePrice: number | null;
+  targetZoneType: 'sell_liquidity' | 'buy_liquidity' | null;
+  targetZoneStrength: number;
+  pathClarityScore: number;
+  zoneDistanceScore: number;
+  pathBlocked: boolean;
+  blockingZonePrice: number | null;
+  notes: string[];
+};
+
+type EconomicsAssessment = {
+  entryPrice: number | null;
+  stopPrice: number | null;
+  targetPrice: number | null;
+  targetMovePercent: number;
+  riskPercent: number;
+  rewardRisk: number | null;
+  passesMinTarget: boolean;
+  passesMinRR: boolean;
+  notes: string[];
+};
+
+type ScoreBreakdown = {
+  sweepScore: number;
+  reversalScore: number;
+  targetScore: number;
+  economicsScore: number;
+  finalScore: number;
+  probabilityToTarget: number;
+};
+
+type SetupDecision = {
+  setupType: 'LONG_SWEEP_REVERSAL' | 'SHORT_SWEEP_REVERSAL' | 'NONE';
+  state: SetupState;
+  hardRejectReasons: string[];
+  reasons: string[];
+};
+
+type LiquiditySetupModel = {
+  sweep: SweepEvent;
+  reversal: ReversalAssessment;
+  target: TargetAssessment;
+  economics: EconomicsAssessment;
+  score: ScoreBreakdown;
+  decision: SetupDecision;
+};
+
 type FeedState = {
   key: string;
   exchange: ExchangeName;
@@ -102,6 +175,16 @@ const ABSORPTION_LOOKBACK_TRADES = Number.parseInt(process.env.BOOKMAP_ABSORPTIO
 const PRESIGNAL_MIN_CONFIDENCE = Number.parseFloat(process.env.BOOKMAP_PRESIGNAL_MIN_CONFIDENCE || '0.68');
 const PRESIGNAL_MAX_AGE_MS = Number.parseInt(process.env.BOOKMAP_PRESIGNAL_MAX_AGE_MS || '180000', 10);
 const PRESIGNAL_REPLACE_CONFIDENCE_DELTA = Number.parseFloat(process.env.BOOKMAP_PRESIGNAL_REPLACE_CONFIDENCE_DELTA || '0.08');
+const MIN_TARGET_MOVE_PERCENT = Number.parseFloat(process.env.BOOKMAP_MIN_TARGET_MOVE_PERCENT || '1.0');
+const MIN_REWARD_RISK = Number.parseFloat(process.env.BOOKMAP_MIN_REWARD_RISK || '1.3');
+const EXECUTABLE_MIN_REWARD_RISK = Number.parseFloat(process.env.BOOKMAP_EXECUTABLE_MIN_REWARD_RISK || '1.5');
+const EXECUTABLE_MIN_PROBABILITY = Number.parseFloat(process.env.BOOKMAP_EXECUTABLE_MIN_PROBABILITY || '0.68');
+const SCORE_WEIGHTS = {
+  sweep: 0.28,
+  reversal: 0.32,
+  target: 0.18,
+  economics: 0.22,
+} as const;
 
 const feeds = new Map<string, FeedState>();
 const symbols = new Map<string, SymbolState>();
@@ -857,92 +940,531 @@ const buildAbsorptionSignals = (
     .slice(0, 4);
 };
 
-const buildPreSignal = ({
+const clampScore = (value: number) => Number(Math.max(0, Math.min(100, value)).toFixed(2));
+
+const findClosestZone = (zones: ZoneSummary[], lastPrice: number) =>
+  zones
+    .slice()
+    .sort((a, b) => Math.abs(lastPrice - a.price) - Math.abs(lastPrice - b.price))[0] || null;
+
+const detectSweepEvent = ({
+  state,
+  supports,
+  resistances,
   lastPrice,
   mid,
-  step,
-  trigger,
+}: {
+  state: SymbolState;
+  supports: ZoneSummary[];
+  resistances: ZoneSummary[];
+  lastPrice: number;
+  mid: number;
+}): SweepEvent => {
+  const trades = state.trades.slice(-ABSORPTION_LOOKBACK_TRADES);
+  const nearestSupport = findClosestZone(supports, lastPrice);
+  const nearestResistance = findClosestZone(resistances, lastPrice);
+  const notes: string[] = [];
+
+  const supportSellTrades = nearestSupport
+    ? trades.filter((trade) => trade.side === 'sell' && Math.abs((trade.price - nearestSupport.price) / nearestSupport.price) * 100 <= 0.12)
+    : [];
+  const resistanceBuyTrades = nearestResistance
+    ? trades.filter((trade) => trade.side === 'buy' && Math.abs((trade.price - nearestResistance.price) / nearestResistance.price) * 100 <= 0.12)
+    : [];
+
+  const longPenetration = nearestSupport && lastPrice > nearestSupport.price
+    ? ((nearestSupport.price - Math.min(...supportSellTrades.map((trade) => trade.price), nearestSupport.price)) / nearestSupport.price) * 100
+    : 0;
+  const shortPenetration = nearestResistance && lastPrice < nearestResistance.price
+    ? ((Math.max(...resistanceBuyTrades.map((trade) => trade.price), nearestResistance.price) - nearestResistance.price) / nearestResistance.price) * 100
+    : 0;
+
+  const longAggressiveVolume = supportSellTrades.reduce((sum, trade) => sum + trade.size, 0);
+  const shortAggressiveVolume = resistanceBuyTrades.reduce((sum, trade) => sum + trade.size, 0);
+
+  const longConsumedNotional = nearestSupport
+    ? Math.min(nearestSupport.totalNotional, longAggressiveVolume * nearestSupport.price)
+    : 0;
+  const shortConsumedNotional = nearestResistance
+    ? Math.min(nearestResistance.totalNotional, shortAggressiveVolume * nearestResistance.price)
+    : 0;
+
+  const longReclaim = nearestSupport && lastPrice > nearestSupport.price
+    ? ((lastPrice - nearestSupport.price) / nearestSupport.price) * 100
+    : 0;
+  const shortReclaim = nearestResistance && lastPrice < nearestResistance.price
+    ? ((nearestResistance.price - lastPrice) / nearestResistance.price) * 100
+    : 0;
+
+  const longSweepDetected = Boolean(
+    nearestSupport &&
+    supportSellTrades.length >= 3 &&
+    longAggressiveVolume > 0 &&
+    longPenetration >= 0.01 &&
+    longReclaim >= 0.01
+  );
+  const shortSweepDetected = Boolean(
+    nearestResistance &&
+    resistanceBuyTrades.length >= 3 &&
+    shortAggressiveVolume > 0 &&
+    shortPenetration >= 0.01 &&
+    shortReclaim >= 0.01
+  );
+
+  if (!longSweepDetected && !shortSweepDetected) {
+    return {
+      detected: false,
+      side: null,
+      sweptZonePrice: null,
+      penetrationPercent: 0,
+      reclaimPercent: 0,
+      aggressiveVolume: 0,
+      liquidityConsumedNotional: 0,
+      timestamp: state.lastTradeTs,
+      notes: ['No se detecta sweep limpio con recuperacion todavia'],
+    };
+  }
+
+  const pickLong = longSweepDetected && (!shortSweepDetected || (longAggressiveVolume + longConsumedNotional) >= (shortAggressiveVolume + shortConsumedNotional));
+
+  if (pickLong && nearestSupport) {
+    notes.push(`Barrido de longs bajo ${nearestSupport.price.toFixed(4)} y recuperacion posterior`);
+    return {
+      detected: true,
+      side: 'long_sweep',
+      sweptZonePrice: nearestSupport.price,
+      penetrationPercent: Number(longPenetration.toFixed(4)),
+      reclaimPercent: Number(longReclaim.toFixed(4)),
+      aggressiveVolume: Number(longAggressiveVolume.toFixed(6)),
+      liquidityConsumedNotional: Number(longConsumedNotional.toFixed(2)),
+      timestamp: state.lastTradeTs,
+      notes,
+    };
+  }
+
+  notes.push(`Barrido de shorts sobre ${nearestResistance?.price.toFixed(4)} y giro bajista posterior`);
+  return {
+    detected: true,
+    side: 'short_sweep',
+    sweptZonePrice: nearestResistance?.price || mid,
+    penetrationPercent: Number(shortPenetration.toFixed(4)),
+    reclaimPercent: Number(shortReclaim.toFixed(4)),
+    aggressiveVolume: Number(shortAggressiveVolume.toFixed(6)),
+    liquidityConsumedNotional: Number(shortConsumedNotional.toFixed(2)),
+    timestamp: state.lastTradeTs,
+    notes,
+  };
+};
+
+const assessReversal = ({
+  state,
+  sweep,
   absorptionSignals,
   supports,
   resistances,
+  lastPrice,
 }: {
-  lastPrice: number;
-  mid: number;
-  step: number;
-  trigger: ReturnType<typeof buildTrigger>;
+  state: SymbolState;
+  sweep: SweepEvent;
   absorptionSignals: AbsorptionSignal[];
   supports: ZoneSummary[];
   resistances: ZoneSummary[];
-}) => {
-  const bullishAbsorption = absorptionSignals.find((signal) => signal.side === 'bullish');
-  const bearishAbsorption = absorptionSignals.find((signal) => signal.side === 'bearish');
-  const topSupport = supports[0] || null;
-  const topResistance = resistances[0] || null;
+  lastPrice: number;
+}): ReversalAssessment => {
+  const recentTrades = state.trades.slice(-ABSORPTION_LOOKBACK_TRADES);
+  const buyVolume = recentTrades.filter((trade) => trade.side === 'buy').reduce((sum, trade) => sum + trade.size, 0);
+  const sellVolume = recentTrades.filter((trade) => trade.side === 'sell').reduce((sum, trade) => sum + trade.size, 0);
+  const imbalance = buyVolume + sellVolume > 0 ? (buyVolume - sellVolume) / (buyVolume + sellVolume) : 0;
+  const matchingAbsorption = absorptionSignals.find((signal) =>
+    sweep.side === 'long_sweep' ? signal.side === 'bullish' : signal.side === 'bearish'
+  );
+  const defendedZone = sweep.side === 'long_sweep'
+    ? supports.find((zone) => zone.price === sweep.sweptZonePrice)
+    : resistances.find((zone) => zone.price === sweep.sweptZonePrice);
+  const notes = [...sweep.notes];
+
+  const absorptionStrength = clampScore((matchingAbsorption?.confidence || 0) * 100);
+  const tapeImbalanceScore = clampScore(
+    sweep.side === 'long_sweep'
+      ? Math.max(0, imbalance) * 120
+      : Math.max(0, -imbalance) * 120
+  );
+  const levelHoldScore = clampScore(
+    defendedZone && sweep.sweptZonePrice
+      ? sweep.side === 'long_sweep'
+        ? Math.max(0, ((lastPrice - sweep.sweptZonePrice) / sweep.sweptZonePrice) * 100 * 250)
+        : Math.max(0, ((sweep.sweptZonePrice - lastPrice) / sweep.sweptZonePrice) * 100 * 250)
+      : 0
+  );
+  const microStructureShiftScore = clampScore(
+    (defendedZone?.exchangeCount || 0) * 20 +
+    Math.min(35, Math.abs(imbalance) * 100)
+  );
+
+  if (matchingAbsorption) {
+    notes.push(matchingAbsorption.note);
+  }
+
+  const confirmed =
+    sweep.detected &&
+    absorptionStrength >= 45 &&
+    tapeImbalanceScore >= 18 &&
+    levelHoldScore >= 12;
+
+  if (!confirmed) {
+    notes.push('El giro aun no confirma suficiente absorcion y mantenimiento del nivel');
+  } else {
+    notes.push('Reversal confirmado por absorcion, tape y defensa del nivel recuperado');
+  }
+
+  return {
+    confirmed,
+    absorptionStrength,
+    tapeImbalanceScore,
+    levelHoldScore,
+    microStructureShiftScore,
+    notes,
+  };
+};
+
+const assessTargetZone = ({
+  sweep,
+  supports,
+  resistances,
+  lastPrice,
+  mid,
+}: {
+  sweep: SweepEvent;
+  supports: ZoneSummary[];
+  resistances: ZoneSummary[];
+  lastPrice: number;
+  mid: number;
+}): TargetAssessment => {
+  const notes: string[] = [];
+  if (!sweep.detected || !sweep.side) {
+    return {
+      targetZoneFound: false,
+      targetZonePrice: null,
+      targetZoneType: null,
+      targetZoneStrength: 0,
+      pathClarityScore: 0,
+      zoneDistanceScore: 0,
+      pathBlocked: false,
+      blockingZonePrice: null,
+      notes: ['Sin sweep no hay target de liquidez que perseguir'],
+    };
+  }
+
+  const candidateZones = sweep.side === 'long_sweep'
+    ? resistances.filter((zone) => zone.price > lastPrice)
+    : supports.filter((zone) => zone.price < lastPrice);
+  const targetZone = candidateZones[0] || null;
+  const blockingZone = candidateZones.length > 1 ? candidateZones[1] : null;
+  const movePercent = targetZone ? Math.abs((targetZone.price - lastPrice) / Math.max(lastPrice, 1)) * 100 : 0;
+  const pathBlocked = Boolean(
+    targetZone &&
+    blockingZone &&
+    blockingZone.totalNotional >= targetZone.totalNotional * 0.82 &&
+    Math.abs((blockingZone.price - lastPrice) / lastPrice) * 100 < movePercent * 0.65
+  );
+
+  if (!targetZone) {
+    return {
+      targetZoneFound: false,
+      targetZonePrice: null,
+      targetZoneType: null,
+      targetZoneStrength: 0,
+      pathClarityScore: 0,
+      zoneDistanceScore: 0,
+      pathBlocked: false,
+      blockingZonePrice: null,
+      notes: ['No aparece una siguiente zona dominante de liquidez'],
+    };
+  }
+
+  const targetZoneStrength = clampScore(
+    Math.min(70, targetZone.exchangeCount * 18) +
+    Math.min(30, targetZone.totalNotional / Math.max(mid * 8, 1))
+  );
+  const pathClarityScore = clampScore(pathBlocked ? 18 : Math.max(35, 92 - candidateZones.length * 8));
+  const zoneDistanceScore = clampScore(movePercent >= MIN_TARGET_MOVE_PERCENT ? Math.min(100, movePercent * 45) : movePercent * 35);
+
+  notes.push(
+    sweep.side === 'long_sweep'
+      ? `Objetivo en siguiente liquidez vendedora ${targetZone.price.toFixed(4)}`
+      : `Objetivo en siguiente liquidez compradora ${targetZone.price.toFixed(4)}`
+  );
+  if (pathBlocked && blockingZone) {
+    notes.push(`Hay una zona intermedia relevante en ${blockingZone.price.toFixed(4)} que ensucia el camino`);
+  }
+
+  return {
+    targetZoneFound: true,
+    targetZonePrice: Number(targetZone.price.toFixed(8)),
+    targetZoneType: sweep.side === 'long_sweep' ? 'sell_liquidity' : 'buy_liquidity',
+    targetZoneStrength,
+    pathClarityScore,
+    zoneDistanceScore,
+    pathBlocked,
+    blockingZonePrice: blockingZone ? Number(blockingZone.price.toFixed(8)) : null,
+    notes,
+  };
+};
+
+const assessEconomics = ({
+  sweep,
+  target,
+  lastPrice,
+  signalStep,
+}: {
+  sweep: SweepEvent;
+  target: TargetAssessment;
+  lastPrice: number;
+  signalStep: number;
+}): EconomicsAssessment => {
+  const notes: string[] = [];
+  if (!sweep.detected || !sweep.sweptZonePrice || !target.targetZoneFound || !target.targetZonePrice) {
+    return {
+      entryPrice: null,
+      stopPrice: null,
+      targetPrice: null,
+      targetMovePercent: 0,
+      riskPercent: 0,
+      rewardRisk: null,
+      passesMinTarget: false,
+      passesMinRR: false,
+      notes: ['No hay datos suficientes para construir economia del trade'],
+    };
+  }
+
+  const entryPrice = lastPrice;
+  const stopPrice = sweep.side === 'long_sweep'
+    ? sweep.sweptZonePrice - signalStep * 2
+    : sweep.sweptZonePrice + signalStep * 2;
+  const targetPrice = target.targetZonePrice;
+  const targetMovePercent = Math.abs((targetPrice - entryPrice) / entryPrice) * 100;
+  const riskPercent = Math.abs((entryPrice - stopPrice) / entryPrice) * 100;
+  const rewardRisk = riskPercent > 0 ? targetMovePercent / riskPercent : null;
+  const passesMinTarget = targetMovePercent >= MIN_TARGET_MOVE_PERCENT;
+  const passesMinRR = rewardRisk !== null && rewardRisk >= MIN_REWARD_RISK;
+
+  if (!passesMinTarget) {
+    notes.push(`Recorrido insuficiente: ${targetMovePercent.toFixed(2)}%`);
+  } else {
+    notes.push(`Recorrido potencial hasta target: ${targetMovePercent.toFixed(2)}%`);
+  }
+
+  if (!passesMinRR) {
+    notes.push(`Reward/risk insuficiente: ${(rewardRisk || 0).toFixed(2)}`);
+  }
+
+  return {
+    entryPrice: Number(entryPrice.toFixed(8)),
+    stopPrice: Number(stopPrice.toFixed(8)),
+    targetPrice: Number(targetPrice.toFixed(8)),
+    targetMovePercent: Number(targetMovePercent.toFixed(4)),
+    riskPercent: Number(riskPercent.toFixed(4)),
+    rewardRisk: rewardRisk !== null ? Number(rewardRisk.toFixed(2)) : null,
+    passesMinTarget,
+    passesMinRR,
+    notes,
+  };
+};
+
+const scoreSweep = (sweep: SweepEvent) => {
+  if (!sweep.detected) return 0;
+  return clampScore(
+    Math.min(25, sweep.penetrationPercent * 500) +
+    Math.min(25, sweep.aggressiveVolume * 6) +
+    Math.min(25, sweep.liquidityConsumedNotional / 8000) +
+    Math.min(25, sweep.reclaimPercent * 700)
+  );
+};
+
+const scoreReversal = (reversal: ReversalAssessment) =>
+  clampScore(
+    reversal.absorptionStrength * 0.34 +
+    reversal.tapeImbalanceScore * 0.24 +
+    reversal.levelHoldScore * 0.24 +
+    reversal.microStructureShiftScore * 0.18
+  );
+
+const scoreTarget = (target: TargetAssessment) => {
+  if (!target.targetZoneFound) return 0;
+  return clampScore(
+    target.targetZoneStrength * 0.35 +
+    target.pathClarityScore * 0.4 +
+    target.zoneDistanceScore * 0.25
+  );
+};
+
+const scoreEconomics = (economics: EconomicsAssessment) => {
+  if (!economics.entryPrice || !economics.stopPrice || !economics.targetPrice || economics.rewardRisk === null) {
+    return 0;
+  }
+
+  return clampScore(
+    Math.min(40, economics.targetMovePercent * 25) +
+    Math.min(35, economics.rewardRisk * 18) +
+    Math.min(25, Math.max(0, 2.5 - economics.riskPercent) * 10)
+  );
+};
+
+const mapScoreToProbability = (finalScore: number) =>
+  Number(Math.min(0.93, 0.15 + (Math.max(0, finalScore) / 100) * 0.8).toFixed(2));
+
+const buildScoreBreakdown = ({
+  sweep,
+  reversal,
+  target,
+  economics,
+}: {
+  sweep: SweepEvent;
+  reversal: ReversalAssessment;
+  target: TargetAssessment;
+  economics: EconomicsAssessment;
+}): ScoreBreakdown => {
+  const sweepScore = scoreSweep(sweep);
+  const reversalScore = scoreReversal(reversal);
+  const targetScore = scoreTarget(target);
+  const economicsScore = scoreEconomics(economics);
+  const finalScore = clampScore(
+    sweepScore * SCORE_WEIGHTS.sweep +
+    reversalScore * SCORE_WEIGHTS.reversal +
+    targetScore * SCORE_WEIGHTS.target +
+    economicsScore * SCORE_WEIGHTS.economics
+  );
+
+  return {
+    sweepScore,
+    reversalScore,
+    targetScore,
+    economicsScore,
+    finalScore,
+    probabilityToTarget: mapScoreToProbability(finalScore),
+  };
+};
+
+const decideSetup = ({
+  sweep,
+  reversal,
+  target,
+  economics,
+  score,
+}: {
+  sweep: SweepEvent;
+  reversal: ReversalAssessment;
+  target: TargetAssessment;
+  economics: EconomicsAssessment;
+  score: ScoreBreakdown;
+}): SetupDecision => {
+  const hardRejectReasons: string[] = [];
   const reasons: string[] = [];
 
-  if (trigger.bias === 'long') {
-    reasons.push('Trigger microestructural con sesgo long');
-  } else if (trigger.bias === 'short') {
-    reasons.push('Trigger microestructural con sesgo short');
-  } else {
-    reasons.push('Trigger neutral');
+  if (!sweep.detected) hardRejectReasons.push('No sweep detected');
+  if (!reversal.confirmed) hardRejectReasons.push('Reversal not confirmed');
+  if (!target.targetZoneFound) hardRejectReasons.push('Missing target liquidity zone');
+  if (target.pathBlocked) hardRejectReasons.push('Path blocked by intermediate liquidity');
+  if (!economics.passesMinTarget) hardRejectReasons.push(`Target move < ${MIN_TARGET_MOVE_PERCENT}%`);
+  if (!economics.passesMinRR) hardRejectReasons.push(`Reward/risk < ${MIN_REWARD_RISK}`);
+
+  reasons.push(...sweep.notes, ...reversal.notes, ...target.notes, ...economics.notes);
+
+  if (hardRejectReasons.length > 0 || score.finalScore < 45) {
+    return {
+      setupType: sweep.side === 'long_sweep' ? 'LONG_SWEEP_REVERSAL' : sweep.side === 'short_sweep' ? 'SHORT_SWEEP_REVERSAL' : 'NONE',
+      state: 'REJECTED',
+      hardRejectReasons,
+      reasons,
+    };
   }
 
-  if (bullishAbsorption) {
-    reasons.push(`Absorcion alcista en ${bullishAbsorption.price.toFixed(4)}`);
+  let state: SetupState = 'WATCH';
+  if (score.finalScore >= 82 && score.probabilityToTarget >= EXECUTABLE_MIN_PROBABILITY && (economics.rewardRisk || 0) >= EXECUTABLE_MIN_REWARD_RISK) {
+    state = 'EXECUTABLE';
+  } else if (score.finalScore >= 72) {
+    state = 'VALID';
+  } else if (score.finalScore >= 60) {
+    state = 'CANDIDATE';
   }
 
-  if (bearishAbsorption) {
-    reasons.push(`Absorcion bajista en ${bearishAbsorption.price.toFixed(4)}`);
-  }
+  return {
+    setupType: sweep.side === 'long_sweep' ? 'LONG_SWEEP_REVERSAL' : 'SHORT_SWEEP_REVERSAL',
+    state,
+    hardRejectReasons,
+    reasons,
+  };
+};
 
-  let bias: 'long' | 'short' | 'neutral' = 'neutral';
-  let confidence = trigger.confidence;
-  let entryPrice: number | null = null;
-  let stopPrice: number | null = null;
-  let targetPrice: number | null = null;
-  let invalidation: string | null = null;
+const buildLiquiditySetupModel = ({
+  state,
+  supports,
+  resistances,
+  absorptionSignals,
+  lastPrice,
+  mid,
+  signalStep,
+}: {
+  state: SymbolState;
+  supports: ZoneSummary[];
+  resistances: ZoneSummary[];
+  absorptionSignals: AbsorptionSignal[];
+  lastPrice: number;
+  mid: number;
+  signalStep: number;
+}): LiquiditySetupModel => {
+  const sweep = detectSweepEvent({ state, supports, resistances, lastPrice, mid });
+  const reversal = assessReversal({ state, sweep, absorptionSignals, supports, resistances, lastPrice });
+  const target = assessTargetZone({ sweep, supports, resistances, lastPrice, mid });
+  const economics = assessEconomics({ sweep, target, lastPrice, signalStep });
+  const score = buildScoreBreakdown({ sweep, reversal, target, economics });
+  const decision = decideSetup({ sweep, reversal, target, economics, score });
 
-  if (
-    bullishAbsorption &&
-    topSupport &&
-    (trigger.bias === 'long' || trigger.bias === 'neutral') &&
-    Math.abs((lastPrice - topSupport.price) / lastPrice) * 100 <= 0.2
-  ) {
-    bias = 'long';
-    confidence = Math.min(0.99, Math.max(trigger.confidence, bullishAbsorption.confidence));
-    entryPrice = Number((Math.max(lastPrice, topSupport.price)).toFixed(8));
-    stopPrice = Number((topSupport.price - (step * 2)).toFixed(8));
-    const candidateTarget = topResistance
-      ? Number((topResistance.price - step).toFixed(8))
-      : Number((entryPrice + (step * 6)).toFixed(8));
-    targetPrice = candidateTarget > entryPrice
-      ? candidateTarget
-      : Number((entryPrice + (step * 4)).toFixed(8));
-    invalidation = `Pierde ${topSupport.price.toFixed(4)} con continuidad vendedora`;
-  } else if (
-    bearishAbsorption &&
-    topResistance &&
-    (trigger.bias === 'short' || trigger.bias === 'neutral') &&
-    Math.abs((topResistance.price - lastPrice) / lastPrice) * 100 <= 0.2
-  ) {
-    bias = 'short';
-    confidence = Math.min(0.99, Math.max(trigger.confidence, bearishAbsorption.confidence));
-    entryPrice = Number((Math.min(lastPrice, topResistance.price)).toFixed(8));
-    stopPrice = Number((topResistance.price + (step * 2)).toFixed(8));
-    const candidateTarget = topSupport
-      ? Number((topSupport.price + step).toFixed(8))
-      : Number((entryPrice - (step * 6)).toFixed(8));
-    targetPrice = candidateTarget < entryPrice
-      ? candidateTarget
-      : Number((entryPrice - (step * 4)).toFixed(8));
-    invalidation = `Recupera ${topResistance.price.toFixed(4)} con continuidad compradora`;
-  }
+  return { sweep, reversal, target, economics, score, decision };
+};
 
-  const actionable = bias !== 'neutral' && confidence >= PRESIGNAL_MIN_CONFIDENCE && entryPrice !== null && stopPrice !== null && targetPrice !== null;
+const buildPreSignal = ({
+  lastPrice,
+  step,
+  trigger,
+  liquiditySetup,
+}: {
+  lastPrice: number;
+  step: number;
+  trigger: ReturnType<typeof buildTrigger>;
+  liquiditySetup: LiquiditySetupModel;
+}) => {
+  const reasons: string[] = [];
+
+  reasons.push(...liquiditySetup.decision.reasons.slice(0, 6));
+
+  const bias: 'long' | 'short' | 'neutral' =
+    liquiditySetup.decision.setupType === 'LONG_SWEEP_REVERSAL'
+      ? 'long'
+      : liquiditySetup.decision.setupType === 'SHORT_SWEEP_REVERSAL'
+        ? 'short'
+        : 'neutral';
+  const confidence = Math.max(trigger.confidence, liquiditySetup.score.probabilityToTarget);
+  const entryPrice = liquiditySetup.economics.entryPrice;
+  const stopPrice = liquiditySetup.economics.stopPrice;
+  const targetPrice = liquiditySetup.economics.targetPrice;
+  const invalidation = liquiditySetup.sweep.sweptZonePrice !== null
+    ? bias === 'long'
+      ? `Pierde ${liquiditySetup.sweep.sweptZonePrice.toFixed(4)} tras barrer longs`
+      : bias === 'short'
+        ? `Recupera ${liquiditySetup.sweep.sweptZonePrice.toFixed(4)} tras barrer shorts`
+        : null
+    : null;
+  const actionable =
+    liquiditySetup.decision.state === 'EXECUTABLE' &&
+    bias !== 'neutral' &&
+    confidence >= PRESIGNAL_MIN_CONFIDENCE &&
+    entryPrice !== null &&
+    stopPrice !== null &&
+    targetPrice !== null;
   const rewardRisk = actionable && entryPrice !== null && stopPrice !== null && targetPrice !== null
     ? Number((Math.abs(targetPrice - entryPrice) / Math.max(step, Math.abs(entryPrice - stopPrice))).toFixed(2))
-    : null;
+    : liquiditySetup.economics.rewardRisk;
 
   return {
     actionable,
@@ -953,7 +1475,7 @@ const buildPreSignal = ({
     targetPrice,
     rewardRisk,
     invalidation,
-    mode: actionable ? 'ready' : 'watch',
+    mode: actionable ? 'ready' : liquiditySetup.decision.state === 'VALID' || liquiditySetup.decision.state === 'CANDIDATE' ? 'watch' : 'watch',
     reasons,
   };
 };
@@ -1164,14 +1686,21 @@ const buildSummary = (rawSymbol: string) => {
   const heatmapTrades = buildHeatmapTradeOverlay(heatmap.rows, heatmap.columns, state.trades);
   const lastPrice = state.lastPrice || mid;
   const absorptionSignals = buildAbsorptionSignals(state, supports, resistances, lastPrice);
-  const preSignalCandidate = buildPreSignal({
-    lastPrice,
-    mid,
-    step: getSignalStep(lastPrice || mid || 1),
-    trigger,
-    absorptionSignals,
+  const signalStep = getSignalStep(lastPrice || mid || 1);
+  const liquiditySetup = buildLiquiditySetupModel({
+    state,
     supports,
     resistances,
+    absorptionSignals,
+    lastPrice,
+    mid,
+    signalStep,
+  });
+  const preSignalCandidate = buildPreSignal({
+    lastPrice,
+    step: signalStep,
+    trigger,
+    liquiditySetup,
   });
   const preSignal = reconcilePreSignal(state, preSignalCandidate, lastPrice);
 
@@ -1203,6 +1732,7 @@ const buildSummary = (rawSymbol: string) => {
     heatmap,
     heatmapTrades,
     absorptionSignals,
+    liquiditySetup,
     preSignal,
     trigger,
   };

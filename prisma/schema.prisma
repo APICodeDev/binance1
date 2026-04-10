@@ -101,3 +101,29 @@ model ApiToken {
 
   @@map("api_tokens")
 }
+
+model HeatmapPaperTrade {
+  id                 Int       @id @default(autoincrement())
+  symbol             String
+  side               String
+  amount             Float
+  quantity           Float
+  entryPrice         Float     @map("entry_price")
+  stopPrice          Float     @map("stop_price")
+  targetPrice        Float     @map("target_price")
+  status             String    @default("open")
+  tradingMode        String    @default("demo") @map("trading_mode")
+  confidence         Float     @default(0)
+  source             String    @default("Heatmap")
+  timeframe          String?   @default("OrderBook")
+  reasons            Json?
+  exitPrice          Float?    @map("exit_price")
+  exitReason         String?   @map("exit_reason")
+  profitLossFiat     Float?    @default(0) @map("profit_loss_fiat")
+  profitLossPercent  Float?    @default(0) @map("profit_loss_percent")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+  closedAt           DateTime? @map("closed_at")
+
+  @@map("heatmap_paper_trades")
+}

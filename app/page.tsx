@@ -289,6 +289,63 @@ interface BookmapSummary {
     tradeCount: number;
     note: string;
   }>;
+  liquiditySetup: {
+    sweep: {
+      detected: boolean;
+      side: 'long_sweep' | 'short_sweep' | null;
+      sweptZonePrice: number | null;
+      penetrationPercent: number;
+      reclaimPercent: number;
+      aggressiveVolume: number;
+      liquidityConsumedNotional: number;
+      timestamp: number | null;
+      notes: string[];
+    };
+    reversal: {
+      confirmed: boolean;
+      absorptionStrength: number;
+      tapeImbalanceScore: number;
+      levelHoldScore: number;
+      microStructureShiftScore: number;
+      notes: string[];
+    };
+    target: {
+      targetZoneFound: boolean;
+      targetZonePrice: number | null;
+      targetZoneType: 'sell_liquidity' | 'buy_liquidity' | null;
+      targetZoneStrength: number;
+      pathClarityScore: number;
+      zoneDistanceScore: number;
+      pathBlocked: boolean;
+      blockingZonePrice: number | null;
+      notes: string[];
+    };
+    economics: {
+      entryPrice: number | null;
+      stopPrice: number | null;
+      targetPrice: number | null;
+      targetMovePercent: number;
+      riskPercent: number;
+      rewardRisk: number | null;
+      passesMinTarget: boolean;
+      passesMinRR: boolean;
+      notes: string[];
+    };
+    score: {
+      sweepScore: number;
+      reversalScore: number;
+      targetScore: number;
+      economicsScore: number;
+      finalScore: number;
+      probabilityToTarget: number;
+    };
+    decision: {
+      setupType: 'LONG_SWEEP_REVERSAL' | 'SHORT_SWEEP_REVERSAL' | 'NONE';
+      state: 'REJECTED' | 'WATCH' | 'CANDIDATE' | 'VALID' | 'EXECUTABLE';
+      hardRejectReasons: string[];
+      reasons: string[];
+    };
+  };
   preSignal: {
     actionable: boolean;
     bias: 'long' | 'short' | 'neutral';
@@ -311,6 +368,72 @@ interface BookmapSummary {
     confidence: number;
     reason: string;
     referencePrice: number | null;
+  };
+}
+
+interface HeatmapPaperTrade {
+  id: number;
+  symbol: string;
+  side: 'buy' | 'sell';
+  amount: number;
+  quantity: number;
+  entryPrice: number;
+  stopPrice: number;
+  targetPrice: number;
+  status: 'open' | 'closed';
+  tradingMode: 'demo' | 'live';
+  confidence: number;
+  source: string;
+  timeframe: string | null;
+  reasons?: string[] | null;
+  exitPrice?: number | null;
+  exitReason?: string | null;
+  profitLossFiat?: number | null;
+  profitLossPercent?: number | null;
+  createdAt: string;
+  updatedAt: string;
+  closedAt?: string | null;
+}
+
+interface HeatmapPaperPayload {
+  mode: 'demo' | 'live';
+  open: HeatmapPaperTrade[];
+  history: HeatmapPaperTrade[];
+  summary: {
+    closedCount: number;
+    totalPnl: number;
+    winCount: number;
+    lossCount: number;
+  };
+  analytics: {
+    closedCount: number;
+    winCount: number;
+    lossCount: number;
+    winRate: number;
+    targetHits: number;
+    stopHits: number;
+    averageDurationMs: number;
+    symbolPerformance: Array<{
+      symbol: string;
+      total: number;
+      wins: number;
+      winRate: number;
+      pnl: number;
+    }>;
+    setupPerformance: Array<{
+      setup: string;
+      total: number;
+      wins: number;
+      winRate: number;
+      pnl: number;
+    }>;
+    confidencePerformance: Array<{
+      bucket: string;
+      total: number;
+      wins: number;
+      winRate: number;
+      pnl: number;
+    }>;
   };
 }
 
@@ -427,6 +550,10 @@ export default function Dashboard() {
   const [bookmapData, setBookmapData] = useState<BookmapSummary | null>(null);
   const [bookmapLoading, setBookmapLoading] = useState(false);
   const [bookmapMessage, setBookmapMessage] = useState<string | null>(null);
+  const [executingHeatmapSignal, setExecutingHeatmapSignal] = useState(false);
+  const [creatingHeatmapPaper, setCreatingHeatmapPaper] = useState(false);
+  const [heatmapPaperData, setHeatmapPaperData] = useState<HeatmapPaperPayload | null>(null);
+  const [heatmapPaperMessage, setHeatmapPaperMessage] = useState<string | null>(null);
 
   const filteredSymbols = AVAILABLE_SYMBOLS.filter((symbol) =>
     symbol.includes(newPos.symbol.toUpperCase())
@@ -603,6 +730,16 @@ export default function Dashboard() {
     }
   }, [getApiErrorMessage]);
 
+  const fetchHeatmapPaper = useCallback(async () => {
+    try {
+      const payload = await apiClient.getHeatmapPaper();
+      setHeatmapPaperData(payload.data || null);
+      setHeatmapPaperMessage(null);
+    } catch (error) {
+      setHeatmapPaperMessage(getApiErrorMessage(error, 'Unable to load Heatmap paper tracking'));
+    }
+  }, [getApiErrorMessage]);
+
   const fetchSounds = useCallback(async () => {
     try {
       const payload = await apiClient.getSounds();
@@ -722,7 +859,8 @@ export default function Dashboard() {
     }
 
     fetchBookmap(bookmapSymbol);
-  }, [authUser, bookmapSymbol, fetchBookmap]);
+    fetchHeatmapPaper();
+  }, [authUser, bookmapSymbol, fetchBookmap, fetchHeatmapPaper]);
 
   useEffect(() => {
     if (!authUser || !isOnline || !isDocumentVisible || currentView !== 'dashboard' || !bookmapSymbol) {
@@ -731,10 +869,11 @@ export default function Dashboard() {
 
     const interval = setInterval(() => {
       fetchBookmap(bookmapSymbol, true);
+      fetchHeatmapPaper();
     }, 4000);
 
     return () => clearInterval(interval);
-  }, [authUser, bookmapSymbol, currentView, fetchBookmap, isDocumentVisible, isOnline]);
+  }, [authUser, bookmapSymbol, currentView, fetchBookmap, fetchHeatmapPaper, isDocumentVisible, isOnline]);
 
   useEffect(() => {
     if (!authUser) {
@@ -916,6 +1055,69 @@ export default function Dashboard() {
       fetchData();
     } catch (error) {
       setErrorPopup(getApiErrorMessage(error, 'Error de red al intentar abrir la posicion.'));
+    }
+  };
+
+  const executeHeatmapPreSignal = async () => {
+    if (!bookmapData?.preSignal.actionable || bookmapData.preSignal.bias === 'neutral') {
+      return;
+    }
+
+    const entryType = bookmapData.preSignal.bias === 'long' ? 'buy' : 'sell';
+    const confirmed = confirm(
+      `Vas a enviar una entrada ${entryType.toUpperCase()} desde Heatmap para ${bookmapSymbol}.\n\n` +
+      `Entry: ${bookmapData.preSignal.entryPrice?.toFixed(4) || '-'}\n` +
+      `Stop: ${bookmapData.preSignal.stopPrice?.toFixed(4) || '-'}\n` +
+      `Target: ${bookmapData.preSignal.targetPrice?.toFixed(4) || '-'}\n` +
+      `R/R: ${bookmapData.preSignal.rewardRisk?.toFixed(2) || '-'}`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setExecutingHeatmapSignal(true);
+    try {
+      await apiClient.openPosition({
+        symbol: bookmapSymbol,
+        amount: customAmount || '100',
+        type: entryType,
+        origin: 'Heatmap',
+        timeframe: 'OrderBook',
+        allowTakerFallback: true,
+        takerFallbackMode: 'market',
+      });
+      await fetchData();
+      await fetchBookmap(bookmapSymbol, true);
+    } catch (error) {
+      setErrorPopup(getApiErrorMessage(error, 'No se pudo ejecutar la pre-senal Heatmap.'));
+    } finally {
+      setExecutingHeatmapSignal(false);
+    }
+  };
+
+  const trackHeatmapPreSignalOnPaper = async () => {
+    if (!bookmapData?.preSignal.actionable || bookmapData.preSignal.bias === 'neutral') {
+      return;
+    }
+
+    setCreatingHeatmapPaper(true);
+    try {
+      await apiClient.createHeatmapPaper({
+        symbol: bookmapSymbol,
+        side: bookmapData.preSignal.bias === 'long' ? 'buy' : 'sell',
+        amount: customAmount || '100',
+        entryPrice: bookmapData.preSignal.entryPrice,
+        stopPrice: bookmapData.preSignal.stopPrice,
+        targetPrice: bookmapData.preSignal.targetPrice,
+        confidence: bookmapData.preSignal.confidence,
+        reasons: bookmapData.preSignal.reasons,
+      });
+      await fetchHeatmapPaper();
+    } catch (error) {
+      setErrorPopup(getApiErrorMessage(error, 'No se pudo registrar el paper trade Heatmap.'));
+    } finally {
+      setCreatingHeatmapPaper(false);
     }
   };
 
@@ -1836,6 +2038,12 @@ export default function Dashboard() {
             data={bookmapData}
             loading={bookmapLoading}
             message={bookmapMessage}
+            onExecutePreSignal={executeHeatmapPreSignal}
+            executingPreSignal={executingHeatmapSignal}
+            onTrackPaperSignal={trackHeatmapPreSignalOnPaper}
+            creatingPaperSignal={creatingHeatmapPaper}
+            paperData={heatmapPaperData}
+            paperMessage={heatmapPaperMessage}
           />
 
           {/* History */}
@@ -2868,13 +3076,26 @@ function HeatmapChart({ data }: { data: BookmapSummary | null }) {
       type: 'support' as const,
       rowIndex: findRowIndex(zone.price),
       label: `BUY ${zone.price.toFixed(4)}`,
+      price: zone.price,
+      strength: zone.totalNotional,
     })),
     ...resistanceZones.map((zone) => ({
       type: 'resistance' as const,
       rowIndex: findRowIndex(zone.price),
       label: `SELL ${zone.price.toFixed(4)}`,
+      price: zone.price,
+      strength: zone.totalNotional,
     })),
-  ];
+  ]
+    .sort((a, b) => b.strength - a.strength)
+    .slice(0, 4);
+
+  const visibleSupports = supportZones
+    .slice(0, 2)
+    .map((zone) => `${zone.price.toFixed(4)} (${zone.distancePercent.toFixed(2)}%)`);
+  const visibleResistances = resistanceZones
+    .slice(0, 2)
+    .map((zone) => `${zone.price.toFixed(4)} (${zone.distancePercent.toFixed(2)}%)`);
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
@@ -2882,7 +3103,7 @@ function HeatmapChart({ data }: { data: BookmapSummary | null }) {
         <div>
           <p className="text-sm font-black uppercase tracking-[0.2em] text-white">Heatmap</p>
           <p className="mt-1 text-[11px] text-slate-500">
-            Tiempo en horizontal, niveles de precio en vertical, brillo segun liquidez agregada.
+            Brillo = liquidez resting. Bandas verdes = soportes relevantes. Bandas rojas = resistencias relevantes.
           </p>
         </div>
         <div className="text-right">
@@ -2916,9 +3137,10 @@ function HeatmapChart({ data }: { data: BookmapSummary | null }) {
               >
                 <div
                   className={cn(
-                    "h-[2px] w-full",
-                    band.type === 'support' ? 'bg-emerald-300/90' : 'bg-rose-300/90'
+                    "w-full rounded-full",
+                    band.type === 'support' ? 'bg-emerald-300/75' : 'bg-rose-300/75'
                   )}
+                  style={{ height: `${band.strength > 500000 ? 6 : band.strength > 150000 ? 4 : 2}px` }}
                 />
               </div>
             ))}
@@ -2999,12 +3221,12 @@ function HeatmapChart({ data }: { data: BookmapSummary | null }) {
             ))}
           </div>
 
-          <div className="pointer-events-none absolute inset-x-2 top-2 z-[4] flex flex-wrap gap-2">
+          <div className="pointer-events-none absolute right-2 top-2 z-[4] flex max-w-[38%] flex-col gap-2">
             {zoneBands.map((band, index) => (
               <span
                 key={`badge-${band.label}-${index}`}
                 className={cn(
-                  "rounded-full border px-2 py-1 text-[9px] font-black uppercase tracking-[0.15em]",
+                  "rounded-full border px-2 py-1 text-[9px] font-black uppercase tracking-[0.15em] text-right",
                   band.type === 'support'
                     ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200'
                     : 'border-rose-400/40 bg-rose-500/10 text-rose-200'
@@ -3017,9 +3239,13 @@ function HeatmapChart({ data }: { data: BookmapSummary | null }) {
         </div>
       </div>
 
-      <div className="mt-3 flex items-center justify-between gap-3 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
+      <div className="mt-3 grid gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 md:grid-cols-3">
+        <span>Supports: {visibleSupports.length ? visibleSupports.join(' · ') : '-'}</span>
+        <span className="text-center">max intensity {data?.heatmap.maxIntensity.toFixed(0) || 0}</span>
+        <span className="text-right">Resistances: {visibleResistances.length ? visibleResistances.join(' · ') : '-'}</span>
+      </div>
+      <div className="mt-2 flex items-center justify-between gap-3 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
         <span>{new Date(columns[0]).toLocaleTimeString()}</span>
-        <span>max intensity {data?.heatmap.maxIntensity.toFixed(0) || 0}</span>
         <span>{new Date(columns[columns.length - 1]).toLocaleTimeString()}</span>
       </div>
     </div>
@@ -3032,12 +3258,24 @@ function BookmapPanel({
   data,
   loading,
   message,
+  onExecutePreSignal,
+  executingPreSignal,
+  onTrackPaperSignal,
+  creatingPaperSignal,
+  paperData,
+  paperMessage,
 }: {
   symbol: string;
   onSymbolChange: (value: string) => void;
   data: BookmapSummary | null;
   loading: boolean;
   message: string | null;
+  onExecutePreSignal: () => void;
+  executingPreSignal: boolean;
+  onTrackPaperSignal: () => void;
+  creatingPaperSignal: boolean;
+  paperData: HeatmapPaperPayload | null;
+  paperMessage: string | null;
 }) {
   return (
     <section className="rounded-[2rem] border border-cyan-900/50 bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.14),_transparent_30%),linear-gradient(180deg,rgba(2,6,23,0.96),rgba(2,6,23,0.88))] p-6 shadow-2xl shadow-slate-950/40">
@@ -3085,6 +3323,115 @@ function BookmapPanel({
 
       <div className="mt-6 grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
         <div className="grid gap-4">
+          <div className="rounded-2xl border border-cyan-900/40 bg-cyan-950/10 p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-500">Liquidity Setup</p>
+                <h3 className={cn(
+                  "mt-2 text-xl font-black uppercase",
+                  data?.liquiditySetup.decision.state === 'EXECUTABLE'
+                    ? 'text-emerald-300'
+                    : data?.liquiditySetup.decision.state === 'VALID' || data?.liquiditySetup.decision.state === 'CANDIDATE'
+                      ? 'text-cyan-300'
+                      : data?.liquiditySetup.decision.state === 'WATCH'
+                        ? 'text-amber-300'
+                        : 'text-rose-300'
+                )}>
+                  {data?.liquiditySetup.decision.setupType === 'LONG_SWEEP_REVERSAL'
+                    ? 'Long Sweep Reversal'
+                    : data?.liquiditySetup.decision.setupType === 'SHORT_SWEEP_REVERSAL'
+                      ? 'Short Sweep Reversal'
+                      : 'No Valid Sweep Setup'}
+                </h3>
+                <p className="mt-2 text-sm text-slate-300">
+                  {data?.liquiditySetup.decision.state === 'EXECUTABLE'
+                    ? 'El barrido, el giro y la economia del trade ya permiten tratarlo como setup ejecutable.'
+                    : data?.liquiditySetup.decision.state === 'REJECTED'
+                      ? 'La idea esta descartada por falta de recorrido, reversal flojo o camino sucio hacia la siguiente liquidez.'
+                      : 'El setup existe, pero aun necesita mas confirmacion antes de convertirse en entrada.'}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 lg:min-w-[340px]">
+                <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">State</p>
+                  <p className="mt-1 text-lg font-black text-white">{data?.liquiditySetup.decision.state || '-'}</p>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Probability</p>
+                  <p className="mt-1 text-lg font-black text-cyan-300">
+                    {data ? `${(data.liquiditySetup.score.probabilityToTarget * 100).toFixed(0)}%` : '-'}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Target Move</p>
+                  <p className="mt-1 text-sm font-black text-white">
+                    {data?.liquiditySetup.economics.targetMovePercent ? `${data.liquiditySetup.economics.targetMovePercent.toFixed(2)}%` : '-'}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Final Score</p>
+                  <p className="mt-1 text-sm font-black text-white">
+                    {data?.liquiditySetup.score.finalScore?.toFixed(1) || '-'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-3 md:grid-cols-4">
+              <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Sweep</p>
+                <p className="mt-1 text-sm font-black text-white">{data?.liquiditySetup.score.sweepScore?.toFixed(0) || '-'}</p>
+              </div>
+              <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Reversal</p>
+                <p className="mt-1 text-sm font-black text-white">{data?.liquiditySetup.score.reversalScore?.toFixed(0) || '-'}</p>
+              </div>
+              <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Target</p>
+                <p className="mt-1 text-sm font-black text-white">{data?.liquiditySetup.score.targetScore?.toFixed(0) || '-'}</p>
+              </div>
+              <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Economics</p>
+                <p className="mt-1 text-sm font-black text-white">{data?.liquiditySetup.score.economicsScore?.toFixed(0) || '-'}</p>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-3 md:grid-cols-3">
+              <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Sweeped Zone</p>
+                <p className="mt-1 text-sm font-black text-white">{data?.liquiditySetup.sweep.sweptZonePrice?.toFixed(4) || '-'}</p>
+              </div>
+              <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Target Zone</p>
+                <p className="mt-1 text-sm font-black text-white">{data?.liquiditySetup.target.targetZonePrice?.toFixed(4) || '-'}</p>
+              </div>
+              <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Reward / Risk</p>
+                <p className="mt-1 text-sm font-black text-white">{data?.liquiditySetup.economics.rewardRisk?.toFixed(2) || '-'}</p>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              {(data?.liquiditySetup.decision.hardRejectReasons.length
+                ? data.liquiditySetup.decision.hardRejectReasons
+                : data?.liquiditySetup.decision.reasons.slice(0, 4) || []
+              ).map((reason, index) => (
+                <span
+                  key={`${reason}-${index}`}
+                  className={cn(
+                    "rounded-full border px-3 py-1 text-[10px] font-black uppercase tracking-[0.12em]",
+                    data?.liquiditySetup.decision.hardRejectReasons.length
+                      ? 'border-rose-800/50 bg-rose-950/30 text-rose-200'
+                      : 'border-cyan-800/50 bg-cyan-950/30 text-cyan-200'
+                  )}
+                >
+                  {reason}
+                </span>
+              ))}
+            </div>
+          </div>
+
           <div className={cn(
             "rounded-2xl border p-4",
             data?.preSignal.actionable
@@ -3162,6 +3509,43 @@ function BookmapPanel({
                 Ultimo cambio de estado: {data.preSignal.invalidationReason}
               </p>
             )}
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={onExecutePreSignal}
+                disabled={!data?.preSignal.actionable || executingPreSignal}
+                className={cn(
+                  "rounded-2xl px-4 py-3 text-xs font-black uppercase tracking-[0.2em] transition-all",
+                  data?.preSignal.actionable && !executingPreSignal
+                    ? data.preSignal.bias === 'long'
+                      ? "bg-emerald-400 text-slate-950 hover:bg-emerald-300"
+                      : "bg-rose-400 text-slate-950 hover:bg-rose-300"
+                    : "cursor-not-allowed border border-slate-800 bg-slate-950/50 text-slate-500"
+                )}
+              >
+                {executingPreSignal
+                  ? 'Executing...'
+                  : data?.preSignal.actionable
+                    ? `Send ${data.preSignal.bias.toUpperCase()} to Entry`
+                    : 'Waiting for executable setup'}
+              </button>
+              <button
+                type="button"
+                onClick={onTrackPaperSignal}
+                disabled={!data?.preSignal.actionable || creatingPaperSignal}
+                className={cn(
+                  "rounded-2xl border px-4 py-3 text-xs font-black uppercase tracking-[0.2em] transition-all",
+                  data?.preSignal.actionable && !creatingPaperSignal
+                    ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-200 hover:border-cyan-300 hover:text-cyan-100"
+                    : "cursor-not-allowed border-slate-800 bg-slate-950/50 text-slate-500"
+                )}
+              >
+                {creatingPaperSignal ? 'Tracking...' : 'Track on Paper'}
+              </button>
+              <p className="text-xs text-slate-400">
+                La ejecucion usa `Entry` con `origin: Heatmap`, asi que sigue respetando el bloqueo global de nuevas entradas.
+              </p>
+            </div>
           </div>
 
           <div className="grid gap-4 md:grid-cols-3">
@@ -3231,14 +3615,201 @@ function BookmapPanel({
             </div>
           </div>
 
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-black uppercase tracking-[0.2em] text-white">Paper Tracking</p>
+                <p className="mt-1 text-[11px] text-slate-500">Seguimiento teorico de senales Heatmap sin enviar orden real.</p>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Closed PnL</p>
+                <p className={cn(
+                  "text-lg font-black",
+                  (paperData?.summary.totalPnl || 0) >= 0 ? 'text-emerald-300' : 'text-rose-300'
+                )}>
+                  {paperData ? `${paperData.summary.totalPnl.toFixed(2)}` : '-'}
+                </p>
+              </div>
+            </div>
+            {paperMessage && (
+              <div className="mt-3 rounded-xl border border-rose-800/40 bg-rose-950/30 px-3 py-2 text-xs text-rose-300">
+                {paperMessage}
+              </div>
+            )}
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Open Paper Trades</p>
+                <div className="mt-3 space-y-3">
+                  {paperData?.open.length ? paperData.open.map((trade) => (
+                    <div key={trade.id} className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="font-black text-white">{trade.symbol}</p>
+                        <span className={cn(
+                          "text-[10px] font-black uppercase",
+                          trade.side === 'buy' ? 'text-emerald-300' : 'text-rose-300'
+                        )}>
+                          {trade.side}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-[11px] text-slate-400">
+                        Entry {trade.entryPrice.toFixed(4)} · Stop {trade.stopPrice.toFixed(4)} · Target {trade.targetPrice.toFixed(4)}
+                      </p>
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        Conf {(trade.confidence * 100).toFixed(0)}% · {new Date(trade.createdAt).toLocaleTimeString()}
+                      </p>
+                    </div>
+                  )) : (
+                    <p className="text-sm text-slate-500">No hay paper trades abiertos ahora mismo.</p>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Recent Results</p>
+                <div className="mt-3 space-y-3">
+                  {paperData?.history.length ? paperData.history.slice(0, 6).map((trade) => (
+                    <div key={trade.id} className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="font-black text-white">{trade.symbol}</p>
+                        <p className={cn(
+                          "text-sm font-black",
+                          (trade.profitLossFiat || 0) >= 0 ? 'text-emerald-300' : 'text-rose-300'
+                        )}>
+                          {(trade.profitLossFiat || 0).toFixed(2)}
+                        </p>
+                      </div>
+                      <p className="mt-2 text-[11px] text-slate-400">
+                        {trade.side.toUpperCase()} · exit {trade.exitReason || '-'} · {(trade.profitLossPercent || 0).toFixed(2)}%
+                      </p>
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        {trade.closedAt ? new Date(trade.closedAt).toLocaleString() : '-'}
+                      </p>
+                    </div>
+                  )) : (
+                    <p className="text-sm text-slate-500">Todavia no hay resultados cerrados para Heatmap paper.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-black uppercase tracking-[0.2em] text-white">Paper Analytics</p>
+                <p className="mt-1 text-[11px] text-slate-500">Metricas especificas del comportamiento de las pre-senales Heatmap.</p>
+              </div>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-4">
+              <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Win Rate</p>
+                <p className="mt-1 text-lg font-black text-emerald-300">
+                  {paperData ? `${paperData.analytics.winRate.toFixed(1)}%` : '-'}
+                </p>
+              </div>
+              <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Targets / Stops</p>
+                <p className="mt-1 text-lg font-black text-white">
+                  {paperData ? `${paperData.analytics.targetHits} / ${paperData.analytics.stopHits}` : '-'}
+                </p>
+              </div>
+              <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Avg Duration</p>
+                <p className="mt-1 text-lg font-black text-white">
+                  {paperData ? formatDurationMs(paperData.analytics.averageDurationMs) : '-'}
+                </p>
+              </div>
+              <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Closed</p>
+                <p className="mt-1 text-lg font-black text-white">
+                  {paperData ? paperData.analytics.closedCount : '-'}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Top Symbols</p>
+              <div className="mt-3 space-y-3">
+                {paperData?.analytics.symbolPerformance.length ? paperData.analytics.symbolPerformance.map((item) => (
+                  <div key={item.symbol} className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-black text-white">{item.symbol}</p>
+                      <p className={cn(
+                        "text-sm font-black",
+                        item.pnl >= 0 ? 'text-emerald-300' : 'text-rose-300'
+                      )}>
+                        {item.pnl.toFixed(2)}
+                      </p>
+                    </div>
+                    <p className="mt-2 text-[11px] text-slate-400">
+                      {item.total} trades · wins {item.wins} · win rate {item.winRate.toFixed(1)}%
+                    </p>
+                  </div>
+                )) : (
+                  <p className="text-sm text-slate-500">Aun no hay suficiente historial Heatmap paper para analytics por simbolo.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-4 lg:grid-cols-2">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">By Setup</p>
+                <div className="mt-3 space-y-3">
+                  {paperData?.analytics.setupPerformance.length ? paperData.analytics.setupPerformance.map((item) => (
+                    <div key={item.setup} className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="max-w-[75%] text-xs font-black text-white">{item.setup}</p>
+                        <p className={cn(
+                          "text-sm font-black",
+                          item.pnl >= 0 ? 'text-emerald-300' : 'text-rose-300'
+                        )}>
+                          {item.pnl.toFixed(2)}
+                        </p>
+                      </div>
+                      <p className="mt-2 text-[11px] text-slate-400">
+                        {item.total} trades · wins {item.wins} · win rate {item.winRate.toFixed(1)}%
+                      </p>
+                    </div>
+                  )) : (
+                    <p className="text-sm text-slate-500">Aun no hay setups suficientes para comparar patrones.</p>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">By Confidence</p>
+                <div className="mt-3 space-y-3">
+                  {paperData?.analytics.confidencePerformance.length ? paperData.analytics.confidencePerformance.map((item) => (
+                    <div key={item.bucket} className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="font-black text-white">{item.bucket}</p>
+                        <p className={cn(
+                          "text-sm font-black",
+                          item.pnl >= 0 ? 'text-emerald-300' : 'text-rose-300'
+                        )}>
+                          {item.pnl.toFixed(2)}
+                        </p>
+                      </div>
+                      <p className="mt-2 text-[11px] text-slate-400">
+                        {item.total} trades · wins {item.wins} · win rate {item.winRate.toFixed(1)}%
+                      </p>
+                    </div>
+                  )) : (
+                    <p className="text-sm text-slate-500">Aun no hay suficientes resultados por confianza.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="rounded-2xl border border-emerald-900/40 bg-emerald-950/10 p-4">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-black uppercase tracking-[0.2em] text-emerald-300">Support Zones</p>
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Top liquidity clusters</p>
+                <p className="text-sm font-black uppercase tracking-[0.2em] text-emerald-300">Nearest Buy Wall</p>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">El resto ya se ve en el heatmap</p>
               </div>
               <div className="mt-4 space-y-3">
-                {data?.zones.supports.length ? data.zones.supports.map((zone) => (
+                {data?.zones.supports.length ? data.zones.supports.slice(0, 1).map((zone) => (
                   <div key={`support-${zone.price}`} className="rounded-2xl border border-emerald-900/30 bg-slate-950/50 p-3">
                     <div className="flex items-center justify-between gap-3">
                       <p className="font-black text-white">{zone.price.toFixed(4)}</p>
@@ -3256,11 +3827,11 @@ function BookmapPanel({
 
             <div className="rounded-2xl border border-rose-900/40 bg-rose-950/10 p-4">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-black uppercase tracking-[0.2em] text-rose-300">Resistance Zones</p>
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Heavy resting offers</p>
+                <p className="text-sm font-black uppercase tracking-[0.2em] text-rose-300">Nearest Sell Wall</p>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">El resto ya se ve en el heatmap</p>
               </div>
               <div className="mt-4 space-y-3">
-                {data?.zones.resistances.length ? data.zones.resistances.map((zone) => (
+                {data?.zones.resistances.length ? data.zones.resistances.slice(0, 1).map((zone) => (
                   <div key={`resistance-${zone.price}`} className="rounded-2xl border border-rose-900/30 bg-slate-950/50 p-3">
                     <div className="flex items-center justify-between gap-3">
                       <p className="font-black text-white">{zone.price.toFixed(4)}</p>
