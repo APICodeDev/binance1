@@ -1372,7 +1372,7 @@ export default function Dashboard() {
       "min-h-screen transition-all duration-1000",
       tradingMode === 'live' ? "bg-rose-950/20" : "bg-transparent"
     )}>
-      <div className="p-4 md:p-8 max-w-7xl mx-auto space-y-8">
+      <div className="mx-auto w-full max-w-[1720px] space-y-8 p-4 md:p-8 xl:px-10 2xl:px-12">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <button
@@ -3159,7 +3159,7 @@ function HeatmapChart({ data }: { data: BookmapSummary | null }) {
         </div>
       </div>
 
-      <div className="mt-4 grid grid-cols-[78px_1fr_88px] gap-3">
+      <div className="mt-4 grid grid-cols-[64px_minmax(0,1fr)_72px] gap-2 sm:grid-cols-[78px_minmax(0,1fr)_88px] sm:gap-3">
         <div className="grid h-[380px]" style={{ gridTemplateRows: `repeat(${rows.length}, minmax(0, 1fr))` }}>
           {rows.map((price, index) => (
             <div key={`${price}-${index}`} className="flex items-center text-[10px] font-black text-slate-500">
@@ -3395,7 +3395,7 @@ function BookmapPanel({
       )}
 
       {expanded ? (
-      <div className="mt-6 grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+      <div className="mt-6 grid gap-4">
         <div className="grid gap-4">
           <div className="rounded-2xl border border-cyan-900/40 bg-cyan-950/10 p-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -3923,7 +3923,7 @@ function BookmapPanel({
           </div>
         </div>
 
-        <div className="grid gap-4">
+        <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
           <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
             <p className="text-sm font-black uppercase tracking-[0.2em] text-white">Venue Snapshot</p>
             <div className="mt-4 space-y-3">
