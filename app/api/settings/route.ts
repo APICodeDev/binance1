@@ -20,6 +20,7 @@ export async function GET(req: NextRequest) {
   const leverageValue = await prisma.setting.findUnique({ where: { key: 'leverage_value' } });
   const profitSoundEnabled = await prisma.setting.findUnique({ where: { key: 'profit_sound_enabled' } });
   const profitSoundFile = await prisma.setting.findUnique({ where: { key: 'profit_sound_file' } });
+  const apiStopMode = await prisma.setting.findUnique({ where: { key: 'api_stop_mode' } });
   
   return NextResponse.json({ 
     bot_enabled: botEnabled?.value || '1',
@@ -29,7 +30,8 @@ export async function GET(req: NextRequest) {
     leverage_enabled: leverageEnabled?.value || '0',
     leverage_value: leverageValue?.value || '1',
     profit_sound_enabled: profitSoundEnabled?.value || '0',
-    profit_sound_file: profitSoundFile?.value || ''
+    profit_sound_file: profitSoundFile?.value || '',
+    api_stop_mode: apiStopMode?.value || 'signal'
   });
 }
 
@@ -55,7 +57,8 @@ export async function POST(req: NextRequest) {
     { key: 'leverage_enabled', value: body.leverage_enabled },
     { key: 'leverage_value', value: body.leverage_value },
     { key: 'profit_sound_enabled', value: body.profit_sound_enabled },
-    { key: 'profit_sound_file', value: body.profit_sound_file }
+    { key: 'profit_sound_file', value: body.profit_sound_file },
+    { key: 'api_stop_mode', value: body.api_stop_mode }
   ];
 
   for (const setting of settingsToUpdate) {

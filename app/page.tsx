@@ -531,6 +531,7 @@ export default function Dashboard() {
   const [customAmount, setCustomAmount] = useState('');
   const [leverageEnabled, setLeverageEnabled] = useState(false);
   const [leverageValue, setLeverageValue] = useState('1');
+  const [apiStopMode, setApiStopMode] = useState<'signal' | 'legacy'>('signal');
   const [showLeverageHelp, setShowLeverageHelp] = useState(false);
   const [isPhonePortrait, setIsPhonePortrait] = useState(false);
   const [tradeLogsExpanded, setTradeLogsExpanded] = useState(true);
@@ -816,6 +817,7 @@ export default function Dashboard() {
       setTradingMode(settings.trading_mode || 'demo');
       setLeverageEnabled(settings.leverage_enabled === '1');
       setLeverageValue(settings.leverage_value || '1');
+      setApiStopMode(settings.api_stop_mode === 'legacy' ? 'legacy' : 'signal');
       setProfitSoundEnabled(settings.profit_sound_enabled === '1');
       setProfitSoundFile(settings.profit_sound_file || '');
       
@@ -1088,6 +1090,16 @@ export default function Dashboard() {
     }
   };
 
+  const toggleApiStopMode = async () => {
+    const nextMode = apiStopMode === 'signal' ? 'legacy' : 'signal';
+    try {
+      await apiClient.updateSettings({ api_stop_mode: nextMode });
+      setApiStopMode(nextMode);
+    } catch (error) {
+      setErrorPopup(getApiErrorMessage(error, 'Unable to update API stop mode.'));
+    }
+  };
+
   const toggleProfitSound = async () => {
     const nextValue = !profitSoundEnabled;
     try {
@@ -1163,6 +1175,7 @@ export default function Dashboard() {
         type: entryType,
         origin: 'Heatmap',
         timeframe: 'OrderBook',
+        stopPrice: bookmapData.preSignal.stopPrice,
         allowTakerFallback: true,
         takerFallbackMode: 'market',
       });
@@ -1677,6 +1690,30 @@ export default function Dashboard() {
                 </div>
                 <span className="mt-1 text-[9px] font-bold uppercase tracking-widest text-slate-600">
                   Amount remains exposure. Leverage changes margin used.
+                </span>
+              </div>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 px-4 py-3 rounded-2xl flex items-center gap-3">
+              <ShieldCheck size={18} className={cn("shrink-0", apiStopMode === 'signal' ? "text-cyan-300" : "text-slate-500")} />
+              <div className="flex min-w-0 flex-1 flex-col">
+                <span className="text-[9px] uppercase font-black text-slate-500 tracking-widest">API Initial Stop</span>
+                <div className="mt-1 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={toggleApiStopMode}
+                    className={cn(
+                      "rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] transition-colors",
+                      apiStopMode === 'signal'
+                        ? "border-cyan-300 bg-cyan-300 text-slate-950"
+                        : "border-slate-700 bg-slate-950/40 text-slate-400"
+                    )}
+                  >
+                    {apiStopMode === 'signal' ? 'Signal/API Stop' : 'Legacy 1.2%'}
+                  </button>
+                </div>
+                <span className="mt-1 text-[9px] font-bold uppercase tracking-widest text-slate-600">
+                  API and TradingView entries use webhook stop when available, or fall back to 1.2%.
                 </span>
               </div>
             </div>

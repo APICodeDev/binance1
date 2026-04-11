@@ -40,6 +40,17 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const createClientOid = (symbol: string) =>
   `bgd-${symbol.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+const parseOptionalPrice = (...values: unknown[]) => {
+  for (const value of values) {
+    const parsed = Number.parseFloat(String(value ?? ''));
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  return null;
+};
+
 const extractOrderData = (detailResponse: any) => detailResponse?.data?.[0] || detailResponse?.data || {};
 const toDepthFromWsQuote = (quote: any) => {
   if (!quote?.ok || !Number.isFinite(quote.bestBid) || !Number.isFinite(quote.bestAsk)) {
@@ -81,6 +92,14 @@ async function executeEntry(
     const origin = data.origin ? String(data.origin) : null;
     const timeframe = data.timeframe ? String(data.timeframe) : null;
     const incomingQuantity = parseFloat(data.quantity || data.contracts) || 0;
+    const requestedStopPrice = parseOptionalPrice(
+      data.stopPrice,
+      data.stop_price,
+      data.stopLoss,
+      data.stop_loss,
+      data.slPrice,
+      data.sl_price,
+    );
     const allowTakerFallback = data.allowTakerFallback === undefined
       ? true
       : String(data.allowTakerFallback || '').toLowerCase() === 'true';
@@ -97,9 +116,11 @@ async function executeEntry(
     const customAmountSetting = await prisma.setting.findUnique({ where: { key: 'custom_amount' } });
     const leverageEnabledSetting = await prisma.setting.findUnique({ where: { key: 'leverage_enabled' } });
     const leverageValueSetting = await prisma.setting.findUnique({ where: { key: 'leverage_value' } });
+    const apiStopModeSetting = await prisma.setting.findUnique({ where: { key: 'api_stop_mode' } });
     const customAmount = parseFloat(String(customAmountSetting?.value || '0').replace(/[^0-9.]/g, ''));
     const leverageEnabled = leverageEnabledSetting?.value === '1';
     const configuredLeverage = Number.parseFloat(String(leverageValueSetting?.value || '1'));
+    const apiStopMode = apiStopModeSetting?.value === 'legacy' ? 'legacy' : 'signal';
     if (customAmount > 0) {
       amount = customAmount;
     }
@@ -355,8 +376,19 @@ async function executeEntry(
     }
 
     const slPercent = 1.2 / 100;
-    const rawStopPrice = type === 'buy' ? entryPrice * (1 - slPercent) : entryPrice * (1 + slPercent);
-    const stopPrice = bitgetNormalizePriceByContract(rawStopPrice, exchangeInfo);
+    const rawLegacyStopPrice = type === 'buy' ? entryPrice * (1 - slPercent) : entryPrice * (1 + slPercent);
+    const legacyStopPrice = bitgetNormalizePriceByContract(rawLegacyStopPrice, exchangeInfo);
+    const normalizedRequestedStop = requestedStopPrice !== null
+      ? bitgetNormalizePriceByContract(requestedStopPrice, exchangeInfo)
+      : null;
+    const isRequestedStopValid = normalizedRequestedStop !== null &&
+      (
+        (type === 'buy' && normalizedRequestedStop < entryPrice) ||
+        (type === 'sell' && normalizedRequestedStop > entryPrice)
+      );
+    const stopPrice = apiStopMode === 'signal' && isRequestedStopValid
+      ? normalizedRequestedStop
+      : legacyStopPrice;
     const slSide = type === 'buy' ? 'SELL' : 'BUY';
     const slResponse = await bitgetPlaceStopMarket(symbol, slSide as 'BUY' | 'SELL', stopPrice, filledSize, tradingMode);
 
@@ -415,6 +447,12 @@ async function executeEntry(
         vipMakerFee: vipFees.makerFeeRate,
         vipTakerFee: vipFees.takerFeeRate,
         realEntryFee,
+        apiStopMode,
+        requestedStopPrice,
+        normalizedRequestedStop,
+        requestedStopAccepted: apiStopMode === 'signal' && isRequestedStopValid,
+        legacyStopPrice,
+        appliedStopPrice: stopPrice,
       },
       req,
     });
@@ -436,6 +474,13 @@ async function executeEntry(
         expectedSpreadCost,
         fundingRisk,
         realEntryFee,
+      },
+      stop: {
+        mode: apiStopMode,
+        requested: requestedStopPrice,
+        accepted: apiStopMode === 'signal' && isRequestedStopValid,
+        applied: stopPrice,
+        fallback: legacyStopPrice,
       },
     });
   } catch (error: any) {
