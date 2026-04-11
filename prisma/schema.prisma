@@ -26,6 +26,8 @@ model Position {
   timeframe            String?   // Added timeframe
   commission           Float?    @default(0) // Entry commission rate (e.g., 0.0004 for 0.04%)
   pricePrecision       Int?      @default(4) @map("price_precision")
+  maxProfitPercent     Float?    @default(0) @map("max_profit_percent")
+  maxProfitAt          DateTime? @map("max_profit_at")
 
   @@map("positions")
 }

@@ -21,6 +21,7 @@ export async function GET(req: NextRequest) {
   const profitSoundEnabled = await prisma.setting.findUnique({ where: { key: 'profit_sound_enabled' } });
   const profitSoundFile = await prisma.setting.findUnique({ where: { key: 'profit_sound_file' } });
   const apiStopMode = await prisma.setting.findUnique({ where: { key: 'api_stop_mode' } });
+  const exhaustionGuardEnabled = await prisma.setting.findUnique({ where: { key: 'exhaustion_guard_enabled' } });
   
   return NextResponse.json({ 
     bot_enabled: botEnabled?.value || '1',
@@ -31,7 +32,8 @@ export async function GET(req: NextRequest) {
     leverage_value: leverageValue?.value || '1',
     profit_sound_enabled: profitSoundEnabled?.value || '0',
     profit_sound_file: profitSoundFile?.value || '',
-    api_stop_mode: apiStopMode?.value || 'signal'
+    api_stop_mode: apiStopMode?.value || 'signal',
+    exhaustion_guard_enabled: exhaustionGuardEnabled?.value || '0'
   });
 }
 
@@ -58,7 +60,8 @@ export async function POST(req: NextRequest) {
     { key: 'leverage_value', value: body.leverage_value },
     { key: 'profit_sound_enabled', value: body.profit_sound_enabled },
     { key: 'profit_sound_file', value: body.profit_sound_file },
-    { key: 'api_stop_mode', value: body.api_stop_mode }
+    { key: 'api_stop_mode', value: body.api_stop_mode },
+    { key: 'exhaustion_guard_enabled', value: body.exhaustion_guard_enabled }
   ];
 
   for (const setting of settingsToUpdate) {

@@ -79,6 +79,8 @@ interface Position {
   timeframe?: string | null;
   commission?: number;
   pricePrecision?: number | null;
+  maxProfitPercent?: number | null;
+  maxProfitAt?: string | null;
 }
 
 interface AuthUser {
@@ -538,6 +540,7 @@ export default function Dashboard() {
   const [bookmapExpanded, setBookmapExpanded] = useState(true);
   const [profitSoundEnabled, setProfitSoundEnabled] = useState(false);
   const [profitSoundFile, setProfitSoundFile] = useState('');
+  const [exhaustionGuardEnabled, setExhaustionGuardEnabled] = useState(false);
   const [availableSounds, setAvailableSounds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -820,6 +823,7 @@ export default function Dashboard() {
       setApiStopMode(settings.api_stop_mode === 'legacy' ? 'legacy' : 'signal');
       setProfitSoundEnabled(settings.profit_sound_enabled === '1');
       setProfitSoundFile(settings.profit_sound_file || '');
+      setExhaustionGuardEnabled(settings.exhaustion_guard_enabled === '1');
       
       // Parse last entry error
       if (settings.last_entry_error) {
@@ -1130,6 +1134,16 @@ export default function Dashboard() {
     audio.play().catch(() => {
       setErrorPopup('Unable to play the selected sound.');
     });
+  };
+
+  const toggleExhaustionGuard = async () => {
+    const nextValue = !exhaustionGuardEnabled;
+    try {
+      await apiClient.updateSettings({ exhaustion_guard_enabled: nextValue ? '1' : '0' });
+      setExhaustionGuardEnabled(nextValue);
+    } catch (error) {
+      setErrorPopup(getApiErrorMessage(error, 'Unable to update exhaustion guard.'));
+    }
   };
 
   const submitNewPosition = async () => {
@@ -1755,6 +1769,31 @@ export default function Dashboard() {
                     <AccountOverviewCard title="Live Account" modeData={accountOverview.live} accent="text-rose-400" />
                   </div>
                 ) : null}
+              </div>
+
+              <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.3em] text-amber-400">Trade Management</p>
+                    <h2 className="text-xl font-black uppercase tracking-tight text-white">Exhaustion Guard</h2>
+                    <p className="mt-2 text-xs text-slate-500">Optional demo-safe exit layer. It closes a winning trade if it reached at least +1.0%, stopped making new highs for 90 minutes, and already gave back 35% of its best open profit.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={toggleExhaustionGuard}
+                    className={cn(
+                      "rounded-xl border px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] transition-colors",
+                      exhaustionGuardEnabled
+                        ? "border-amber-400 bg-amber-400 text-slate-950"
+                        : "border-slate-700 bg-slate-950/40 text-slate-400"
+                    )}
+                  >
+                    {exhaustionGuardEnabled ? 'Guard On' : 'Guard Off'}
+                  </button>
+                </div>
+                <p className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-xs font-bold text-slate-300">
+                  Al apagarlo, el monitor vuelve al sistema actual de trailing y stop sin cierres extra por agotamiento.
+                </p>
               </div>
 
               <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-4">

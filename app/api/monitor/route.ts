@@ -5,7 +5,7 @@ import { writeAuditLog } from '@/lib/audit';
 import { fail, ok } from '@/lib/apiResponse';
 import { requireAuth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { 
+import {
   bitgetGetPrice, 
   bitgetGetPositions, 
   bitgetGetSinglePosition,
@@ -21,9 +21,15 @@ import {
 } from '@/lib/bitget';
 
 const MONITOR_INTERNAL_SECRET = process.env.MONITOR_INTERNAL_SECRET || '';
+const EXHAUSTION_MIN_MFE_PERCENT = 1.0;
+const EXHAUSTION_MIN_STAGNATION_MS = 90 * 60 * 1000;
+const EXHAUSTION_MIN_RETRACEMENT_RATIO = 0.35;
 
 async function runMonitor(req: NextRequest, actorUserId?: number) {
   const positions = await prisma.position.findMany({ where: { status: 'open' } });
+  const exhaustionGuardEnabled = (await prisma.setting.findUnique({
+    where: { key: 'exhaustion_guard_enabled' },
+  }))?.value === '1';
 
   if (positions.length === 0) {
     return ok({ results: [] }, 'No open positions to monitor.');
@@ -161,11 +167,36 @@ async function runMonitor(req: NextRequest, actorUserId?: number) {
     const marketMovePercent = pos.positionType === 'buy'
       ? ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100
       : ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100;
+    const previousMaxProfitPercent = Math.max(0, Number((pos as any).maxProfitPercent || 0));
+    const improvedMax = profitPercent > previousMaxProfitPercent;
+    const maxProfitPercent = improvedMax ? profitPercent : previousMaxProfitPercent;
+    const maxProfitAt = improvedMax
+      ? new Date()
+      : ((pos as any).maxProfitAt ? new Date((pos as any).maxProfitAt) : null);
+    const stagnationMs = maxProfitAt ? (Date.now() - maxProfitAt.getTime()) : 0;
+    const retracementRatio = maxProfitPercent > 0
+      ? Math.max(0, (maxProfitPercent - profitPercent) / maxProfitPercent)
+      : 0;
 
     let newSl = pos.stopLoss;
     let slTriggered = false;
+    let exhaustionTriggered = false;
 
-    if (pos.positionType === 'buy') {
+    if (
+      exhaustionGuardEnabled &&
+      maxProfitPercent >= EXHAUSTION_MIN_MFE_PERCENT &&
+      profitPercent > 0 &&
+      stagnationMs >= EXHAUSTION_MIN_STAGNATION_MS &&
+      retracementRatio >= EXHAUSTION_MIN_RETRACEMENT_RATIO
+    ) {
+      exhaustionTriggered = true;
+      results.push(
+        `EXHAUSTION_SIGNAL (${mode}): ${symbol} MFE ${maxProfitPercent.toFixed(2)}% | ` +
+        `actual ${profitPercent.toFixed(2)}% | estancada ${Math.floor(stagnationMs / 60000)}m`
+      );
+    }
+
+    if (!exhaustionTriggered && pos.positionType === 'buy') {
       if (currentPrice <= pos.stopLoss) {
         slTriggered = true;
       } else if (marketMovePercent >= 1) {
@@ -189,7 +220,7 @@ async function runMonitor(req: NextRequest, actorUserId?: number) {
           }
         }
       }
-    } else { // short
+    } else if (!exhaustionTriggered) { // short
       if (currentPrice >= pos.stopLoss) {
         slTriggered = true;
       } else if (marketMovePercent >= 1) {
@@ -215,7 +246,7 @@ async function runMonitor(req: NextRequest, actorUserId?: number) {
       }
     }
 
-    if (slTriggered) {
+    if (slTriggered || exhaustionTriggered) {
       const closeSide = (pos.positionType === 'buy' ? 'SELL' : 'BUY') as 'BUY' | 'SELL';
       await bitgetCancelAllOrders(symbol, mode);
       const closeResp = await bitgetClosePosition(symbol, closeSide, pos.quantity, mode);
@@ -228,9 +259,15 @@ async function runMonitor(req: NextRequest, actorUserId?: number) {
             closedAt: new Date(),
             profitLossPercent: profitPercent,
             profitLossFiat: profitFiat,
+            maxProfitPercent,
+            maxProfitAt,
           },
         });
-        results.push(`SL_CERRADA (${mode}): Position #${pos.id} (${symbol}) closed.`);
+        results.push(
+          exhaustionTriggered
+            ? `EXHAUSTION_CERRADA (${mode}): Position #${pos.id} (${symbol}) cerrada por agotamiento.`
+            : `SL_CERRADA (${mode}): Position #${pos.id} (${symbol}) closed.`
+        );
       }
     } else {
       await prisma.position.update({
@@ -239,6 +276,8 @@ async function runMonitor(req: NextRequest, actorUserId?: number) {
           stopLoss: newSl,
           profitLossPercent: profitPercent,
           profitLossFiat: profitFiat,
+          maxProfitPercent,
+          maxProfitAt,
         },
       });
       results.push(`OK (${mode}): #${pos.id} ${symbol} | Price: ${currentPrice} | PnL: ${profitPercent.toFixed(2)}%`);
