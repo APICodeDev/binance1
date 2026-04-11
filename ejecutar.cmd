@@ -2,7 +2,8 @@
 cls
 echo GENERANDO IMAGEN DOCKER...
 echo -----------------------------------
-docker-compose up -d --build 
+docker-compose up -d --build --force-recreate
 echo -----------------------------------
 echo FINALIZADO.
-@timeout 1
+@timeout 3
+exit

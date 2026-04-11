@@ -81,6 +81,19 @@ type AbsorptionSignal = {
   note: string;
 };
 
+type ZoneBehavior = {
+  side: 'support' | 'resistance';
+  price: number;
+  status: 'stacked' | 'holding' | 'pulling' | 'consumed' | 'fading';
+  persistenceScore: number;
+  latestIntensity: number;
+  averageIntensity: number;
+  changePercent: number;
+  tradePressure: number;
+  ageFrames: number;
+  note: string;
+};
+
 type SweepSide = 'long_sweep' | 'short_sweep';
 type SetupState = 'REJECTED' | 'WATCH' | 'CANDIDATE' | 'VALID' | 'EXECUTABLE';
 
@@ -973,6 +986,73 @@ const buildAbsorptionSignals = (
     .slice(0, 4);
 };
 
+const buildZoneDiagnostics = ({
+  state,
+  zones,
+  side,
+  heatmapStep,
+}: {
+  state: SymbolState;
+  zones: ZoneSummary[];
+  side: 'support' | 'resistance';
+  heatmapStep: number;
+}): ZoneBehavior[] => {
+  const frames = state.heatmapFrames.slice(-Math.min(10, HEATMAP_MAX_FRAMES));
+  const trades = state.trades.slice(-ABSORPTION_LOOKBACK_TRADES);
+
+  return zones.map((zone) => {
+    const bucketKey = roundToStep(zone.price, heatmapStep).toFixed(8);
+    const values = frames.map((frame) => frame.buckets[bucketKey] || 0);
+    const latestIntensity = values[values.length - 1] || 0;
+    const averageIntensity = values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+    const presenceCount = values.filter((value) => value > 0).length;
+    const persistenceScore = clampScore(values.length > 0 ? (presenceCount / values.length) * 100 : 0);
+    const changePercent = averageIntensity > 0 ? ((latestIntensity - averageIntensity) / averageIntensity) * 100 : 0;
+    const nearTrades = trades.filter((trade) =>
+      Math.abs((trade.price - zone.price) / Math.max(zone.price, 1)) * 100 <= 0.08 &&
+      (side === 'support' ? trade.side === 'sell' : trade.side === 'buy')
+    );
+    const tradePressure = nearTrades.reduce((sum, trade) => sum + trade.size, 0);
+
+    let status: ZoneBehavior['status'] = 'holding';
+    if (persistenceScore >= 70 && changePercent >= 10) {
+      status = 'stacked';
+    } else if (persistenceScore >= 55 && changePercent > -25) {
+      status = 'holding';
+    } else if (changePercent <= -55 && tradePressure > 0) {
+      status = 'consumed';
+    } else if (changePercent <= -35) {
+      status = 'pulling';
+    } else {
+      status = 'fading';
+    }
+
+    const note =
+      status === 'stacked'
+        ? `La pared en ${zone.price.toFixed(4)} sigue creciendo y se mantiene visible`
+        : status === 'holding'
+          ? `La pared en ${zone.price.toFixed(4)} sigue defendida`
+          : status === 'pulling'
+            ? `La liquidez en ${zone.price.toFixed(4)} se esta retirando`
+            : status === 'consumed'
+              ? `La liquidez en ${zone.price.toFixed(4)} esta siendo consumida por agresion`
+              : `La liquidez en ${zone.price.toFixed(4)} pierde presencia`;
+
+    return {
+      side,
+      price: Number(zone.price.toFixed(8)),
+      status,
+      persistenceScore,
+      latestIntensity: Number(latestIntensity.toFixed(2)),
+      averageIntensity: Number(averageIntensity.toFixed(2)),
+      changePercent: Number(changePercent.toFixed(2)),
+      tradePressure: Number(tradePressure.toFixed(4)),
+      ageFrames: presenceCount,
+      note,
+    };
+  });
+};
+
 const clampScore = (value: number) => Number(Math.max(0, Math.min(100, value)).toFixed(2));
 
 const findClosestZone = (zones: ZoneSummary[], lastPrice: number) =>
@@ -984,18 +1064,24 @@ const detectSweepEvent = ({
   state,
   supports,
   resistances,
+  supportDiagnostics,
+  resistanceDiagnostics,
   lastPrice,
   mid,
 }: {
   state: SymbolState;
   supports: ZoneSummary[];
   resistances: ZoneSummary[];
+  supportDiagnostics: ZoneBehavior[];
+  resistanceDiagnostics: ZoneBehavior[];
   lastPrice: number;
   mid: number;
 }): SweepEvent => {
   const trades = state.trades.slice(-ABSORPTION_LOOKBACK_TRADES);
   const nearestSupport = findClosestZone(supports, lastPrice);
   const nearestResistance = findClosestZone(resistances, lastPrice);
+  const nearestSupportDiagnostic = supportDiagnostics.find((zone) => zone.price === nearestSupport?.price) || null;
+  const nearestResistanceDiagnostic = resistanceDiagnostics.find((zone) => zone.price === nearestResistance?.price) || null;
   const notes: string[] = [];
 
   const supportSellTrades = nearestSupport
@@ -1031,17 +1117,23 @@ const detectSweepEvent = ({
 
   const longSweepDetected = Boolean(
     nearestSupport &&
+    nearestSupportDiagnostic &&
     supportSellTrades.length >= 3 &&
     longAggressiveVolume > 0 &&
     longPenetration >= 0.01 &&
-    longReclaim >= 0.01
+    longReclaim >= 0.01 &&
+    nearestSupportDiagnostic.persistenceScore >= 45 &&
+    nearestSupportDiagnostic.status !== 'pulling'
   );
   const shortSweepDetected = Boolean(
     nearestResistance &&
+    nearestResistanceDiagnostic &&
     resistanceBuyTrades.length >= 3 &&
     shortAggressiveVolume > 0 &&
     shortPenetration >= 0.01 &&
-    shortReclaim >= 0.01
+    shortReclaim >= 0.01 &&
+    nearestResistanceDiagnostic.persistenceScore >= 45 &&
+    nearestResistanceDiagnostic.status !== 'pulling'
   );
 
   if (!longSweepDetected && !shortSweepDetected) {
@@ -1062,6 +1154,9 @@ const detectSweepEvent = ({
 
   if (pickLong && nearestSupport) {
     notes.push(`Barrido de longs bajo ${nearestSupport.price.toFixed(4)} y recuperacion posterior`);
+    if (nearestSupportDiagnostic) {
+      notes.push(nearestSupportDiagnostic.note);
+    }
     return {
       detected: true,
       side: 'long_sweep',
@@ -1076,6 +1171,9 @@ const detectSweepEvent = ({
   }
 
   notes.push(`Barrido de shorts sobre ${nearestResistance?.price.toFixed(4)} y giro bajista posterior`);
+  if (nearestResistanceDiagnostic) {
+    notes.push(nearestResistanceDiagnostic.note);
+  }
   return {
     detected: true,
     side: 'short_sweep',
@@ -1095,6 +1193,8 @@ const assessReversal = ({
   absorptionSignals,
   supports,
   resistances,
+  supportDiagnostics,
+  resistanceDiagnostics,
   lastPrice,
 }: {
   state: SymbolState;
@@ -1102,6 +1202,8 @@ const assessReversal = ({
   absorptionSignals: AbsorptionSignal[];
   supports: ZoneSummary[];
   resistances: ZoneSummary[];
+  supportDiagnostics: ZoneBehavior[];
+  resistanceDiagnostics: ZoneBehavior[];
   lastPrice: number;
 }): ReversalAssessment => {
   const recentTrades = state.trades.slice(-ABSORPTION_LOOKBACK_TRADES);
@@ -1114,6 +1216,9 @@ const assessReversal = ({
   const defendedZone = sweep.side === 'long_sweep'
     ? supports.find((zone) => zone.price === sweep.sweptZonePrice)
     : resistances.find((zone) => zone.price === sweep.sweptZonePrice);
+  const defendedDiagnostic = sweep.side === 'long_sweep'
+    ? supportDiagnostics.find((zone) => zone.price === sweep.sweptZonePrice)
+    : resistanceDiagnostics.find((zone) => zone.price === sweep.sweptZonePrice);
   const notes = [...sweep.notes];
 
   const absorptionStrength = clampScore((matchingAbsorption?.confidence || 0) * 100);
@@ -1131,11 +1236,15 @@ const assessReversal = ({
   );
   const microStructureShiftScore = clampScore(
     (defendedZone?.exchangeCount || 0) * 20 +
-    Math.min(35, Math.abs(imbalance) * 100)
+    Math.min(35, Math.abs(imbalance) * 100) +
+    Math.max(0, defendedDiagnostic?.persistenceScore || 0) * 0.15
   );
 
   if (matchingAbsorption) {
     notes.push(matchingAbsorption.note);
+  }
+  if (defendedDiagnostic) {
+    notes.push(defendedDiagnostic.note);
   }
 
   const confirmed =
@@ -1164,12 +1273,16 @@ const assessTargetZone = ({
   sweep,
   supports,
   resistances,
+  supportDiagnostics,
+  resistanceDiagnostics,
   lastPrice,
   mid,
 }: {
   sweep: SweepEvent;
   supports: ZoneSummary[];
   resistances: ZoneSummary[];
+  supportDiagnostics: ZoneBehavior[];
+  resistanceDiagnostics: ZoneBehavior[];
   lastPrice: number;
   mid: number;
 }): TargetAssessment => {
@@ -1192,12 +1305,21 @@ const assessTargetZone = ({
     ? resistances.filter((zone) => zone.price > lastPrice)
     : supports.filter((zone) => zone.price < lastPrice);
   const targetZone = candidateZones[0] || null;
-  const blockingZone = candidateZones.length > 1 ? candidateZones[1] : null;
+  const diagnosticPool = sweep.side === 'long_sweep' ? resistanceDiagnostics : supportDiagnostics;
+  const blockingZone = candidateZones.find((zone) => {
+    if (!targetZone || zone.price === targetZone.price) {
+      return false;
+    }
+    const diagnostic = diagnosticPool.find((item) => item.price === zone.price);
+    return Boolean(diagnostic && (diagnostic.status === 'stacked' || diagnostic.status === 'holding'));
+  }) || null;
   const movePercent = targetZone ? Math.abs((targetZone.price - lastPrice) / Math.max(lastPrice, 1)) * 100 : 0;
+  const targetDiagnostic = targetZone ? diagnosticPool.find((item) => item.price === targetZone.price) || null : null;
+  const blockingDiagnostic = blockingZone ? diagnosticPool.find((item) => item.price === blockingZone.price) || null : null;
   const pathBlocked = Boolean(
     targetZone &&
     blockingZone &&
-    blockingZone.totalNotional >= targetZone.totalNotional * 0.82 &&
+    (blockingZone.totalNotional >= targetZone.totalNotional * 0.82 || (blockingDiagnostic?.persistenceScore || 0) >= 70) &&
     Math.abs((blockingZone.price - lastPrice) / lastPrice) * 100 < movePercent * 0.65
   );
 
@@ -1217,7 +1339,8 @@ const assessTargetZone = ({
 
   const targetZoneStrength = clampScore(
     Math.min(70, targetZone.exchangeCount * 18) +
-    Math.min(30, targetZone.totalNotional / Math.max(mid * 8, 1))
+    Math.min(30, targetZone.totalNotional / Math.max(mid * 8, 1)) +
+    (targetDiagnostic?.persistenceScore || 0) * 0.12
   );
   const pathClarityScore = clampScore(pathBlocked ? 18 : Math.max(35, 92 - candidateZones.length * 8));
   const zoneDistanceScore = clampScore(movePercent >= MIN_TARGET_MOVE_PERCENT ? Math.min(100, movePercent * 45) : movePercent * 35);
@@ -1384,15 +1507,27 @@ const decideSetup = ({
   target,
   economics,
   score,
+  trigger,
+  absorptionSignals,
+  supportDiagnostics,
+  resistanceDiagnostics,
 }: {
   sweep: SweepEvent;
   reversal: ReversalAssessment;
   target: TargetAssessment;
   economics: EconomicsAssessment;
   score: ScoreBreakdown;
+  trigger: ReturnType<typeof buildTrigger>;
+  absorptionSignals: AbsorptionSignal[];
+  supportDiagnostics: ZoneBehavior[];
+  resistanceDiagnostics: ZoneBehavior[];
 }): SetupDecision => {
   const hardRejectReasons: string[] = [];
   const reasons: string[] = [];
+  const bullishAbsorption = absorptionSignals.find((signal) => signal.side === 'bullish') || null;
+  const bearishAbsorption = absorptionSignals.find((signal) => signal.side === 'bearish') || null;
+  const topSupportWall = supportDiagnostics[0] || null;
+  const topResistanceWall = resistanceDiagnostics[0] || null;
 
   if (!sweep.detected) hardRejectReasons.push('No sweep detected');
   if (!reversal.confirmed) hardRejectReasons.push('Reversal not confirmed');
@@ -1403,9 +1538,62 @@ const decideSetup = ({
 
   reasons.push(...sweep.notes, ...reversal.notes, ...target.notes, ...economics.notes);
 
+  const watchLongContext = (
+    (trigger.bias === 'long' && trigger.confidence >= 0.38) ||
+    (bullishAbsorption !== null && bullishAbsorption.confidence >= 0.58) ||
+    (topSupportWall !== null && ['stacked', 'holding'].includes(topSupportWall.status) && topSupportWall.persistenceScore >= 55)
+  );
+  const watchShortContext = (
+    (trigger.bias === 'short' && trigger.confidence >= 0.38) ||
+    (bearishAbsorption !== null && bearishAbsorption.confidence >= 0.58) ||
+    (topResistanceWall !== null && ['stacked', 'holding'].includes(topResistanceWall.status) && topResistanceWall.persistenceScore >= 55)
+  );
+
+  const watchSetupType: SetupDecision['setupType'] =
+    sweep.side === 'long_sweep'
+      ? 'LONG_SWEEP_REVERSAL'
+      : sweep.side === 'short_sweep'
+        ? 'SHORT_SWEEP_REVERSAL'
+        : watchLongContext && !watchShortContext
+          ? 'LONG_SWEEP_REVERSAL'
+          : watchShortContext && !watchLongContext
+            ? 'SHORT_SWEEP_REVERSAL'
+            : trigger.bias === 'long'
+              ? 'LONG_SWEEP_REVERSAL'
+              : trigger.bias === 'short'
+                ? 'SHORT_SWEEP_REVERSAL'
+                : 'NONE';
+
+  const contextualWatch =
+    watchSetupType !== 'NONE' &&
+    (
+      sweep.detected ||
+      reversal.absorptionStrength >= 38 ||
+      Math.max(trigger.confidence, score.probabilityToTarget) >= 0.38
+    );
+
+  if (contextualWatch && (hardRejectReasons.length > 0 || score.finalScore < 60)) {
+    if (!sweep.detected) {
+      reasons.push('Watch: hay contexto microestructural, pero aun falta barrido limpio');
+    } else if (!reversal.confirmed) {
+      reasons.push('Watch: el barrido existe, pero el reversal aun no confirma');
+    } else if (!target.targetZoneFound) {
+      reasons.push('Watch: la idea existe, pero todavia no aparece un target limpio');
+    } else {
+      reasons.push('Watch: la idea esta viva, pero aun no compensa ejecutarla');
+    }
+
+    return {
+      setupType: watchSetupType,
+      state: 'WATCH',
+      hardRejectReasons: [],
+      reasons,
+    };
+  }
+
   if (hardRejectReasons.length > 0 || score.finalScore < 45) {
     return {
-      setupType: sweep.side === 'long_sweep' ? 'LONG_SWEEP_REVERSAL' : sweep.side === 'short_sweep' ? 'SHORT_SWEEP_REVERSAL' : 'NONE',
+      setupType: watchSetupType,
       state: 'REJECTED',
       hardRejectReasons,
       reasons,
@@ -1422,7 +1610,7 @@ const decideSetup = ({
   }
 
   return {
-    setupType: sweep.side === 'long_sweep' ? 'LONG_SWEEP_REVERSAL' : 'SHORT_SWEEP_REVERSAL',
+    setupType: watchSetupType,
     state,
     hardRejectReasons,
     reasons,
@@ -1433,6 +1621,8 @@ const buildLiquiditySetupModel = ({
   state,
   supports,
   resistances,
+  supportDiagnostics,
+  resistanceDiagnostics,
   absorptionSignals,
   lastPrice,
   mid,
@@ -1441,17 +1631,30 @@ const buildLiquiditySetupModel = ({
   state: SymbolState;
   supports: ZoneSummary[];
   resistances: ZoneSummary[];
+  supportDiagnostics: ZoneBehavior[];
+  resistanceDiagnostics: ZoneBehavior[];
   absorptionSignals: AbsorptionSignal[];
   lastPrice: number;
   mid: number;
   signalStep: number;
 }): LiquiditySetupModel => {
-  const sweep = detectSweepEvent({ state, supports, resistances, lastPrice, mid });
-  const reversal = assessReversal({ state, sweep, absorptionSignals, supports, resistances, lastPrice });
-  const target = assessTargetZone({ sweep, supports, resistances, lastPrice, mid });
+  const sweep = detectSweepEvent({ state, supports, resistances, supportDiagnostics, resistanceDiagnostics, lastPrice, mid });
+  const reversal = assessReversal({ state, sweep, absorptionSignals, supports, resistances, supportDiagnostics, resistanceDiagnostics, lastPrice });
+  const target = assessTargetZone({ sweep, supports, resistances, supportDiagnostics, resistanceDiagnostics, lastPrice, mid });
   const economics = assessEconomics({ sweep, target, lastPrice, signalStep });
   const score = buildScoreBreakdown({ sweep, reversal, target, economics });
-  const decision = decideSetup({ sweep, reversal, target, economics, score });
+  const trigger = buildTrigger(state, mid, supports, resistances);
+  const decision = decideSetup({
+    sweep,
+    reversal,
+    target,
+    economics,
+    score,
+    trigger,
+    absorptionSignals,
+    supportDiagnostics,
+    resistanceDiagnostics,
+  });
 
   return { sweep, reversal, target, economics, score, decision };
 };
@@ -1719,11 +1922,25 @@ const buildSummary = (rawSymbol: string) => {
   const heatmapTrades = buildHeatmapTradeOverlay(heatmap.rows, heatmap.columns, state.trades);
   const lastPrice = state.lastPrice || mid;
   const absorptionSignals = buildAbsorptionSignals(state, supports, resistances, lastPrice);
+  const supportDiagnostics = buildZoneDiagnostics({
+    state,
+    zones: supports,
+    side: 'support',
+    heatmapStep: heatmap.step || getHeatmapStep(mid || 1),
+  });
+  const resistanceDiagnostics = buildZoneDiagnostics({
+    state,
+    zones: resistances,
+    side: 'resistance',
+    heatmapStep: heatmap.step || getHeatmapStep(mid || 1),
+  });
   const signalStep = getSignalStep(lastPrice || mid || 1);
   const liquiditySetup = buildLiquiditySetupModel({
     state,
     supports,
     resistances,
+    supportDiagnostics,
+    resistanceDiagnostics,
     absorptionSignals,
     lastPrice,
     mid,
@@ -1765,6 +1982,10 @@ const buildSummary = (rawSymbol: string) => {
     heatmap,
     heatmapTrades,
     absorptionSignals,
+    zoneDiagnostics: {
+      supports: supportDiagnostics,
+      resistances: resistanceDiagnostics,
+    },
     liquiditySetup,
     preSignal,
     trigger,

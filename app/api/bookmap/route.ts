@@ -4,6 +4,7 @@ import axios from 'axios';
 import { NextRequest } from 'next/server';
 import { ok, fail } from '@/lib/apiResponse';
 import { requireAuth } from '@/lib/auth';
+import { prisma } from '@/lib/db';
 
 const BOOKMAP_SERVICE_URL = (process.env.BOOKMAP_WS_SERVICE_URL || 'http://127.0.0.1:8788').replace(/\/$/, '');
 
@@ -18,6 +19,76 @@ const getBitgetProductType = (symbol: string) => {
 const parseNumber = (value: unknown) => {
   const parsed = Number.parseFloat(String(value));
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+const applyPaperCalibration = async (summary: any) => {
+  const setupType = summary?.liquiditySetup?.decision?.setupType;
+  const bias = summary?.preSignal?.bias;
+  const symbol = summary?.symbol;
+
+  if (!summary || !setupType || setupType === 'NONE' || !symbol || bias === 'neutral') {
+    summary.paperCalibration = {
+      sampleSize: 0,
+      setupWinRate: null,
+      symbolWinRate: null,
+      adjustment: 0,
+      note: 'No hay setup calibrable todavia',
+    };
+    return summary;
+  }
+
+  const recent = await prisma.heatmapPaperTrade.findMany({
+    where: {
+      status: 'closed',
+      source: 'Heatmap',
+      symbol,
+      side: bias === 'long' ? 'buy' : 'sell',
+    },
+    orderBy: { closedAt: 'desc' },
+    take: 40,
+  });
+
+  if (recent.length < 6) {
+    summary.paperCalibration = {
+      sampleSize: recent.length,
+      setupWinRate: null,
+      symbolWinRate: null,
+      adjustment: 0,
+      note: 'Muestra paper aun demasiado pequena para recalibrar',
+    };
+    return summary;
+  }
+
+  const wins = recent.filter((trade) => (trade.profitLossFiat || 0) > 0).length;
+  const symbolWinRate = wins / recent.length;
+  const targetHits = recent.filter((trade) => trade.exitReason === 'target').length;
+  const setupWinRate = targetHits / recent.length;
+  const rawAdjustment = ((symbolWinRate - 0.5) * 0.08) + ((setupWinRate - 0.5) * 0.06);
+  const adjustment = clamp(Number(rawAdjustment.toFixed(3)), -0.08, 0.08);
+
+  summary.paperCalibration = {
+    sampleSize: recent.length,
+    setupWinRate: Number((setupWinRate * 100).toFixed(1)),
+    symbolWinRate: Number((symbolWinRate * 100).toFixed(1)),
+    adjustment,
+    note: adjustment >= 0
+      ? 'El historial paper reciente esta apoyando este tipo de idea'
+      : 'El historial paper reciente esta penalizando este tipo de idea',
+  };
+
+  if (summary.liquiditySetup?.score) {
+    const newProbability = clamp((summary.liquiditySetup.score.probabilityToTarget || 0) + adjustment, 0.05, 0.95);
+    summary.liquiditySetup.score.probabilityToTarget = Number(newProbability.toFixed(2));
+    summary.liquiditySetup.score.finalScore = Number(clamp((summary.liquiditySetup.score.finalScore || 0) + adjustment * 100 * 0.35, 0, 100).toFixed(2));
+  }
+
+  if (summary.preSignal) {
+    summary.preSignal.confidence = Number(clamp((summary.preSignal.confidence || 0) + adjustment, 0.05, 0.99).toFixed(2));
+  }
+
+  return summary;
 };
 
 const buildZoneList = (
@@ -216,6 +287,10 @@ async function buildFallbackSummary(symbol: string) {
     },
     heatmapTrades: [],
     absorptionSignals: [],
+    zoneDiagnostics: {
+      supports: [],
+      resistances: [],
+    },
     liquiditySetup: {
       sweep: {
         detected: false,
@@ -273,6 +348,13 @@ async function buildFallbackSummary(symbol: string) {
         reasons: ['Modo degradado REST sin profundidad suficiente para decidir sweep/reversal/target'],
       },
     },
+    paperCalibration: {
+      sampleSize: 0,
+      setupWinRate: null,
+      symbolWinRate: null,
+      adjustment: 0,
+      note: 'Modo degradado REST sin calibracion paper',
+    },
     preSignal: {
       actionable: false,
       bias: 'neutral',
@@ -320,11 +402,13 @@ export async function GET(req: NextRequest) {
       timeout: 2200,
     });
 
-    return ok(response.data);
+    const calibrated = await applyPaperCalibration(response.data);
+    return ok(calibrated);
   } catch (error: any) {
     try {
       const fallback = await buildFallbackSummary(symbol);
-      return ok(fallback, 'Bookmap fallback loaded');
+      const calibratedFallback = await applyPaperCalibration(fallback);
+      return ok(calibratedFallback, 'Bookmap fallback loaded');
     } catch (fallbackError: any) {
       const detail = fallbackError?.response?.data?.message || fallbackError?.message || error?.response?.data?.message || error?.message || 'Bookmap service unavailable';
       return fail(503, 'Unable to load bookmap summary', detail);

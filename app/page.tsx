@@ -58,6 +58,8 @@ const AVAILABLE_SYMBOLS = [
   'XRPUSDT',
 ];
 
+const BOOKMAP_SYMBOL_STORAGE_KEY = 'bookmap:last-symbol';
+
 // Typing for positions from API
 interface Position {
   id: number;
@@ -289,6 +291,32 @@ interface BookmapSummary {
     tradeCount: number;
     note: string;
   }>;
+  zoneDiagnostics: {
+    supports: Array<{
+      side: 'support' | 'resistance';
+      price: number;
+      status: 'stacked' | 'holding' | 'pulling' | 'consumed' | 'fading';
+      persistenceScore: number;
+      latestIntensity: number;
+      averageIntensity: number;
+      changePercent: number;
+      tradePressure: number;
+      ageFrames: number;
+      note: string;
+    }>;
+    resistances: Array<{
+      side: 'support' | 'resistance';
+      price: number;
+      status: 'stacked' | 'holding' | 'pulling' | 'consumed' | 'fading';
+      persistenceScore: number;
+      latestIntensity: number;
+      averageIntensity: number;
+      changePercent: number;
+      tradePressure: number;
+      ageFrames: number;
+      note: string;
+    }>;
+  };
   liquiditySetup: {
     sweep: {
       detected: boolean;
@@ -345,6 +373,13 @@ interface BookmapSummary {
       hardRejectReasons: string[];
       reasons: string[];
     };
+  };
+  paperCalibration?: {
+    sampleSize: number;
+    setupWinRate: number | null;
+    symbolWinRate: number | null;
+    adjustment: number;
+    note: string;
   };
   preSignal: {
     actionable: boolean;
@@ -623,6 +658,11 @@ export default function Dashboard() {
       return;
     }
 
+    const savedBookmapSymbol = window.localStorage.getItem(BOOKMAP_SYMBOL_STORAGE_KEY);
+    if (savedBookmapSymbol && AVAILABLE_SYMBOLS.includes(savedBookmapSymbol)) {
+      setBookmapSymbol(savedBookmapSymbol);
+    }
+
     const updateTradeLogsLayout = () => {
       const phonePortrait = window.innerWidth < 768 && window.innerHeight > window.innerWidth;
       setIsPhonePortrait(phonePortrait);
@@ -633,6 +673,14 @@ export default function Dashboard() {
     window.addEventListener('resize', updateTradeLogsLayout);
     return () => window.removeEventListener('resize', updateTradeLogsLayout);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !bookmapSymbol) {
+      return;
+    }
+
+    window.localStorage.setItem(BOOKMAP_SYMBOL_STORAGE_KEY, bookmapSymbol);
+  }, [bookmapSymbol]);
 
   const fetchAuth = useCallback(async () => {
     setAuthLoading(true);
@@ -3068,6 +3116,8 @@ function HeatmapChart({ data }: { data: BookmapSummary | null }) {
   const overlayTrades = data?.heatmapTrades || [];
   const supportZones = data?.zones.supports || [];
   const resistanceZones = data?.zones.resistances || [];
+  const supportDiagnostics = data?.zoneDiagnostics.supports || [];
+  const resistanceDiagnostics = data?.zoneDiagnostics.resistances || [];
 
   if (rows.length === 0 || columns.length === 0 || cells.length === 0) {
     return (
@@ -3111,6 +3161,7 @@ function HeatmapChart({ data }: { data: BookmapSummary | null }) {
       label: `BUY ${zone.price.toFixed(4)}`,
       price: zone.price,
       strength: zone.totalNotional,
+      status: supportDiagnostics.find((item) => item.price === zone.price)?.status || 'holding',
     })),
     ...resistanceZones.map((zone) => ({
       type: 'resistance' as const,
@@ -3118,6 +3169,7 @@ function HeatmapChart({ data }: { data: BookmapSummary | null }) {
       label: `SELL ${zone.price.toFixed(4)}`,
       price: zone.price,
       strength: zone.totalNotional,
+      status: resistanceDiagnostics.find((item) => item.price === zone.price)?.status || 'holding',
     })),
   ]
     .sort((a, b) => b.strength - a.strength)
@@ -3132,6 +3184,8 @@ function HeatmapChart({ data }: { data: BookmapSummary | null }) {
   const latestProfile = rows.map((_, rowIndex) => cells[rowIndex]?.[columns.length - 1] ?? 0);
   const latestProfileMax = Math.max(...latestProfile, 0.0001);
   const currentMid = mids[mids.length - 1] ?? data?.composite.mid ?? rows[Math.floor(rows.length / 2)];
+  const activeSweepRow = data?.liquiditySetup.sweep.sweptZonePrice ? findRowIndex(data.liquiditySetup.sweep.sweptZonePrice) : null;
+  const targetRow = data?.liquiditySetup.target.targetZonePrice ? findRowIndex(data.liquiditySetup.target.targetZonePrice) : null;
   const pricePathPoints = priceLine
     .map((rowIndex, columnIndex) => `${((columnIndex + 0.5) / columns.length) * 100},${((rowIndex + 0.5) / rows.length) * 100}`)
     .join(' ');
@@ -3185,12 +3239,32 @@ function HeatmapChart({ data }: { data: BookmapSummary | null }) {
                 <div
                   className={cn(
                     "w-full rounded-full",
-                    band.type === 'support' ? 'bg-emerald-300/75' : 'bg-rose-300/75'
+                    band.type === 'support'
+                      ? band.status === 'pulling'
+                        ? 'bg-emerald-500/40'
+                        : band.status === 'consumed'
+                          ? 'bg-amber-300/70'
+                          : 'bg-emerald-300/75'
+                      : band.status === 'pulling'
+                        ? 'bg-rose-500/40'
+                        : band.status === 'consumed'
+                          ? 'bg-amber-300/70'
+                          : 'bg-rose-300/75'
                   )}
                   style={{ height: `${band.strength > 500000 ? 6 : band.strength > 150000 ? 4 : 2}px` }}
                 />
               </div>
             ))}
+            {activeSweepRow !== null && (
+              <div className="col-span-full flex items-center" style={{ gridColumn: `1 / span ${columns.length}`, gridRow: activeSweepRow + 1 }}>
+                <div className="h-[2px] w-full border-t border-dashed border-amber-300/90" />
+              </div>
+            )}
+            {targetRow !== null && (
+              <div className="col-span-full flex items-center" style={{ gridColumn: `1 / span ${columns.length}`, gridRow: targetRow + 1 }}>
+                <div className="h-[2px] w-full border-t border-dashed border-cyan-300/90" />
+              </div>
+            )}
           </div>
 
           <div
@@ -3305,6 +3379,28 @@ function HeatmapChart({ data }: { data: BookmapSummary | null }) {
         <span className="text-center">max intensity {data?.heatmap.maxIntensity.toFixed(0) || 0}</span>
         <span className="text-right">Resistances: {visibleResistances.length ? visibleResistances.join(' · ') : '-'}</span>
       </div>
+      <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-black uppercase tracking-[0.18em]">
+        {supportDiagnostics.slice(0, 2).map((zone) => (
+          <span key={`support-state-${zone.price}`} className="rounded-full border border-emerald-800/50 bg-emerald-950/20 px-3 py-1 text-emerald-200">
+            Buy {zone.price.toFixed(4)} {zone.status}
+          </span>
+        ))}
+        {resistanceDiagnostics.slice(0, 2).map((zone) => (
+          <span key={`resistance-state-${zone.price}`} className="rounded-full border border-rose-800/50 bg-rose-950/20 px-3 py-1 text-rose-200">
+            Sell {zone.price.toFixed(4)} {zone.status}
+          </span>
+        ))}
+        {data?.liquiditySetup.sweep.sweptZonePrice && (
+          <span className="rounded-full border border-amber-700/50 bg-amber-950/20 px-3 py-1 text-amber-200">
+            Sweep {data.liquiditySetup.sweep.sweptZonePrice.toFixed(4)}
+          </span>
+        )}
+        {data?.liquiditySetup.target.targetZonePrice && (
+          <span className="rounded-full border border-cyan-700/50 bg-cyan-950/20 px-3 py-1 text-cyan-200">
+            Target {data.liquiditySetup.target.targetZonePrice.toFixed(4)}
+          </span>
+        )}
+      </div>
       <div className="mt-2 flex items-center justify-between gap-3 text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
         <span>{new Date(columns[0]).toLocaleTimeString()}</span>
         <span>{new Date(columns[columns.length - 1]).toLocaleTimeString()}</span>
@@ -3396,7 +3492,7 @@ function BookmapPanel({
 
       {expanded ? (
       <div className="mt-6 grid gap-4">
-        <div className="grid gap-4">
+        <div className="grid gap-4 2xl:grid-cols-2">
           <div className="rounded-2xl border border-cyan-900/40 bg-cyan-950/10 p-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div>
@@ -3504,6 +3600,14 @@ function BookmapPanel({
                 </span>
               ))}
             </div>
+            {data?.paperCalibration && (
+              <p className="mt-3 text-xs font-bold text-slate-400">
+                Paper adj {data.paperCalibration.adjustment >= 0 ? '+' : ''}{(data.paperCalibration.adjustment * 100).toFixed(1)} pts
+                {data.paperCalibration.sampleSize > 0
+                  ? ` · sample ${data.paperCalibration.sampleSize} · symbol win ${data.paperCalibration.symbolWinRate?.toFixed(1) || 0}%`
+                  : ''}
+              </p>
+            )}
           </div>
 
           <div className={cn(
@@ -3622,7 +3726,7 @@ function BookmapPanel({
             </div>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-3 2xl:col-span-2">
             <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Composite Mid</p>
               <p className="mt-2 text-2xl font-black text-white">
@@ -3657,7 +3761,9 @@ function BookmapPanel({
             </div>
           </div>
 
-          <HeatmapChart data={data} />
+          <div className="2xl:col-span-2">
+            <HeatmapChart data={data} />
+          </div>
 
           <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
             <div className="flex items-center justify-between gap-3">
@@ -3767,7 +3873,7 @@ function BookmapPanel({
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 2xl:col-span-2">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-black uppercase tracking-[0.2em] text-white">Paper Analytics</p>
@@ -3876,7 +3982,7 @@ function BookmapPanel({
             </div>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid gap-4 lg:grid-cols-2 2xl:col-span-2">
             <div className="rounded-2xl border border-emerald-900/40 bg-emerald-950/10 p-4">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm font-black uppercase tracking-[0.2em] text-emerald-300">Nearest Buy Wall</p>
