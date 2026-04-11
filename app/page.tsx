@@ -2599,6 +2599,7 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
 function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position) => void }) {
   const isBuy = pos.positionType === 'buy';
   const comm = pos.commission ?? 0.0006;
+  const LEGACY_STOP_PERCENT = 1.2;
   const entryCost = pos.entryPrice * pos.quantity * comm;
   const exitCost = pos.stopLoss * pos.quantity * comm;
   const grossPercent = pos.profitLossPercent;
@@ -2608,6 +2609,12 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
   const pnlSafe = isBuy 
     ? ((pos.stopLoss - pos.entryPrice) * pos.quantity) - entryCost - exitCost
     : ((pos.entryPrice - pos.stopLoss) * pos.quantity) - entryCost - exitCost;
+  const stopDistancePercent = pos.entryPrice > 0
+    ? ((pos.stopLoss - pos.entryPrice) / pos.entryPrice) * 100
+    : 0;
+  const riskDistancePercent = isBuy ? -stopDistancePercent : stopDistancePercent;
+  const isLegacyStop = Math.abs(Math.abs(riskDistancePercent) - LEGACY_STOP_PERCENT) < 0.05;
+  const stopAdjustedByApp = !isLegacyStop;
   
   const isSafe = pnlSafe > 0;
   const isBreakeven = Math.abs(pnlSafe) < 0.05;
@@ -2687,6 +2694,12 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
           <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider">Stop Target</p>
           <p className={cn("text-sm font-mono", isSafe ? "text-emerald-400" : "text-rose-400/80")}>
             {formatPrice(pos.stopLoss, pos.pricePrecision)}
+          </p>
+          <p className={cn("text-[11px] font-black uppercase tracking-[0.15em]", stopAdjustedByApp ? "text-cyan-300" : "text-slate-500")}>
+            {stopDistancePercent > 0 ? '+' : ''}{stopDistancePercent.toFixed(2)}% vs entry
+          </p>
+          <p className={cn("text-[10px] font-black uppercase tracking-[0.18em]", stopAdjustedByApp ? "text-cyan-300" : "text-slate-600")}>
+            {stopAdjustedByApp ? 'Adapted By App' : 'Legacy 1.2% Default'}
           </p>
         </div>
       </div>
