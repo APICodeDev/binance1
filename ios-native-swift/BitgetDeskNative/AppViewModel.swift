@@ -30,6 +30,7 @@ final class AppViewModel: ObservableObject {
 
     private let api = APIClient.shared
     private var refreshTask: Task<Void, Never>?
+    private var refreshTick = 0
 
     init() {
         if token != nil {
@@ -295,11 +296,18 @@ final class AppViewModel: ObservableObject {
 
     func startAutoRefresh() {
         refreshTask?.cancel()
+        refreshTick = 0
         refreshTask = Task {
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 8_000_000_000)
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
                 if Task.isCancelled { break }
-                await refreshAll()
+                await runMonitor()
+                refreshTick += 1
+                if refreshTick % 6 == 0 {
+                    await refreshAll()
+                } else {
+                    await loadSettings()
+                }
             }
         }
     }

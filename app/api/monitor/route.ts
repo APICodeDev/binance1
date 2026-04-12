@@ -24,12 +24,16 @@ const MONITOR_INTERNAL_SECRET = process.env.MONITOR_INTERNAL_SECRET || '';
 const EXHAUSTION_MIN_MFE_PERCENT = 1.0;
 const EXHAUSTION_MIN_STAGNATION_MS = 90 * 60 * 1000;
 const EXHAUSTION_MIN_RETRACEMENT_RATIO = 0.35;
+const EXHAUSTION_FLAT_MIN_MFE_PERCENT = 1.5;
+const EXHAUSTION_FLAT_MIN_PROFIT_PERCENT = 1.0;
+const EXHAUSTION_FLAT_MIN_STAGNATION_MS = 120 * 60 * 1000;
+const EXHAUSTION_FLAT_MAX_GIVEBACK_PERCENT = 0.25;
 
 async function runMonitor(req: NextRequest, actorUserId?: number) {
   const positions = await prisma.position.findMany({ where: { status: 'open' } });
   const exhaustionGuardEnabled = (await prisma.setting.findUnique({
     where: { key: 'exhaustion_guard_enabled' },
-  }))?.value === '1';
+  }))?.value !== '0';
 
   if (positions.length === 0) {
     return ok({ results: [] }, 'No open positions to monitor.');
@@ -177,10 +181,12 @@ async function runMonitor(req: NextRequest, actorUserId?: number) {
     const retracementRatio = maxProfitPercent > 0
       ? Math.max(0, (maxProfitPercent - profitPercent) / maxProfitPercent)
       : 0;
+    const givebackPercent = Math.max(0, maxProfitPercent - profitPercent);
 
     let newSl = pos.stopLoss;
     let slTriggered = false;
     let exhaustionTriggered = false;
+    let exhaustionReason: 'retracement' | 'flat_timeout' | null = null;
 
     if (
       exhaustionGuardEnabled &&
@@ -190,9 +196,23 @@ async function runMonitor(req: NextRequest, actorUserId?: number) {
       retracementRatio >= EXHAUSTION_MIN_RETRACEMENT_RATIO
     ) {
       exhaustionTriggered = true;
+      exhaustionReason = 'retracement';
       results.push(
         `EXHAUSTION_SIGNAL (${mode}): ${symbol} MFE ${maxProfitPercent.toFixed(2)}% | ` +
         `actual ${profitPercent.toFixed(2)}% | estancada ${Math.floor(stagnationMs / 60000)}m`
+      );
+    } else if (
+      exhaustionGuardEnabled &&
+      maxProfitPercent >= EXHAUSTION_FLAT_MIN_MFE_PERCENT &&
+      profitPercent >= EXHAUSTION_FLAT_MIN_PROFIT_PERCENT &&
+      stagnationMs >= EXHAUSTION_FLAT_MIN_STAGNATION_MS &&
+      givebackPercent <= EXHAUSTION_FLAT_MAX_GIVEBACK_PERCENT
+    ) {
+      exhaustionTriggered = true;
+      exhaustionReason = 'flat_timeout';
+      results.push(
+        `EXHAUSTION_FLAT (${mode}): ${symbol} MFE ${maxProfitPercent.toFixed(2)}% | ` +
+        `actual ${profitPercent.toFixed(2)}% | sin mejora ${Math.floor(stagnationMs / 60000)}m`
       );
     }
 
@@ -265,7 +285,7 @@ async function runMonitor(req: NextRequest, actorUserId?: number) {
         });
         results.push(
           exhaustionTriggered
-            ? `EXHAUSTION_CERRADA (${mode}): Position #${pos.id} (${symbol}) cerrada por agotamiento.`
+            ? `EXHAUSTION_CERRADA (${mode}): Position #${pos.id} (${symbol}) cerrada por ${exhaustionReason === 'flat_timeout' ? 'lateralidad prolongada' : 'agotamiento con retroceso'}.`
             : `SL_CERRADA (${mode}): Position #${pos.id} (${symbol}) closed.`
         );
       }

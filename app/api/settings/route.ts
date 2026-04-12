@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
     profit_sound_enabled: profitSoundEnabled?.value || '0',
     profit_sound_file: profitSoundFile?.value || '',
     api_stop_mode: apiStopMode?.value || 'signal',
-    exhaustion_guard_enabled: exhaustionGuardEnabled?.value || '0'
+    exhaustion_guard_enabled: exhaustionGuardEnabled?.value || '1'
   });
 }
 
