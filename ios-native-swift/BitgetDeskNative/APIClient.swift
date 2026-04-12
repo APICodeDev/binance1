@@ -33,11 +33,22 @@ final class APIClient {
     }()
 
     private func buildURL(baseURL: String, path: String) throws -> URL {
-        guard let url = URL(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+        let trimmedBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedBaseURL: String
+        if trimmedBaseURL.hasPrefix("http://") || trimmedBaseURL.hasPrefix("https://") {
+            normalizedBaseURL = trimmedBaseURL
+        } else {
+            normalizedBaseURL = "https://\(trimmedBaseURL)"
+        }
+
+        let sanitizedBaseURL = normalizedBaseURL.replacingOccurrences(of: "/+$", with: "", options: .regularExpression)
+        let sanitizedPath = path.hasPrefix("/") ? path : "/\(path)"
+
+        guard let url = URL(string: "\(sanitizedBaseURL)\(sanitizedPath)") else {
             throw APIError.invalidURL
         }
 
-        return url.appending(path: path)
+        return url
     }
 
     private func request<T: Decodable>(

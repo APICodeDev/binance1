@@ -3,7 +3,7 @@ import SwiftUI
 
 @MainActor
 final class AppViewModel: ObservableObject {
-    @AppStorage("native.baseURL") var baseURL: String = "http://localhost:3000"
+    @AppStorage("native.baseURL") var baseURL: String = "https://trades.apicode.cloud"
     @Published var token: String? = KeychainStore.loadToken()
     @Published var authUser: AuthUser?
     @Published var isLoading = false
@@ -33,6 +33,7 @@ final class AppViewModel: ObservableObject {
     private var refreshTick = 0
 
     init() {
+        migrateLegacyBaseURLIfNeeded()
         if token != nil {
             Task { await restoreSession() }
         }
@@ -40,6 +41,18 @@ final class AppViewModel: ObservableObject {
 
     var currencyLabel: String {
         tradingMode == "live" ? "USDC" : "USDT"
+    }
+
+    private func migrateLegacyBaseURLIfNeeded() {
+        let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == "http://localhost:3000" || trimmed == "http://127.0.0.1:3000" {
+            baseURL = "https://trades.apicode.cloud"
+            return
+        }
+
+        if !trimmed.hasPrefix("http://") && !trimmed.hasPrefix("https://") {
+            baseURL = "https://\(trimmed)"
+        }
     }
 
     func restoreSession() async {

@@ -45,8 +45,10 @@ La app permite definir la base URL desde la pantalla de login.
 
 Ejemplos:
 
+- `https://trades.apicode.cloud`
 - `http://localhost:3000`
-- `https://tu-deployment.vercel.app`
+
+La app nativa guarda esa URL en `AppStorage`. Si alguna vez se probó con `localhost`, ese valor puede quedarse persistido entre ejecuciones hasta que lo cambies desde la pantalla de login o reinstales la app.
 
 ## Nota
 

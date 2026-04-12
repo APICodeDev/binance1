@@ -25,7 +25,7 @@ struct LoginView: View {
                     .padding(.top, 24)
 
                     GroupBox("Servidor API") {
-                        TextField("https://tu-app.vercel.app", text: $appModel.baseURL)
+                        TextField("https://trades.apicode.cloud", text: $appModel.baseURL)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .padding(12)
