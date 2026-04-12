@@ -140,7 +140,7 @@ struct AdminView: View {
                         Spacer()
                         Text(token.isActive ? "ACTIVE" : "OFF")
                             .font(.caption.bold())
-                            .foregroundStyle(token.isActive ? .green : .secondary)
+                            .foregroundStyle(token.isActive ? Color.green : Color.secondary)
                     }
                 }
             }

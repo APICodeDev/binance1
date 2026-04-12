@@ -148,7 +148,7 @@ final class AppViewModel: ObservableObject {
             profitSoundEnabled = settings.profit_sound_enabled == "1"
             profitSoundFile = settings.profit_sound_file
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = "Settings: \(error.localizedDescription)"
         }
     }
 
@@ -159,7 +159,7 @@ final class AppViewModel: ObservableObject {
             closedPositions = payload.history
             totalPnl = payload.totalPnl
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = "Positions: \(error.localizedDescription)"
         }
     }
 
@@ -167,7 +167,7 @@ final class AppViewModel: ObservableObject {
         do {
             bookmap = try await api.getBookmap(baseURL: baseURL, token: token, symbol: bookmapSymbol)
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = "Bookmap: \(error.localizedDescription)"
         }
     }
 
@@ -175,7 +175,7 @@ final class AppViewModel: ObservableObject {
         do {
             stats = try await api.getStats(baseURL: baseURL, token: token)
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = "Stats: \(error.localizedDescription)"
         }
     }
 
@@ -183,7 +183,7 @@ final class AppViewModel: ObservableObject {
         do {
             heatmapPaper = try await api.getHeatmapPaper(baseURL: baseURL, token: token)
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = "Heatmap Paper: \(error.localizedDescription)"
         }
     }
 
@@ -191,7 +191,7 @@ final class AppViewModel: ObservableObject {
         do {
             accountOverview = try await api.getAccountOverview(baseURL: baseURL, token: token)
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = "Account Overview: \(error.localizedDescription)"
         }
     }
 
@@ -199,7 +199,7 @@ final class AppViewModel: ObservableObject {
         do {
             apiTokens = try await api.getTokens(baseURL: baseURL, token: token)
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = "API Tokens: \(error.localizedDescription)"
         }
     }
 
@@ -207,7 +207,7 @@ final class AppViewModel: ObservableObject {
         do {
             auditLogs = try await api.getAuditLogs(baseURL: baseURL, token: token)
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = "Audit Logs: \(error.localizedDescription)"
         }
     }
 
@@ -215,7 +215,7 @@ final class AppViewModel: ObservableObject {
         do {
             availableSounds = try await api.getSounds(baseURL: baseURL, token: token)
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = "Sounds: \(error.localizedDescription)"
         }
     }
 

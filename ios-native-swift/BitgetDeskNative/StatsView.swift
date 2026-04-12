@@ -40,7 +40,7 @@ struct StatsModeCard: View {
                 .font(.title3.bold())
             HStack {
                 MetricTile(title: "Closed", value: "\(mode.closedCount)", tint: tint)
-                MetricTile(title: "Success", value: "\(mode.successPercent, specifier: "%.1f")%", tint: .green)
+                MetricTile(title: "Success", value: "\(String(format: "%.1f", mode.successPercent))%", tint: .green)
             }
             HStack {
                 MetricTile(title: "Profit", value: "\(AppFormatters.compact(mode.profitAmount)) \(currency)", tint: .green)
@@ -69,7 +69,7 @@ struct StatsModeCard: View {
                     HStack {
                         Text(item.source)
                         Spacer()
-                        Text("\(item.effectivenessPercent, specifier: "%.1f")%")
+                        Text("\(String(format: "%.1f", item.effectivenessPercent))%")
                     }
                     .font(.subheadline)
                 }

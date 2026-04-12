@@ -173,7 +173,7 @@ struct AuditLog: Codable, Identifiable {
     let action: String
     let targetType: String?
     let targetId: String?
-    let metadata: [String: JSONValue]?
+    let metadata: JSONValue?
     let createdAt: String
     let ipAddress: String?
     let userAgent: String?
@@ -228,15 +228,22 @@ struct HeatmapPaperPayload: Codable {
     let analytics: Analytics
 }
 
-struct BookmapSummary: Codable {
-    struct Composite: Codable {
+struct BookmapSummary: Decodable {
+    struct Composite: Decodable {
         let bestBid: Double?
         let bestAsk: Double?
         let mid: Double
         let spreadBps: Double?
+
+        init(bestBid: Double? = nil, bestAsk: Double? = nil, mid: Double = 0, spreadBps: Double? = nil) {
+            self.bestBid = bestBid
+            self.bestAsk = bestAsk
+            self.mid = mid
+            self.spreadBps = spreadBps
+        }
     }
 
-    struct ExchangeSnapshot: Codable, Identifiable {
+    struct ExchangeSnapshot: Decodable, Identifiable {
         var id: String { exchange }
         let exchange: String
         let status: String
@@ -247,7 +254,7 @@ struct BookmapSummary: Codable {
         let isFresh: Bool
     }
 
-    struct TapeTrade: Codable, Identifiable {
+    struct TapeTrade: Decodable, Identifiable {
         var id: String { "\(exchange)-\(timestamp)-\(price)" }
         let exchange: String
         let price: Double
@@ -256,14 +263,21 @@ struct BookmapSummary: Codable {
         let timestamp: Double
     }
 
-    struct Tape: Codable {
+    struct Tape: Decodable {
         let buyVolume: Double
         let sellVolume: Double
         let imbalance: Double
         let recentTrades: [TapeTrade]
+
+        init(buyVolume: Double = 0, sellVolume: Double = 0, imbalance: Double = 0, recentTrades: [TapeTrade] = []) {
+            self.buyVolume = buyVolume
+            self.sellVolume = sellVolume
+            self.imbalance = imbalance
+            self.recentTrades = recentTrades
+        }
     }
 
-    struct Zone: Codable, Identifiable {
+    struct Zone: Decodable, Identifiable {
         var id: String { "\(price)-\(side ?? "zone")" }
         let price: Double
         let totalSize: Double
@@ -274,7 +288,7 @@ struct BookmapSummary: Codable {
         let side: String?
     }
 
-    struct PreSignal: Codable {
+    struct PreSignal: Decodable {
         let actionable: Bool
         let bias: String
         let confidence: Double
@@ -291,6 +305,11 @@ struct BookmapSummary: Codable {
         let invalidationReason: String?
     }
 
+    struct ZonesContainer: Decodable {
+        let supports: [Zone]
+        let resistances: [Zone]
+    }
+
     let symbol: String
     let asOf: Double
     let lastPrice: Double?
@@ -300,6 +319,54 @@ struct BookmapSummary: Codable {
     let supports: [Zone]
     let resistances: [Zone]
     let preSignal: PreSignal
+
+    enum CodingKeys: String, CodingKey {
+        case symbol
+        case asOf
+        case lastPrice
+        case composite
+        case exchanges
+        case tape
+        case supports
+        case resistances
+        case zones
+        case preSignal
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        symbol = try container.decodeIfPresent(String.self, forKey: .symbol) ?? "UNKNOWN"
+        asOf = try container.decodeIfPresent(Double.self, forKey: .asOf) ?? 0
+        lastPrice = try container.decodeIfPresent(Double.self, forKey: .lastPrice)
+        composite = try container.decodeIfPresent(Composite.self, forKey: .composite) ?? Composite()
+        exchanges = try container.decodeIfPresent([ExchangeSnapshot].self, forKey: .exchanges) ?? []
+        tape = try container.decodeIfPresent(Tape.self, forKey: .tape) ?? Tape()
+        preSignal = try container.decodeIfPresent(PreSignal.self, forKey: .preSignal) ?? PreSignal(
+            actionable: false,
+            bias: "neutral",
+            confidence: 0,
+            entryPrice: nil,
+            stopPrice: nil,
+            targetPrice: nil,
+            rewardRisk: nil,
+            invalidation: nil,
+            mode: "watch",
+            reasons: [],
+            createdAt: nil,
+            updatedAt: nil,
+            invalidatedAt: nil,
+            invalidationReason: nil
+        )
+
+        if let zones = try container.decodeIfPresent(ZonesContainer.self, forKey: .zones) {
+            supports = zones.supports
+            resistances = zones.resistances
+        } else {
+            supports = try container.decodeIfPresent([Zone].self, forKey: .supports) ?? []
+            resistances = try container.decodeIfPresent([Zone].self, forKey: .resistances) ?? []
+        }
+    }
 }
 
 struct LoginResponseWrapper: Codable {
@@ -344,8 +411,21 @@ struct StatsResponse: Codable {
     let data: StatsPayload?
 }
 
-struct BookmapResponse: Codable {
+struct BookmapResponse: Decodable {
     let data: BookmapSummary?
+
+    enum CodingKeys: String, CodingKey {
+        case data
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let wrapped = try container.decodeIfPresent(BookmapSummary.self, forKey: .data) {
+            data = wrapped
+        } else {
+            data = try? BookmapSummary(from: decoder)
+        }
+    }
 }
 
 struct HeatmapPaperResponse: Codable {

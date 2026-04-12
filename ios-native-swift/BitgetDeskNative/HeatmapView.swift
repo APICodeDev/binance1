@@ -62,7 +62,7 @@ struct HeatmapView: View {
                             statLine("Last Price", bookmap.lastPrice.map(AppFormatters.compact) ?? "-")
                             statLine("Best Bid", bookmap.composite.bestBid.map(AppFormatters.compact) ?? "-")
                             statLine("Best Ask", bookmap.composite.bestAsk.map(AppFormatters.compact) ?? "-")
-                            statLine("Spread", bookmap.composite.spreadBps.map { "\($0, specifier: "%.2f") bps" } ?? "-")
+                            statLine("Spread", bookmap.composite.spreadBps.map { "\(String(format: "%.2f", $0)) bps" } ?? "-")
                         }
                     }
 
@@ -89,7 +89,7 @@ struct HeatmapView: View {
                     GroupBox("Paper Tracking") {
                         VStack(alignment: .leading, spacing: 10) {
                             statLine("Closed", "\(paper.summary.closedCount)")
-                            statLine("Win Rate", "\(paper.analytics.winRate, specifier: "%.1f")%")
+                            statLine("Win Rate", "\(String(format: "%.1f", paper.analytics.winRate))%")
                             statLine("PnL", AppFormatters.compact(paper.summary.totalPnl))
 
                             if !paper.open.isEmpty {
@@ -142,7 +142,7 @@ struct HeatmapView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(AppFormatters.compact(zone.price))
                     .font(.subheadline.bold())
-                Text("\(zone.exchangeCount) exchanges • \(zone.distancePercent, specifier: "%.2f")%")
+                Text("\(zone.exchangeCount) exchanges • \(String(format: "%.2f", zone.distancePercent))%")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

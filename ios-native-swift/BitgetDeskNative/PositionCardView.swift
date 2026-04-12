@@ -45,10 +45,10 @@ struct PositionCardView: View {
                         .foregroundStyle(position.profitLossFiat >= 0 ? .green : .red)
                     Text("\(stopDelta >= 0 ? "+" : "")\(String(format: "%.2f", stopDelta))% vs entry")
                         .font(.caption.bold())
-                        .foregroundStyle(legacyDistance ? .secondary : .cyan)
+                        .foregroundStyle(legacyDistance ? Color.secondary : Color.cyan)
                     Text(legacyDistance ? "Legacy 1.2% Default" : "Adapted By App")
                         .font(.caption2.bold())
-                        .foregroundStyle(legacyDistance ? .secondary : .cyan)
+                        .foregroundStyle(legacyDistance ? Color.secondary : Color.cyan)
                 }
             }
 

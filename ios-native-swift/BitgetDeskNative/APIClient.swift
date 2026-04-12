@@ -96,6 +96,8 @@ final class APIClient {
 
             do {
                 return try decoder.decode(T.self, from: data)
+            } catch let decodingError as DecodingError {
+                throw APIError.decoding("Response decoding failed: \(describeDecodingError(decodingError))")
             } catch {
                 throw APIError.decoding("Response decoding failed: \(error.localizedDescription)")
             }
@@ -223,5 +225,24 @@ final class APIClient {
     func getSounds(baseURL: String, token: String?) async throws -> [String] {
         let response = try await request(baseURL: baseURL, path: "/api/sounds", token: token, type: SoundsResponse.self)
         return response.data?.files ?? []
+    }
+
+    private func describeDecodingError(_ error: DecodingError) -> String {
+        switch error {
+        case .keyNotFound(let key, let context):
+            let path = (context.codingPath + [key]).map(\.stringValue).joined(separator: ".")
+            return "Missing key '\(key.stringValue)' at \(path)."
+        case .valueNotFound(let type, let context):
+            let path = context.codingPath.map(\.stringValue).joined(separator: ".")
+            return "Missing value for \(type) at \(path)."
+        case .typeMismatch(let type, let context):
+            let path = context.codingPath.map(\.stringValue).joined(separator: ".")
+            return "Type mismatch for \(type) at \(path)."
+        case .dataCorrupted(let context):
+            let path = context.codingPath.map(\.stringValue).joined(separator: ".")
+            return "Data corrupted at \(path): \(context.debugDescription)"
+        @unknown default:
+            return error.localizedDescription
+        }
     }
 }
