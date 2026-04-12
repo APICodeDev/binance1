@@ -1,9 +1,14 @@
 import Foundation
 import SwiftUI
+import UIKit
+import UserNotifications
 
 @MainActor
 final class AppViewModel: ObservableObject {
     @AppStorage("native.baseURL") var baseURL: String = "https://trades.apicode.cloud"
+    @AppStorage("native.pushDeviceToken") private var pushDeviceTokenStorage: String = ""
+    @AppStorage("native.pushDeviceTokenUploaded") private var uploadedPushDeviceTokenStorage: String = ""
+    @AppStorage("native.pushPermissionRequested") private var pushPermissionRequested = false
     @Published var token: String? = KeychainStore.loadToken()
     @Published var authUser: AuthUser?
     @Published var isLoading = false
@@ -31,11 +36,40 @@ final class AppViewModel: ObservableObject {
     private let api = APIClient.shared
     private var refreshTask: Task<Void, Never>?
     private var refreshTick = 0
+    private var notificationObservers: [NSObjectProtocol] = []
 
     init() {
+        let tokenObserver = NotificationCenter.default.addObserver(
+            forName: .didReceiveAPNSToken,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let token = notification.object as? String else { return }
+            Task { @MainActor in
+                self?.handleReceivedPushToken(token)
+            }
+        }
+
+        let failureObserver = NotificationCenter.default.addObserver(
+            forName: .didFailAPNSRegistration,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let message = notification.object as? String else { return }
+            self?.errorMessage = "Push registration: \(message)"
+        }
+
+        notificationObservers = [tokenObserver, failureObserver]
+
         migrateLegacyBaseURLIfNeeded()
         if token != nil {
             Task { await restoreSession() }
+        }
+    }
+
+    deinit {
+        for observer in notificationObservers {
+            NotificationCenter.default.removeObserver(observer)
         }
     }
 
@@ -59,6 +93,7 @@ final class AppViewModel: ObservableObject {
         guard let token else { return }
         do {
             authUser = try await api.authMe(baseURL: baseURL, token: token)
+            await syncPushRegistrationIfPossible()
             await refreshAll()
             startAutoRefresh()
         } catch {
@@ -75,6 +110,7 @@ final class AppViewModel: ObservableObject {
             let user = try await api.login(baseURL: baseURL, identifier: identifier, password: password)
             authUser = user
             token = nil
+            await syncPushRegistrationIfPossible()
             await refreshAll()
             startAutoRefresh()
         } catch {
@@ -91,6 +127,7 @@ final class AppViewModel: ObservableObject {
             self.token = token
             KeychainStore.saveToken(token)
             authUser = user
+            await syncPushRegistrationIfPossible()
             await refreshAll()
             startAutoRefresh()
         } catch {
@@ -101,9 +138,15 @@ final class AppViewModel: ObservableObject {
     func signOut() {
         refreshTask?.cancel()
         refreshTask = nil
-        Task { await api.logout(baseURL: baseURL, token: token) }
+        let currentToken = token
+        let deviceToken = pushDeviceToken
+        if !deviceToken.isEmpty {
+            Task { try? await api.unregisterPushDevice(baseURL: baseURL, token: currentToken, deviceToken: deviceToken) }
+        }
+        Task { await api.logout(baseURL: baseURL, token: currentToken) }
         token = nil
         authUser = nil
+        uploadedPushDeviceToken = ""
         KeychainStore.clearToken()
         openPositions = []
         closedPositions = []
@@ -133,6 +176,87 @@ final class AppViewModel: ObservableObject {
             async let tokens = loadApiTokens()
             async let audits = loadAuditLogs()
             _ = await [overview, tokens, audits]
+        }
+    }
+
+    var pushDeviceToken: String {
+        pushDeviceTokenStorage
+    }
+
+    private var uploadedPushDeviceToken: String {
+        get { uploadedPushDeviceTokenStorage }
+        set { uploadedPushDeviceTokenStorage = newValue }
+    }
+
+    func requestPushAuthorizationIfNeeded() async {
+        let center = UNUserNotificationCenter.current()
+
+        if !pushPermissionRequested {
+            do {
+                let granted = try await center.requestAuthorization(options: [.alert, .badge, .sound])
+                pushPermissionRequested = true
+                if granted {
+                    UIApplication.shared.registerForRemoteNotifications()
+                }
+            } catch {
+                errorMessage = "Push permission: \(error.localizedDescription)"
+            }
+            return
+        }
+
+        let settings = await center.notificationSettings()
+        if settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional || settings.authorizationStatus == .ephemeral {
+            UIApplication.shared.registerForRemoteNotifications()
+        }
+    }
+
+    private func handleReceivedPushToken(_ token: String) {
+        pushDeviceTokenStorage = token
+        Task {
+            await syncPushRegistrationIfPossible()
+        }
+    }
+
+    func syncPushRegistrationIfPossible() async {
+        guard !pushDeviceToken.isEmpty else { return }
+        guard authUser != nil || token != nil else { return }
+        guard uploadedPushDeviceToken != pushDeviceToken else { return }
+
+        do {
+            try await api.registerPushDevice(
+                baseURL: baseURL,
+                token: token,
+                deviceToken: pushDeviceToken,
+                environment: pushEnvironment,
+                appVersion: appVersion,
+                deviceName: UIDevice.current.name
+            )
+            uploadedPushDeviceToken = pushDeviceToken
+        } catch {
+            errorMessage = "Push device: \(error.localizedDescription)"
+        }
+    }
+
+    private var pushEnvironment: String {
+        #if DEBUG
+        return "sandbox"
+        #else
+        return "production"
+        #endif
+    }
+
+    private var appVersion: String? {
+        let shortVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let buildNumber = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        switch (shortVersion, buildNumber) {
+        case let (version?, build?) where !version.isEmpty && !build.isEmpty:
+            return "\(version) (\(build))"
+        case let (version?, _):
+            return version
+        case let (_, build?):
+            return build
+        default:
+            return nil
         }
     }
 

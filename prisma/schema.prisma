@@ -53,8 +53,28 @@ model User {
   sessions     Session[]
   apiTokens    ApiToken[]
   auditLogs    AuditLog[]
+  pushDevices  PushDevice[]
 
   @@map("users")
+}
+
+model PushDevice {
+  id           String   @id @default(cuid())
+  userId       Int      @map("user_id")
+  token        String   @unique
+  platform     String   @default("ios")
+  environment  String   @default("production")
+  isActive     Boolean  @default(true) @map("is_active")
+  appVersion   String?  @map("app_version")
+  deviceName   String?  @map("device_name")
+  lastSeenAt   DateTime @default(now()) @map("last_seen_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isActive])
+  @@map("push_devices")
 }
 
 model Session {

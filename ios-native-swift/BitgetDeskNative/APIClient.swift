@@ -227,6 +227,30 @@ final class APIClient {
         return response.data?.files ?? []
     }
 
+    func registerPushDevice(
+        baseURL: String,
+        token: String?,
+        deviceToken: String,
+        environment: String,
+        appVersion: String?,
+        deviceName: String?
+    ) async throws {
+        let payload: [String: Any?] = [
+            "token": deviceToken,
+            "platform": "ios",
+            "environment": environment,
+            "appVersion": appVersion,
+            "deviceName": deviceName,
+        ]
+        let body = try JSONSerialization.data(withJSONObject: payload.compactMapValues { $0 })
+        try await requestVoid(baseURL: baseURL, path: "/api/push/devices", method: "POST", body: body, token: token)
+    }
+
+    func unregisterPushDevice(baseURL: String, token: String?, deviceToken: String) async throws {
+        let encoded = deviceToken.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? deviceToken
+        try await requestVoid(baseURL: baseURL, path: "/api/push/devices?token=\(encoded)", method: "DELETE", token: token)
+    }
+
     private func describeDecodingError(_ error: DecodingError) -> String {
         switch error {
         case .keyNotFound(let key, let context):

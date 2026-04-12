@@ -5,6 +5,7 @@ import { writeAuditLog } from '@/lib/audit';
 import { fail, ok } from '@/lib/apiResponse';
 import { requireAuth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { notifyAllActiveDevices } from '@/lib/pushNotifications';
 import {
   bitgetGetPrice, 
   bitgetGetPositions, 
@@ -29,7 +30,7 @@ const EXHAUSTION_FLAT_MIN_PROFIT_PERCENT = 1.0;
 const EXHAUSTION_FLAT_MIN_STAGNATION_MS = 120 * 60 * 1000;
 const EXHAUSTION_FLAT_MAX_GIVEBACK_PERCENT = 0.25;
 
-async function runMonitor(req: NextRequest, actorUserId?: number) {
+export async function runMonitor(req: NextRequest, actorUserId?: number) {
   const positions = await prisma.position.findMany({ where: { status: 'open' } });
   const exhaustionGuardEnabled = (await prisma.setting.findUnique({
     where: { key: 'exhaustion_guard_enabled' },
@@ -59,6 +60,7 @@ async function runMonitor(req: NextRequest, actorUserId?: number) {
   const liveMap = buildMap(realLive.positions);
 
   const results: string[] = [];
+  const pushEvents: Array<{ title: string; body: string; data?: Record<string, unknown> }> = [];
 
   const syncStopOrder = async (
     symbol: string,
@@ -146,6 +148,16 @@ async function runMonitor(req: NextRequest, actorUserId?: number) {
         },
       });
       results.push(`SINC_CERRADA (${mode}): Position #${pos.id} (${symbol}) cerrada en Bitget.`);
+      pushEvents.push({
+        title: `${symbol} cerrada`,
+        body: `La posicion #${pos.id} en ${mode.toUpperCase()} se detecto como cerrada en Bitget.`,
+        data: {
+          kind: 'position_closed_sync',
+          positionId: pos.id,
+          symbol,
+          tradingMode: mode,
+        },
+      });
       continue; // Move to next position
     }
 
@@ -283,6 +295,20 @@ async function runMonitor(req: NextRequest, actorUserId?: number) {
             maxProfitAt,
           },
         });
+        pushEvents.push({
+          title: exhaustionTriggered ? `${symbol} cerrada por agotamiento` : `${symbol} stop ejecutado`,
+          body: exhaustionTriggered
+            ? `La posicion #${pos.id} en ${mode.toUpperCase()} se cerro automaticamente por agotamiento.`
+            : `La posicion #${pos.id} en ${mode.toUpperCase()} se cerro automaticamente por stop.`,
+          data: {
+            kind: exhaustionTriggered ? 'position_closed_exhaustion' : 'position_closed_stop',
+            positionId: pos.id,
+            symbol,
+            tradingMode: mode,
+            profitPercent: Number(profitPercent.toFixed(2)),
+            profitFiat: Number(profitFiat.toFixed(2)),
+          },
+        });
         results.push(
           exhaustionTriggered
             ? `EXHAUSTION_CERRADA (${mode}): Position #${pos.id} (${symbol}) cerrada por ${exhaustionReason === 'flat_timeout' ? 'lateralidad prolongada' : 'agotamiento con retroceso'}.`
@@ -311,6 +337,10 @@ async function runMonitor(req: NextRequest, actorUserId?: number) {
     metadata: { resultCount: results.length },
     req,
   });
+
+  for (const event of pushEvents) {
+    await notifyAllActiveDevices(event).catch(() => undefined);
+  }
 
   return ok({ results }, 'Monitor run completed');
 }
