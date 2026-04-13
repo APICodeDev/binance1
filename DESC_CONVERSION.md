@@ -7,8 +7,9 @@ Esta es la conversiÃ³n de tu bot de trading PHP a **Node.js 20+** sobre **Next
 Dado que Vercel no soporta archivos persistentes (como SQLite), ahora usamos **Prisma + PostgreSQL**.
 
 1.  **Base de Datos**: Te recomiendo usar **Vercel Postgres** o **Supabase** (que ofrece una base de datos Postgres gratuita).
-2.  **SincronizaciÃ³n de 10 segundos**: 
-    - El dashboard realiza un *poll* cada 10 segundos a la ruta `/api/monitor` mientras estÃ© abierto.
+2.  **SincronizaciÃ³n adaptativa**: 
+    - El dashboard ejecuta `/api/monitor` cada 3 segundos cuando hay posiciones abiertas y cada 10 segundos cuando estÃ¡ en reposo.
+    - La respuesta del monitor ya devuelve el *snapshot* del dashboard para evitar una segunda recarga completa tras cada ciclo.
     - Se ha configurado un **Vercel Cron** (`vercel.json`) que ejecuta una sincronizaciÃ³n cada minuto como respaldo (mÃ­nimo permitido por Vercel).
 
 ## ðŸ› ï¸ ConfiguraciÃ³n de Variables de Entorno (.env)

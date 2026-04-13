@@ -59,6 +59,8 @@ const AVAILABLE_SYMBOLS = [
 ];
 
 const BOOKMAP_SYMBOL_STORAGE_KEY = 'bookmap:last-symbol';
+const ACTIVE_MONITOR_POLL_MS = 3000;
+const IDLE_MONITOR_POLL_MS = 10000;
 
 // Typing for positions from API
 interface Position {
@@ -214,6 +216,32 @@ interface StatsPayload {
   demo: StatsMode;
   live: StatsMode;
   timestamp: string;
+}
+
+interface DashboardSettingsSnapshot {
+  bot_enabled: string;
+  custom_amount: string;
+  last_entry_error: string;
+  trading_mode: 'demo' | 'live';
+  leverage_enabled: string;
+  leverage_value: string;
+  profit_sound_enabled: string;
+  profit_sound_file: string;
+  api_stop_mode: 'signal' | 'legacy';
+  exhaustion_guard_enabled: string;
+}
+
+interface DashboardSnapshotPayload {
+  open: Position[];
+  history: Position[];
+  totalPnl: number;
+  mode: 'demo' | 'live';
+  settings: DashboardSettingsSnapshot;
+}
+
+interface MonitorResponsePayload {
+  results?: string[];
+  snapshot?: DashboardSnapshotPayload;
 }
 
 interface NewPositionForm {
@@ -601,6 +629,7 @@ export default function Dashboard() {
   const recentClosedPositions = closedPositions.slice(0, 15);
   const lastSeenClosedIdRef = useRef<number | null>(null);
   const lastBookmapSignalKeyRef = useRef<string | null>(null);
+  const monitorInFlightRef = useRef(false);
 
   const resetSessionState = useCallback(() => {
     apiClient.setApiToken(null);
@@ -803,41 +832,67 @@ export default function Dashboard() {
     }
   }, []);
 
+  const applyDashboardSnapshot = useCallback((snapshot: DashboardSnapshotPayload) => {
+    setOpenPositions(snapshot.open || []);
+    setClosedPositions(snapshot.history || []);
+    setTotalPnl(snapshot.totalPnl || 0);
+
+    const settings = snapshot.settings;
+    setBotEnabled(settings.bot_enabled === '1');
+    setCustomAmount(settings.custom_amount || '');
+    setTradingMode(settings.trading_mode || snapshot.mode || 'demo');
+    setLeverageEnabled(settings.leverage_enabled === '1');
+    setLeverageValue(settings.leverage_value || '1');
+    setApiStopMode(settings.api_stop_mode === 'legacy' ? 'legacy' : 'signal');
+    setProfitSoundEnabled(settings.profit_sound_enabled === '1');
+    setProfitSoundFile(settings.profit_sound_file || '');
+    setExhaustionGuardEnabled(settings.exhaustion_guard_enabled === '1');
+
+    if (settings.last_entry_error) {
+      try {
+        const parsed = JSON.parse(settings.last_entry_error);
+        setLastEntryError(parsed);
+        const nextKey = `${parsed.timestamp}-${parsed.symbol}-${parsed.type}-${parsed.detail}`;
+        setHiddenEntryErrorKey((current) => current === nextKey ? current : null);
+      } catch {
+        setLastEntryError(null);
+        setHiddenEntryErrorKey(null);
+      }
+    } else {
+      setLastEntryError(null);
+      setHiddenEntryErrorKey(null);
+    }
+
+    setLastSyncAt(new Date().toISOString());
+  }, []);
+
   const fetchData = useCallback(async (isSilent = false, overrideMode?: 'demo' | 'live') => {
     if (!isSilent) setLoading(true);
     const modeToUse = overrideMode || tradingMode;
     try {
-      // Fetch positions with mode filter
-      const data = await apiClient.getPositions(modeToUse);
-      setOpenPositions(data.open || []);
-      setClosedPositions(data.history || []);
-      setTotalPnl(data.totalPnl || 0);
+      const [data, settings] = await Promise.all([
+        apiClient.getPositions(modeToUse),
+        apiClient.getSettings(),
+      ]);
 
-      // Fetch bot status and global mode
-      const settings = await apiClient.getSettings();
-      setBotEnabled(settings.bot_enabled === '1');
-      setCustomAmount(settings.custom_amount || '');
-      setTradingMode(settings.trading_mode || 'demo');
-      setLeverageEnabled(settings.leverage_enabled === '1');
-      setLeverageValue(settings.leverage_value || '1');
-      setApiStopMode(settings.api_stop_mode === 'legacy' ? 'legacy' : 'signal');
-      setProfitSoundEnabled(settings.profit_sound_enabled === '1');
-      setProfitSoundFile(settings.profit_sound_file || '');
-      setExhaustionGuardEnabled(settings.exhaustion_guard_enabled === '1');
-      
-      // Parse last entry error
-      if (settings.last_entry_error) {
-        try {
-          const parsed = JSON.parse(settings.last_entry_error);
-          setLastEntryError(parsed);
-          const nextKey = `${parsed.timestamp}-${parsed.symbol}-${parsed.type}-${parsed.detail}`;
-          setHiddenEntryErrorKey((current) => current === nextKey ? current : null);
-        } catch { setLastEntryError(null); }
-      } else {
-        setLastEntryError(null);
-        setHiddenEntryErrorKey(null);
-      }
-      setLastSyncAt(new Date().toISOString());
+      applyDashboardSnapshot({
+        open: data.open || [],
+        history: data.history || [],
+        totalPnl: data.totalPnl || 0,
+        mode: data.mode === 'live' ? 'live' : 'demo',
+        settings: {
+          bot_enabled: settings.bot_enabled || '1',
+          custom_amount: settings.custom_amount || '',
+          last_entry_error: settings.last_entry_error || '',
+          trading_mode: settings.trading_mode === 'live' ? 'live' : 'demo',
+          leverage_enabled: settings.leverage_enabled || '0',
+          leverage_value: settings.leverage_value || '1',
+          profit_sound_enabled: settings.profit_sound_enabled || '0',
+          profit_sound_file: settings.profit_sound_file || '',
+          api_stop_mode: settings.api_stop_mode === 'legacy' ? 'legacy' : 'signal',
+          exhaustion_guard_enabled: settings.exhaustion_guard_enabled || '1',
+        },
+      });
     } catch (error) {
       if (apiClient.isAuthError(error)) {
         resetSessionState();
@@ -847,7 +902,7 @@ export default function Dashboard() {
     } finally {
       if (!isSilent) setLoading(false);
     }
-  }, [resetSessionState, tradingMode]);
+  }, [applyDashboardSnapshot, resetSessionState, tradingMode]);
 
   const runMonitor = useCallback(async () => {
     if (!isOnline || !isDocumentVisible) {
@@ -855,17 +910,28 @@ export default function Dashboard() {
       return;
     }
 
+    if (monitorInFlightRef.current) {
+      return;
+    }
+
+    monitorInFlightRef.current = true;
     setSyncing(true);
     setSyncStatusLabel('live');
     try {
-      await apiClient.runMonitor();
-      await fetchData(true);
+      const payload = await apiClient.runMonitor(tradingMode);
+      const snapshot = (payload.data as MonitorResponsePayload | undefined)?.snapshot;
+      if (snapshot) {
+        applyDashboardSnapshot(snapshot);
+      } else {
+        await fetchData(true, tradingMode);
+      }
     } catch (error) {
       console.error('Monitor sync error:', error);
     } finally {
+      monitorInFlightRef.current = false;
       setSyncing(false);
     }
-  }, [fetchData]);
+  }, [applyDashboardSnapshot, fetchData, isDocumentVisible, isOnline, tradingMode]);
 
   // Initial load and polling
   useEffect(() => {
@@ -887,11 +953,12 @@ export default function Dashboard() {
       return;
     }
 
+    const monitorPollMs = openPositions.length > 0 ? ACTIVE_MONITOR_POLL_MS : IDLE_MONITOR_POLL_MS;
     const interval = setInterval(() => {
       runMonitor();
-    }, 10000); 
+    }, monitorPollMs);
     return () => clearInterval(interval);
-  }, [authUser, fetchApiTokens, fetchAuditLogs, fetchAccountOverview, fetchData, fetchStats, isDocumentVisible, isOnline, runMonitor]);
+  }, [authUser, fetchApiTokens, fetchAuditLogs, fetchAccountOverview, fetchData, fetchStats, isDocumentVisible, isOnline, openPositions.length, runMonitor]);
 
   useEffect(() => {
     if (!authUser) {

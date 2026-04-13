@@ -29,15 +29,80 @@ const EXHAUSTION_FLAT_MIN_MFE_PERCENT = 1.5;
 const EXHAUSTION_FLAT_MIN_PROFIT_PERCENT = 1.0;
 const EXHAUSTION_FLAT_MIN_STAGNATION_MS = 120 * 60 * 1000;
 const EXHAUSTION_FLAT_MAX_GIVEBACK_PERCENT = 0.25;
+const DASHBOARD_SETTING_KEYS = [
+  'bot_enabled',
+  'custom_amount',
+  'last_entry_error',
+  'trading_mode',
+  'leverage_enabled',
+  'leverage_value',
+  'profit_sound_enabled',
+  'profit_sound_file',
+  'api_stop_mode',
+  'exhaustion_guard_enabled',
+] as const;
+
+type DashboardMode = 'demo' | 'live';
+
+function getDashboardMode(req: NextRequest): DashboardMode {
+  const { searchParams } = new URL(req.url);
+  return searchParams.get('mode') === 'live' ? 'live' : 'demo';
+}
+
+async function buildDashboardSnapshot(mode: DashboardMode) {
+  const [open, history, totalPnlRows, settingsRows] = await Promise.all([
+    prisma.position.findMany({
+      where: { status: 'open', tradingMode: mode } as any,
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.position.findMany({
+      where: { status: 'closed', tradingMode: mode } as any,
+      orderBy: { closedAt: 'desc' },
+      take: 50,
+    }),
+    prisma.position.aggregate({
+      where: { status: 'closed', tradingMode: mode } as any,
+      _sum: { profitLossFiat: true },
+    }),
+    prisma.setting.findMany({
+      where: { key: { in: [...DASHBOARD_SETTING_KEYS] } },
+    }),
+  ]);
+
+  const settingsMap = settingsRows.reduce<Record<string, string>>((acc, row) => {
+    acc[row.key] = row.value;
+    return acc;
+  }, {});
+
+  return {
+    open,
+    history,
+    totalPnl: totalPnlRows._sum?.profitLossFiat || 0,
+    mode,
+    settings: {
+      bot_enabled: settingsMap.bot_enabled || '1',
+      custom_amount: settingsMap.custom_amount || '',
+      last_entry_error: settingsMap.last_entry_error || '',
+      trading_mode: settingsMap.trading_mode || 'demo',
+      leverage_enabled: settingsMap.leverage_enabled || '0',
+      leverage_value: settingsMap.leverage_value || '1',
+      profit_sound_enabled: settingsMap.profit_sound_enabled || '0',
+      profit_sound_file: settingsMap.profit_sound_file || '',
+      api_stop_mode: settingsMap.api_stop_mode || 'signal',
+      exhaustion_guard_enabled: settingsMap.exhaustion_guard_enabled || '1',
+    },
+  };
+}
 
 export async function runMonitor(req: NextRequest, actorUserId?: number) {
+  const dashboardMode = getDashboardMode(req);
   const positions = await prisma.position.findMany({ where: { status: 'open' } });
   const exhaustionGuardEnabled = (await prisma.setting.findUnique({
     where: { key: 'exhaustion_guard_enabled' },
   }))?.value !== '0';
 
   if (positions.length === 0) {
-    return ok({ results: [] }, 'No open positions to monitor.');
+    return ok({ results: [], snapshot: await buildDashboardSnapshot(dashboardMode) }, 'No open positions to monitor.');
   }
 
   // Fetch real positions for both worlds
@@ -342,7 +407,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     await notifyAllActiveDevices(event).catch(() => undefined);
   }
 
-  return ok({ results }, 'Monitor run completed');
+  return ok({ results, snapshot: await buildDashboardSnapshot(dashboardMode) }, 'Monitor run completed');
 }
 
 export async function GET(req: NextRequest) {

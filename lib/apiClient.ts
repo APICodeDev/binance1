@@ -10,6 +10,8 @@ type ApiPayload = {
   [key: string]: unknown;
 };
 
+type MonitorMode = 'demo' | 'live';
+
 const API_TOKEN_STORAGE_KEY = 'bitget-desk-api-token';
 
 class ApiClientError extends Error {
@@ -124,7 +126,7 @@ export const apiClient = {
   logout: () => request('/api/auth/logout', { method: 'POST' }),
   getPositions: (mode?: 'demo' | 'live') => request<any>(`/api/positions${mode ? `?mode=${mode}` : ''}`),
   getSettings: () => request<any>('/api/settings'),
-  runMonitor: () => request<any>('/api/monitor'),
+  runMonitor: (mode?: MonitorMode) => request<any>(`/api/monitor${mode ? `?mode=${mode}` : ''}`),
   updateSettings: (payload: Record<string, unknown>) =>
     request<any>('/api/settings', {
       method: 'POST',
