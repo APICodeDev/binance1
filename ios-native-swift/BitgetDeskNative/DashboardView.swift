@@ -53,7 +53,7 @@ struct DashboardView: View {
             }
             HStack(spacing: 12) {
                 MetricTile(title: "Amount", value: appModel.customAmount.isEmpty ? "AUTO" : appModel.customAmount, tint: .orange)
-                MetricTile(title: "Stop API", value: appModel.apiStopMode == "legacy" ? "LEGACY" : "SIGNAL", tint: .cyan)
+                MetricTile(title: "TP Auto", value: appModel.takeProfitAutoCloseEnabled ? "ON" : "OFF", tint: .cyan)
             }
             HStack(spacing: 12) {
                 MetricTile(title: "Leverage", value: appModel.leverageEnabled ? "x\(appModel.leverageValue)" : "OFF", tint: .purple)

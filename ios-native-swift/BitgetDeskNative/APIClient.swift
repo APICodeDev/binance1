@@ -156,8 +156,15 @@ final class APIClient {
         try await request(baseURL: baseURL, path: "/api/positions?mode=\(mode)", token: token, type: PositionsPayload.self)
     }
 
-    func runMonitor(baseURL: String, token: String?) async throws {
-        try await requestVoid(baseURL: baseURL, path: "/api/monitor", method: "GET", token: token)
+    func runMonitor(baseURL: String, token: String?, mode: String? = nil) async throws {
+        let suffix: String
+        if let mode, !mode.isEmpty {
+            let encoded = mode.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? mode
+            suffix = "?mode=\(encoded)"
+        } else {
+            suffix = ""
+        }
+        try await requestVoid(baseURL: baseURL, path: "/api/monitor\(suffix)", method: "GET", token: token)
     }
 
     func openPosition(baseURL: String, token: String?, payload: [String: Any]) async throws {

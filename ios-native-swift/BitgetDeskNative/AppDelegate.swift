@@ -12,6 +12,9 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        BackgroundSyncService.shared.registerBackgroundTasks()
+        application.setMinimumBackgroundFetchInterval(UIApplication.backgroundFetchIntervalMinimum)
+        BackgroundSyncService.shared.scheduleAppRefresh()
         return true
     }
 
@@ -30,5 +33,26 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         completionHandler([.banner, .sound, .badge])
+    }
+
+    func application(
+        _ application: UIApplication,
+        performFetchWithCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        Task {
+            let outcome = await BackgroundSyncService.shared.performBackgroundRefresh()
+            completionHandler(outcome.fetchResult)
+        }
+    }
+
+    func application(
+        _ application: UIApplication,
+        didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+        fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        Task {
+            let outcome = await BackgroundSyncService.shared.performBackgroundRefresh()
+            completionHandler(outcome.fetchResult)
+        }
     }
 }

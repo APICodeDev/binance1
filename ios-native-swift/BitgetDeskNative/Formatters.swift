@@ -20,6 +20,11 @@ enum AppFormatters {
         guard let iso else { return "-" }
         let formatter = ISO8601DateFormatter()
         guard let date = formatter.date(from: iso) else { return iso }
+        return dateTime(date)
+    }
+
+    static func dateTime(_ date: Date?) -> String {
+        guard let date else { return "-" }
         let output = DateFormatter()
         output.dateStyle = .short
         output.timeStyle = .short

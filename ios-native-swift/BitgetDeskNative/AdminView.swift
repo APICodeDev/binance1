@@ -10,6 +10,7 @@ struct AdminView: View {
                     .font(.largeTitle.bold())
 
                 settingsCard
+                backgroundCard
 
                 if appModel.authUser?.role == "admin" {
                     accountCard
@@ -54,16 +55,6 @@ struct AdminView: View {
                 Text("Live").tag("live")
             }
 
-            Picker("API Stop Mode", selection: Binding(
-                get: { appModel.apiStopMode },
-                set: { newValue in
-                    Task { await appModel.updateSetting(key: "api_stop_mode", value: newValue) }
-                }
-            )) {
-                Text("Signal").tag("signal")
-                Text("Legacy").tag("legacy")
-            }
-
             Toggle("Leverage Enabled", isOn: Binding(
                 get: { appModel.leverageEnabled },
                 set: { newValue in
@@ -80,6 +71,91 @@ struct AdminView: View {
                 .onSubmit {
                     Task { await appModel.updateSetting(key: "custom_amount", value: appModel.customAmount) }
                 }
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Initial Stop")
+                    .font(.headline)
+                Text("Signal Stop First")
+                    .font(.subheadline.bold())
+                    .foregroundStyle(.cyan)
+                Text("Si el JSON trae un Stop Loss valido, la app lo respeta como SL inicial. Si no llega, el backend cae al 1.2% legacy.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Toggle("Exhaustion Guard", isOn: Binding(
+                get: { appModel.exhaustionGuardEnabled },
+                set: { newValue in
+                    Task { await appModel.updateSetting(key: "exhaustion_guard_enabled", value: newValue ? "1" : "0") }
+                }
+            ))
+
+            Toggle("Take Profit Auto-Close", isOn: Binding(
+                get: { appModel.takeProfitAutoCloseEnabled },
+                set: { newValue in
+                    Task { await appModel.updateSetting(key: "take_profit_auto_close_enabled", value: newValue ? "1" : "0") }
+                }
+            ))
+
+            Text("Por defecto queda desactivado. Si una entrada no trae `takeProfit`, este ajuste no cambia nada.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Toggle("Profit Sound", isOn: Binding(
+                get: { appModel.profitSoundEnabled },
+                set: { newValue in
+                    Task { await appModel.updateSetting(key: "profit_sound_enabled", value: newValue ? "1" : "0") }
+                }
+            ))
+
+            LabeledContent("Selected Sound") {
+                Text(appModel.profitSoundFile.isEmpty ? "None" : appModel.profitSoundFile)
+                    .foregroundStyle(appModel.profitSoundFile.isEmpty ? .secondary : .primary)
+            }
+        }
+        .padding()
+        .background(Color.white.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private var backgroundCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Background Sync")
+                .font(.title3.bold())
+
+            Text(appModel.backgroundStatusSummary)
+                .font(.subheadline)
+
+            if let lastSuccess = appModel.backgroundLastRefreshAt {
+                LabeledContent("Last Success") {
+                    Text(AppFormatters.dateTime(lastSuccess))
+                }
+            }
+
+            if let lastError = appModel.backgroundLastError, !lastError.isEmpty {
+                Text(lastError)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+
+            Text("iOS no permite un monitor continuo en segundo plano. Esta configuracion usa BGAppRefresh, Background Fetch y remote notifications para despertar la app cuando el sistema lo permita y lanzar la sincronizacion.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Button("Run Monitor Now") {
+                    Task { await appModel.runMonitor() }
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button("Reschedule") {
+                    BackgroundSyncService.shared.scheduleAppRefresh(after: 60)
+                    appModel.loadBackgroundStatus()
+                }
+                .buttonStyle(.bordered)
             }
         }
         .padding()

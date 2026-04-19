@@ -15,7 +15,9 @@ struct Position: Codable, Identifiable {
     let amount: Double
     let quantity: Double
     let entryPrice: Double
+    let requestedEntryPrice: Double?
     let stopLoss: Double
+    let takeProfit: Double?
     let status: String
     let tradingMode: String
     let profitLossPercent: Double
@@ -38,6 +40,8 @@ struct SettingsPayload: Codable {
     let profit_sound_enabled: String
     let profit_sound_file: String
     let api_stop_mode: String
+    let exhaustion_guard_enabled: String
+    let take_profit_auto_close_enabled: String
 }
 
 struct PositionsPayload: Codable {
@@ -93,6 +97,14 @@ struct AccountOverviewPayload: Codable {
 
 struct StatsPayload: Codable {
     struct StatsMode: Codable {
+        struct EntryExecutionDelta: Codable {
+            let sampleCount: Int
+            let favorablePercentTotal: Double
+            let unfavorablePercentTotal: Double
+            let averageSignedPercent: Double
+            let averageAbsPercent: Double
+        }
+
         struct SourceByCount: Codable, Identifiable {
             var id: String { source }
             let source: String
@@ -145,6 +157,7 @@ struct StatsPayload: Codable {
         let symbolByProfit: [SymbolByProfit]
         let tradesByWeekday: [CountLabel]
         let tradesByHour: [CountLabel]
+        let entryExecutionDelta: EntryExecutionDelta
     }
 
     let demo: StatsMode

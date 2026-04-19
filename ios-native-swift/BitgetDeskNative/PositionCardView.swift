@@ -8,6 +8,8 @@ struct PositionCardView: View {
         let isBuy = position.positionType == "buy"
         let stopDelta = position.entryPrice == 0 ? 0 : ((position.stopLoss - position.entryPrice) / position.entryPrice) * 100
         let legacyDistance = abs(abs(isBuy ? -stopDelta : stopDelta) - 1.2) < 0.05
+        let fillDeltaPercent = signedFillDeltaPercent
+        let fillDeltaColor: Color = fillDeltaPercent >= 0 ? .cyan : .orange
 
         VStack(alignment: .leading, spacing: 14) {
             HStack {
@@ -34,6 +36,14 @@ struct PositionCardView: View {
                         .foregroundStyle(.secondary)
                     Text(AppFormatters.price(position.entryPrice, precision: position.pricePrecision))
                         .font(.headline.monospacedDigit())
+                    if let requestedEntryPrice = position.requestedEntryPrice, requestedEntryPrice > 0 {
+                        Text("JSON \(AppFormatters.price(requestedEntryPrice, precision: position.pricePrecision))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("Fill \(fillDeltaPercent >= 0 ? "+" : "")\(String(format: "%.2f", fillDeltaPercent))%")
+                            .font(.caption.bold())
+                            .foregroundStyle(fillDeltaColor)
+                    }
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 6) {
@@ -49,6 +59,11 @@ struct PositionCardView: View {
                     Text(legacyDistance ? "Legacy 1.2% Default" : "Adapted By App")
                         .font(.caption2.bold())
                         .foregroundStyle(legacyDistance ? Color.secondary : Color.cyan)
+                    if let takeProfit = position.takeProfit, takeProfit > 0 {
+                        Text("TP \(AppFormatters.price(takeProfit, precision: position.pricePrecision))")
+                            .font(.caption.bold())
+                            .foregroundStyle(.yellow)
+                    }
                 }
             }
 
@@ -81,5 +96,14 @@ struct PositionCardView: View {
         .padding()
         .background(Color.white.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private var signedFillDeltaPercent: Double {
+        guard let requestedEntryPrice = position.requestedEntryPrice, requestedEntryPrice > 0 else {
+            return 0
+        }
+
+        let rawPercent = ((position.entryPrice - requestedEntryPrice) / requestedEntryPrice) * 100
+        return position.positionType == "sell" ? rawPercent : -rawPercent
     }
 }

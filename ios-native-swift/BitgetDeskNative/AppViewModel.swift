@@ -19,6 +19,8 @@ final class AppViewModel: ObservableObject {
     @Published var leverageEnabled = false
     @Published var leverageValue = "1"
     @Published var apiStopMode = "signal"
+    @Published var exhaustionGuardEnabled = true
+    @Published var takeProfitAutoCloseEnabled = false
     @Published var openPositions: [Position] = []
     @Published var closedPositions: [Position] = []
     @Published var totalPnl: Double = 0
@@ -32,6 +34,9 @@ final class AppViewModel: ObservableObject {
     @Published var availableSounds: [String] = []
     @Published var profitSoundEnabled = false
     @Published var profitSoundFile = ""
+    @Published var backgroundLastRefreshAt: Date?
+    @Published var backgroundLastError: String?
+    @Published var backgroundStatusSummary = "Background sync pending."
 
     private let api = APIClient.shared
     private var refreshTask: Task<Void, Never>?
@@ -62,7 +67,8 @@ final class AppViewModel: ObservableObject {
         notificationObservers = [tokenObserver, failureObserver]
 
         migrateLegacyBaseURLIfNeeded()
-        if token != nil {
+        loadBackgroundStatus()
+        if hasPersistedSessionCandidate {
             Task { await restoreSession() }
         }
     }
@@ -75,6 +81,10 @@ final class AppViewModel: ObservableObject {
 
     var currencyLabel: String {
         tradingMode == "live" ? "USDC" : "USDT"
+    }
+
+    private var hasPersistedSessionCandidate: Bool {
+        token != nil || !(HTTPCookieStorage.shared.cookies ?? []).isEmpty
     }
 
     private func migrateLegacyBaseURLIfNeeded() {
@@ -90,12 +100,13 @@ final class AppViewModel: ObservableObject {
     }
 
     func restoreSession() async {
-        guard let token else { return }
+        guard hasPersistedSessionCandidate else { return }
         do {
             authUser = try await api.authMe(baseURL: baseURL, token: token)
             await syncPushRegistrationIfPossible()
             await refreshAll()
             startAutoRefresh()
+            BackgroundSyncService.shared.scheduleAppRefresh()
         } catch {
             self.errorMessage = error.localizedDescription
             signOut()
@@ -113,6 +124,7 @@ final class AppViewModel: ObservableObject {
             await syncPushRegistrationIfPossible()
             await refreshAll()
             startAutoRefresh()
+            BackgroundSyncService.shared.scheduleAppRefresh()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -130,6 +142,7 @@ final class AppViewModel: ObservableObject {
             await syncPushRegistrationIfPossible()
             await refreshAll()
             startAutoRefresh()
+            BackgroundSyncService.shared.scheduleAppRefresh()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -144,6 +157,7 @@ final class AppViewModel: ObservableObject {
             Task { try? await api.unregisterPushDevice(baseURL: baseURL, token: currentToken, deviceToken: deviceToken) }
         }
         Task { await api.logout(baseURL: baseURL, token: currentToken) }
+        BackgroundSyncService.shared.cancelPendingRefresh()
         token = nil
         authUser = nil
         uploadedPushDeviceToken = ""
@@ -170,6 +184,7 @@ final class AppViewModel: ObservableObject {
         async let paper = loadHeatmapPaper()
         async let sounds = loadSounds()
         _ = await [settings, positions, bookmap, stats, paper, sounds]
+        loadBackgroundStatus()
 
         if authUser?.role == "admin" {
             async let overview = loadAccountOverview()
@@ -269,6 +284,8 @@ final class AppViewModel: ObservableObject {
             leverageEnabled = settings.leverage_enabled == "1"
             leverageValue = settings.leverage_value
             apiStopMode = settings.api_stop_mode
+            exhaustionGuardEnabled = settings.exhaustion_guard_enabled != "0"
+            takeProfitAutoCloseEnabled = settings.take_profit_auto_close_enabled == "1"
             profitSoundEnabled = settings.profit_sound_enabled == "1"
             profitSoundFile = settings.profit_sound_file
         } catch {
@@ -354,7 +371,7 @@ final class AppViewModel: ObservableObject {
 
     func runMonitor() async {
         do {
-            try await api.runMonitor(baseURL: baseURL, token: token)
+            try await api.runMonitor(baseURL: baseURL, token: token, mode: tradingMode)
             await loadPositions()
         } catch {
             errorMessage = error.localizedDescription
@@ -379,7 +396,16 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func openPosition(symbol: String, amount: String, side: String, stopPrice: Double? = nil, origin: String? = nil, timeframe: String? = nil) async {
+    func openPosition(
+        symbol: String,
+        amount: String,
+        side: String,
+        entryPrice: Double? = nil,
+        stopPrice: Double? = nil,
+        takeProfit: Double? = nil,
+        origin: String? = nil,
+        timeframe: String? = nil
+    ) async {
         var payload: [String: Any] = [
             "symbol": symbol,
             "amount": amount,
@@ -387,7 +413,9 @@ final class AppViewModel: ObservableObject {
             "allowTakerFallback": true,
             "takerFallbackMode": "market"
         ]
+        if let entryPrice { payload["entryPrice"] = entryPrice }
         if let stopPrice { payload["stopPrice"] = stopPrice }
+        if let takeProfit { payload["takeProfit"] = takeProfit }
         if let origin { payload["origin"] = origin }
         if let timeframe { payload["timeframe"] = timeframe }
 
@@ -425,10 +453,44 @@ final class AppViewModel: ObservableObject {
             symbol: bookmapSymbol,
             amount: customAmount.isEmpty ? "100" : customAmount,
             side: signal.bias == "long" ? "buy" : "sell",
+            entryPrice: signal.entryPrice,
             stopPrice: signal.stopPrice,
+            takeProfit: signal.targetPrice,
             origin: "Heatmap",
             timeframe: "OrderBook"
         )
+    }
+
+    func handleScenePhaseChange(_ phase: ScenePhase) async {
+        switch phase {
+        case .active:
+            loadBackgroundStatus()
+            if authUser != nil || token != nil {
+                startAutoRefresh()
+            }
+        case .background:
+            refreshTask?.cancel()
+            refreshTask = nil
+            BackgroundSyncService.shared.scheduleAppRefresh(after: 60)
+        case .inactive:
+            break
+        @unknown default:
+            break
+        }
+    }
+
+    func loadBackgroundStatus() {
+        let status = BackgroundSyncService.shared.currentStatus()
+        backgroundLastRefreshAt = status.lastSuccessAt
+        backgroundLastError = status.lastError
+
+        if let lastSuccessAt = status.lastSuccessAt {
+            backgroundStatusSummary = "Last successful wake-up: \(AppFormatters.dateTime(lastSuccessAt))."
+        } else if let lastError = status.lastError, !lastError.isEmpty {
+            backgroundStatusSummary = "Last background attempt failed: \(lastError)"
+        } else {
+            backgroundStatusSummary = "Background sync ready. iOS will wake the app when the system allows it."
+        }
     }
 
     func startAutoRefresh() {

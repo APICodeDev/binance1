@@ -47,6 +47,8 @@ struct StatsModeCard: View {
                 MetricTile(title: "Loss", value: "\(AppFormatters.compact(mode.lossAmount)) \(currency)", tint: .red)
             }
 
+            EntryExecutionDeltaCard(mode: mode)
+
             if !mode.symbolByProfit.isEmpty {
                 Text("Top Symbols")
                     .font(.headline)
@@ -78,5 +80,77 @@ struct StatsModeCard: View {
         .padding()
         .background(Color.white.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+}
+
+struct EntryExecutionDeltaCard: View {
+    let mode: StatsPayload.StatsMode
+
+    var body: some View {
+        HStack(spacing: 16) {
+            DonutSummaryView(
+                favorable: mode.entryExecutionDelta.favorablePercentTotal,
+                unfavorable: mode.entryExecutionDelta.unfavorablePercentTotal,
+                centerText: mode.entryExecutionDelta.sampleCount > 0
+                    ? String(format: "%.2f%%", mode.entryExecutionDelta.averageAbsPercent)
+                    : "0%"
+            )
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("JSON Entry vs Real Fill")
+                    .font(.headline)
+                Text("\(mode.entryExecutionDelta.sampleCount) trades with JSON entry")
+                    .font(.subheadline)
+                Text("Favorable total \(String(format: "%.2f", mode.entryExecutionDelta.favorablePercentTotal))%")
+                    .font(.caption)
+                    .foregroundStyle(.cyan)
+                Text("Unfavorable total \(String(format: "%.2f", mode.entryExecutionDelta.unfavorablePercentTotal))%")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                Text("Avg signed \(mode.entryExecutionDelta.averageSignedPercent >= 0 ? "+" : "")\(String(format: "%.2f", mode.entryExecutionDelta.averageSignedPercent))%")
+                    .font(.caption.bold())
+                    .foregroundStyle(mode.entryExecutionDelta.averageSignedPercent >= 0 ? .cyan : .orange)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding()
+        .background(Color.white.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+}
+
+struct DonutSummaryView: View {
+    let favorable: Double
+    let unfavorable: Double
+    let centerText: String
+
+    private var total: Double {
+        max(favorable + unfavorable, 0.0001)
+    }
+
+    private var favorableTrim: Double {
+        favorable / total
+    }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(Color.white.opacity(0.08), lineWidth: 14)
+
+            Circle()
+                .trim(from: 0, to: favorableTrim)
+                .stroke(Color.cyan, style: StrokeStyle(lineWidth: 14, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+
+            Circle()
+                .trim(from: favorableTrim, to: 1)
+                .stroke(Color.orange, style: StrokeStyle(lineWidth: 14, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+
+            Text(centerText)
+                .font(.caption.bold())
+                .multilineTextAlignment(.center)
+        }
+        .frame(width: 86, height: 86)
     }
 }

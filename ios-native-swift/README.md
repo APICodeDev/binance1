@@ -33,6 +33,7 @@ No depende de editar:
 - Cliente HTTP para las APIs existentes
 - Persistencia de token en Keychain
 - Registro de dispositivo para push notifications
+- Background sync con `BGAppRefreshTask` + `Background Fetch`
 
 ## Como abrirlo
 
@@ -71,6 +72,27 @@ CRON_SECRET="un-secreto-largo-y-aleatorio"
 
 4. Ejecutar `npx prisma db push` y `npx prisma generate` para crear la tabla `push_devices`.
 5. Desplegar en Vercel con el cron `/api/monitor-cron` activo para que el monitor siga funcionando aunque la app este cerrada.
+
+## Segundo plano
+
+La app nativa ya queda preparada para trabajar en segundo plano dentro de los limites reales de iOS:
+
+- `BGAppRefreshTask` para despertares periodicos del sistema
+- `Background Fetch`
+- `remote-notification` para poder reaccionar a pushes silenciosas si en el futuro las envias
+
+Que hace cuando iOS la despierta:
+
+1. Lee la sesion actual y la `baseURL`.
+2. Lanza `/api/monitor` con el modo actual.
+3. Refresca posiciones para calentar cache local.
+4. Guarda fecha del ultimo wake-up correcto o el ultimo error.
+
+Importante:
+
+- iOS no permite polling continuo ni garantiza una cadencia fija en background.
+- Esto es un modo "best effort" compatible con App Store, no un daemon permanente.
+- Para cobertura real cuando la app este cerrada o iOS no la despierte a tiempo, el backend debe seguir teniendo su cron `/api/monitor-cron`.
 
 ## Nota
 
