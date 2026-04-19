@@ -92,6 +92,10 @@ async function executeEntry(
     const origin = data.origin ? String(data.origin) : null;
     const timeframe = data.timeframe ? String(data.timeframe) : null;
     const incomingQuantity = parseFloat(data.quantity || data.contracts) || 0;
+    const requestedEntryPrice = parseOptionalPrice(
+      data.entryPrice,
+      data.entry_price,
+    );
     const requestedStopPrice = parseOptionalPrice(
       data.stopPrice,
       data.stop_price,
@@ -99,6 +103,14 @@ async function executeEntry(
       data.stop_loss,
       data.slPrice,
       data.sl_price,
+    );
+    const requestedTakeProfitPrice = parseOptionalPrice(
+      data.takeProfit,
+      data.take_profit,
+      data.targetPrice,
+      data.target_price,
+      data.tpPrice,
+      data.tp_price,
     );
     const allowTakerFallback = data.allowTakerFallback === undefined
       ? true
@@ -116,11 +128,9 @@ async function executeEntry(
     const customAmountSetting = await prisma.setting.findUnique({ where: { key: 'custom_amount' } });
     const leverageEnabledSetting = await prisma.setting.findUnique({ where: { key: 'leverage_enabled' } });
     const leverageValueSetting = await prisma.setting.findUnique({ where: { key: 'leverage_value' } });
-    const apiStopModeSetting = await prisma.setting.findUnique({ where: { key: 'api_stop_mode' } });
     const customAmount = parseFloat(String(customAmountSetting?.value || '0').replace(/[^0-9.]/g, ''));
     const leverageEnabled = leverageEnabledSetting?.value === '1';
     const configuredLeverage = Number.parseFloat(String(leverageValueSetting?.value || '1'));
-    const apiStopMode = apiStopModeSetting?.value === 'legacy' ? 'legacy' : 'signal';
     if (customAmount > 0) {
       amount = customAmount;
     }
@@ -386,9 +396,18 @@ async function executeEntry(
         (type === 'buy' && normalizedRequestedStop < entryPrice) ||
         (type === 'sell' && normalizedRequestedStop > entryPrice)
       );
-    const stopPrice = apiStopMode === 'signal' && isRequestedStopValid
+    const normalizedRequestedTakeProfit = requestedTakeProfitPrice !== null
+      ? bitgetNormalizePriceByContract(requestedTakeProfitPrice, exchangeInfo)
+      : null;
+    const isRequestedTakeProfitValid = normalizedRequestedTakeProfit !== null &&
+      (
+        (type === 'buy' && normalizedRequestedTakeProfit > entryPrice) ||
+        (type === 'sell' && normalizedRequestedTakeProfit < entryPrice)
+      );
+    const stopPrice = isRequestedStopValid
       ? normalizedRequestedStop
       : legacyStopPrice;
+    const takeProfitPrice = isRequestedTakeProfitValid ? normalizedRequestedTakeProfit : null;
     const slSide = type === 'buy' ? 'SELL' : 'BUY';
     const slResponse = await bitgetPlaceStopMarket(symbol, slSide as 'BUY' | 'SELL', stopPrice, filledSize, tradingMode);
 
@@ -406,7 +425,9 @@ async function executeEntry(
         amount,
         quantity: filledSize,
         entryPrice,
+        requestedEntryPrice,
         stopLoss: stopPrice,
+        takeProfit: takeProfitPrice,
         status: 'open',
         tradingMode,
         origin,
@@ -447,12 +468,16 @@ async function executeEntry(
         vipMakerFee: vipFees.makerFeeRate,
         vipTakerFee: vipFees.takerFeeRate,
         realEntryFee,
-        apiStopMode,
+        requestedEntryPrice,
         requestedStopPrice,
         normalizedRequestedStop,
-        requestedStopAccepted: apiStopMode === 'signal' && isRequestedStopValid,
+        requestedStopAccepted: isRequestedStopValid,
         legacyStopPrice,
         appliedStopPrice: stopPrice,
+        requestedTakeProfitPrice,
+        normalizedRequestedTakeProfit,
+        requestedTakeProfitAccepted: isRequestedTakeProfitValid,
+        appliedTakeProfitPrice: takeProfitPrice,
       },
       req,
     });
@@ -476,11 +501,16 @@ async function executeEntry(
         realEntryFee,
       },
       stop: {
-        mode: apiStopMode,
+        mode: isRequestedStopValid ? 'signal' : 'legacy',
         requested: requestedStopPrice,
-        accepted: apiStopMode === 'signal' && isRequestedStopValid,
+        accepted: isRequestedStopValid,
         applied: stopPrice,
         fallback: legacyStopPrice,
+      },
+      takeProfit: {
+        requested: requestedTakeProfitPrice,
+        accepted: isRequestedTakeProfitValid,
+        applied: takeProfitPrice,
       },
     });
   } catch (error: any) {

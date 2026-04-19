@@ -70,7 +70,9 @@ interface Position {
   amount: number;
   quantity: number;
   entryPrice: number;
+  requestedEntryPrice?: number | null;
   stopLoss: number;
+  takeProfit?: number | null;
   status: 'open' | 'closed';
   tradingMode: 'demo' | 'live';
   profitLossPercent: number;
@@ -210,6 +212,13 @@ interface StatsMode {
     label: string;
     count: number;
   }>;
+  entryExecutionDelta: {
+    sampleCount: number;
+    favorablePercentTotal: number;
+    unfavorablePercentTotal: number;
+    averageSignedPercent: number;
+    averageAbsPercent: number;
+  };
 }
 
 interface StatsPayload {
@@ -229,6 +238,7 @@ interface DashboardSettingsSnapshot {
   profit_sound_file: string;
   api_stop_mode: 'signal' | 'legacy';
   exhaustion_guard_enabled: string;
+  take_profit_auto_close_enabled: string;
 }
 
 interface DashboardSnapshotPayload {
@@ -561,7 +571,6 @@ export default function Dashboard() {
   const [customAmount, setCustomAmount] = useState('');
   const [leverageEnabled, setLeverageEnabled] = useState(false);
   const [leverageValue, setLeverageValue] = useState('1');
-  const [apiStopMode, setApiStopMode] = useState<'signal' | 'legacy'>('signal');
   const [showLeverageHelp, setShowLeverageHelp] = useState(false);
   const [isPhonePortrait, setIsPhonePortrait] = useState(false);
   const [tradeLogsExpanded, setTradeLogsExpanded] = useState(true);
@@ -569,6 +578,7 @@ export default function Dashboard() {
   const [profitSoundEnabled, setProfitSoundEnabled] = useState(false);
   const [profitSoundFile, setProfitSoundFile] = useState('');
   const [exhaustionGuardEnabled, setExhaustionGuardEnabled] = useState(false);
+  const [takeProfitAutoCloseEnabled, setTakeProfitAutoCloseEnabled] = useState(false);
   const [availableSounds, setAvailableSounds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -843,10 +853,10 @@ export default function Dashboard() {
     setTradingMode(settings.trading_mode || snapshot.mode || 'demo');
     setLeverageEnabled(settings.leverage_enabled === '1');
     setLeverageValue(settings.leverage_value || '1');
-    setApiStopMode(settings.api_stop_mode === 'legacy' ? 'legacy' : 'signal');
     setProfitSoundEnabled(settings.profit_sound_enabled === '1');
     setProfitSoundFile(settings.profit_sound_file || '');
     setExhaustionGuardEnabled(settings.exhaustion_guard_enabled === '1');
+    setTakeProfitAutoCloseEnabled(settings.take_profit_auto_close_enabled === '1');
 
     if (settings.last_entry_error) {
       try {
@@ -891,6 +901,7 @@ export default function Dashboard() {
           profit_sound_file: settings.profit_sound_file || '',
           api_stop_mode: settings.api_stop_mode === 'legacy' ? 'legacy' : 'signal',
           exhaustion_guard_enabled: settings.exhaustion_guard_enabled || '1',
+          take_profit_auto_close_enabled: settings.take_profit_auto_close_enabled || '0',
         },
       });
     } catch (error) {
@@ -1161,16 +1172,6 @@ export default function Dashboard() {
     }
   };
 
-  const toggleApiStopMode = async () => {
-    const nextMode = apiStopMode === 'signal' ? 'legacy' : 'signal';
-    try {
-      await apiClient.updateSettings({ api_stop_mode: nextMode });
-      setApiStopMode(nextMode);
-    } catch (error) {
-      setErrorPopup(getApiErrorMessage(error, 'Unable to update API stop mode.'));
-    }
-  };
-
   const toggleProfitSound = async () => {
     const nextValue = !profitSoundEnabled;
     try {
@@ -1210,6 +1211,16 @@ export default function Dashboard() {
       setExhaustionGuardEnabled(nextValue);
     } catch (error) {
       setErrorPopup(getApiErrorMessage(error, 'Unable to update exhaustion guard.'));
+    }
+  };
+
+  const toggleTakeProfitAutoClose = async () => {
+    const nextValue = !takeProfitAutoCloseEnabled;
+    try {
+      await apiClient.updateSettings({ take_profit_auto_close_enabled: nextValue ? '1' : '0' });
+      setTakeProfitAutoCloseEnabled(nextValue);
+    } catch (error) {
+      setErrorPopup(getApiErrorMessage(error, 'Unable to update take profit auto-close.'));
     }
   };
 
@@ -1776,25 +1787,16 @@ export default function Dashboard() {
             </div>
 
             <div className="bg-slate-900 border border-slate-800 px-4 py-3 rounded-2xl flex items-center gap-3">
-              <ShieldCheck size={18} className={cn("shrink-0", apiStopMode === 'signal' ? "text-cyan-300" : "text-slate-500")} />
+              <ShieldCheck size={18} className="shrink-0 text-cyan-300" />
               <div className="flex min-w-0 flex-1 flex-col">
                 <span className="text-[9px] uppercase font-black text-slate-500 tracking-widest">API Initial Stop</span>
                 <div className="mt-1 flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={toggleApiStopMode}
-                    className={cn(
-                      "rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] transition-colors",
-                      apiStopMode === 'signal'
-                        ? "border-cyan-300 bg-cyan-300 text-slate-950"
-                        : "border-slate-700 bg-slate-950/40 text-slate-400"
-                    )}
-                  >
-                    {apiStopMode === 'signal' ? 'Signal/API Stop' : 'Legacy 1.2%'}
-                  </button>
+                  <span className="rounded-xl border border-cyan-300 bg-cyan-300 px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-950">
+                    Signal Stop First
+                  </span>
                 </div>
                 <span className="mt-1 text-[9px] font-bold uppercase tracking-widest text-slate-600">
-                  API and TradingView entries use webhook stop when available, or fall back to 1.2%.
+                  Si el JSON trae Stop Loss valido se respeta como SL inicial. Si no llega, el sistema cae al 1.2% legacy.
                 </span>
               </div>
             </div>
@@ -1860,6 +1862,31 @@ export default function Dashboard() {
                 </div>
                 <p className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-xs font-bold text-slate-300">
                   Al apagarlo, el monitor vuelve al sistema actual de trailing y stop sin cierres extra por agotamiento.
+                </p>
+              </div>
+
+              <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-400">Trade Management</p>
+                    <h2 className="text-xl font-black uppercase tracking-tight text-white">Take Profit Auto-Close</h2>
+                    <p className="mt-2 text-xs text-slate-500">Cuando llegue `takeProfit` en el JSON, el monitor podra cerrar automaticamente la operacion al tocarlo. Si esta apagado, la gestion sigue solo con stop y trailing.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={toggleTakeProfitAutoClose}
+                    className={cn(
+                      "rounded-xl border px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] transition-colors",
+                      takeProfitAutoCloseEnabled
+                        ? "border-cyan-300 bg-cyan-300 text-slate-950"
+                        : "border-slate-700 bg-slate-950/40 text-slate-400"
+                    )}
+                  >
+                    {takeProfitAutoCloseEnabled ? 'TP On' : 'TP Off'}
+                  </button>
+                </div>
+                <p className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-xs font-bold text-slate-300">
+                  Por defecto queda desactivado. Si una entrada no trae `takeProfit`, este switch no cambia nada.
                 </p>
               </div>
 
@@ -2807,6 +2834,11 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
           <p className={cn("text-[10px] font-black uppercase tracking-[0.18em]", stopAdjustedByApp ? "text-cyan-300" : "text-slate-600")}>
             {stopAdjustedByApp ? 'Adapted By App' : 'Legacy 1.2% Default'}
           </p>
+          {typeof pos.takeProfit === 'number' && pos.takeProfit > 0 && (
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-300">
+              TP {formatPrice(pos.takeProfit, pos.pricePrecision)}
+            </p>
+          )}
         </div>
       </div>
 
@@ -2882,7 +2914,7 @@ function StatsModeSection({ title, mode, stats }: { title: string; mode: 'demo' 
         </div>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
         <StatsCard
           title="Success vs Failure"
           chart={<DonutChart values={[stats.successCount, stats.failedCount]} colors={['#10b981', '#f43f5e']} />}
@@ -2897,6 +2929,21 @@ function StatsModeSection({ title, mode, stats }: { title: string; mode: 'demo' 
           lines={[
             `+${stats.profitAmount.toFixed(2)} ${currency} · ${stats.profitPercent.toFixed(1)}%`,
             `-${stats.lossAmount.toFixed(2)} ${currency} · ${stats.lossPercent.toFixed(1)}%`,
+          ]}
+        />
+        <StatsCard
+          title="JSON Entry vs Real Fill"
+          chart={
+            <DonutChart
+              values={[stats.entryExecutionDelta.favorablePercentTotal, stats.entryExecutionDelta.unfavorablePercentTotal]}
+              colors={['#06b6d4', '#f59e0b']}
+              centerLabel={stats.entryExecutionDelta.sampleCount > 0 ? `${stats.entryExecutionDelta.averageAbsPercent.toFixed(2)}%` : '0%'}
+            />
+          }
+          lines={[
+            `${stats.entryExecutionDelta.sampleCount} trades with JSON entry`,
+            `Favorable total ${stats.entryExecutionDelta.favorablePercentTotal.toFixed(2)}% / unfavorable ${stats.entryExecutionDelta.unfavorablePercentTotal.toFixed(2)}%`,
+            `Avg signed ${stats.entryExecutionDelta.averageSignedPercent >= 0 ? '+' : ''}${stats.entryExecutionDelta.averageSignedPercent.toFixed(2)}%`,
           ]}
         />
       </div>

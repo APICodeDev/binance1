@@ -40,6 +40,7 @@ const DASHBOARD_SETTING_KEYS = [
   'profit_sound_file',
   'api_stop_mode',
   'exhaustion_guard_enabled',
+  'take_profit_auto_close_enabled',
 ] as const;
 
 type DashboardMode = 'demo' | 'live';
@@ -90,6 +91,7 @@ async function buildDashboardSnapshot(mode: DashboardMode) {
       profit_sound_file: settingsMap.profit_sound_file || '',
       api_stop_mode: settingsMap.api_stop_mode || 'signal',
       exhaustion_guard_enabled: settingsMap.exhaustion_guard_enabled || '1',
+      take_profit_auto_close_enabled: settingsMap.take_profit_auto_close_enabled || '0',
     },
   };
 }
@@ -97,9 +99,16 @@ async function buildDashboardSnapshot(mode: DashboardMode) {
 export async function runMonitor(req: NextRequest, actorUserId?: number) {
   const dashboardMode = getDashboardMode(req);
   const positions = await prisma.position.findMany({ where: { status: 'open' } });
-  const exhaustionGuardEnabled = (await prisma.setting.findUnique({
-    where: { key: 'exhaustion_guard_enabled' },
-  }))?.value !== '0';
+  const [exhaustionGuardSetting, takeProfitAutoCloseSetting] = await Promise.all([
+    prisma.setting.findUnique({
+      where: { key: 'exhaustion_guard_enabled' },
+    }),
+    prisma.setting.findUnique({
+      where: { key: 'take_profit_auto_close_enabled' },
+    }),
+  ]);
+  const exhaustionGuardEnabled = exhaustionGuardSetting?.value !== '0';
+  const takeProfitAutoCloseEnabled = takeProfitAutoCloseSetting?.value === '1';
 
   if (positions.length === 0) {
     return ok({ results: [], snapshot: await buildDashboardSnapshot(dashboardMode) }, 'No open positions to monitor.');
@@ -262,8 +271,11 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
 
     let newSl = pos.stopLoss;
     let slTriggered = false;
+    let takeProfitTriggered = false;
     let exhaustionTriggered = false;
     let exhaustionReason: 'retracement' | 'flat_timeout' | null = null;
+    const takeProfit = Number((pos as any).takeProfit || 0);
+    const hasTakeProfit = Number.isFinite(takeProfit) && takeProfit > 0;
 
     if (
       exhaustionGuardEnabled &&
@@ -296,6 +308,8 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     if (!exhaustionTriggered && pos.positionType === 'buy') {
       if (currentPrice <= pos.stopLoss) {
         slTriggered = true;
+      } else if (takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice >= takeProfit) {
+        takeProfitTriggered = true;
       } else if (marketMovePercent >= 1) {
         const crossedStep = Math.floor(marketMovePercent / 0.5) * 0.5;
         const crossedPrice = pos.entryPrice * (1 + crossedStep / 100);
@@ -320,6 +334,8 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     } else if (!exhaustionTriggered) { // short
       if (currentPrice >= pos.stopLoss) {
         slTriggered = true;
+      } else if (takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice <= takeProfit) {
+        takeProfitTriggered = true;
       } else if (marketMovePercent >= 1) {
         const crossedStep = Math.floor(marketMovePercent / 0.5) * 0.5;
         const crossedPrice = pos.entryPrice * (1 - crossedStep / 100);
@@ -343,7 +359,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       }
     }
 
-    if (slTriggered || exhaustionTriggered) {
+    if (slTriggered || takeProfitTriggered || exhaustionTriggered) {
       const closeSide = (pos.positionType === 'buy' ? 'SELL' : 'BUY') as 'BUY' | 'SELL';
       await bitgetCancelAllOrders(symbol, mode);
       const closeResp = await bitgetClosePosition(symbol, closeSide, pos.quantity, mode);
@@ -361,12 +377,22 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
           },
         });
         pushEvents.push({
-          title: exhaustionTriggered ? `${symbol} cerrada por agotamiento` : `${symbol} stop ejecutado`,
+          title: exhaustionTriggered
+            ? `${symbol} cerrada por agotamiento`
+            : takeProfitTriggered
+              ? `${symbol} take profit ejecutado`
+              : `${symbol} stop ejecutado`,
           body: exhaustionTriggered
             ? `La posicion #${pos.id} en ${mode.toUpperCase()} se cerro automaticamente por agotamiento.`
-            : `La posicion #${pos.id} en ${mode.toUpperCase()} se cerro automaticamente por stop.`,
+            : takeProfitTriggered
+              ? `La posicion #${pos.id} en ${mode.toUpperCase()} se cerro automaticamente por take profit.`
+              : `La posicion #${pos.id} en ${mode.toUpperCase()} se cerro automaticamente por stop.`,
           data: {
-            kind: exhaustionTriggered ? 'position_closed_exhaustion' : 'position_closed_stop',
+            kind: exhaustionTriggered
+              ? 'position_closed_exhaustion'
+              : takeProfitTriggered
+                ? 'position_closed_take_profit'
+                : 'position_closed_stop',
             positionId: pos.id,
             symbol,
             tradingMode: mode,
@@ -377,7 +403,9 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
         results.push(
           exhaustionTriggered
             ? `EXHAUSTION_CERRADA (${mode}): Position #${pos.id} (${symbol}) cerrada por ${exhaustionReason === 'flat_timeout' ? 'lateralidad prolongada' : 'agotamiento con retroceso'}.`
-            : `SL_CERRADA (${mode}): Position #${pos.id} (${symbol}) closed.`
+            : takeProfitTriggered
+              ? `TP_CERRADA (${mode}): Position #${pos.id} (${symbol}) closed por take profit.`
+              : `SL_CERRADA (${mode}): Position #${pos.id} (${symbol}) closed.`
         );
       }
     } else {

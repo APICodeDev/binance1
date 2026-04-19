@@ -15,7 +15,9 @@ model Position {
   amount               Float
   quantity             Float
   entryPrice           Float     @map("entry_price")
+  requestedEntryPrice  Float?    @map("requested_entry_price")
   stopLoss             Float     @map("stop_loss")
+  takeProfit           Float?    @map("take_profit")
   status               String    @default("open") // 'open' or 'closed'
   tradingMode          String    @default("demo") @map("trading_mode") // 'demo' or 'live'
   profitLossPercent    Float?    @default(0) @map("profit_loss_percent")
