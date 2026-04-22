@@ -25,7 +25,6 @@
 		AA0000000000000000000010 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000020 /* Assets.xcassets */; };
 		AA0000000000000000000011A /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000021 /* AppDelegate.swift */; };
 		AA0000000000000000000012B /* BackgroundSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000022 /* BackgroundSyncService.swift */; };
-		AA0000000000000000000013C /* TradeNotificationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000024 /* TradeNotificationCoordinator.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -49,7 +48,6 @@
 		AA0000000000000000000021 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		AA0000000000000000000022 /* BackgroundSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundSyncService.swift; sourceTree = "<group>"; };
 		AA0000000000000000000023 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		AA0000000000000000000024 /* TradeNotificationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradeNotificationCoordinator.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -85,7 +83,6 @@
 				AA000000000000000000001F /* AdminView.swift */,
 				AA0000000000000000000021 /* AppDelegate.swift */,
 				AA0000000000000000000022 /* BackgroundSyncService.swift */,
-				AA0000000000000000000024 /* TradeNotificationCoordinator.swift */,
 				AA0000000000000000000023 /* Info.plist */,
 				AA0000000000000000000020 /* Assets.xcassets */,
 			);
@@ -181,7 +178,6 @@
 				AA000000000000000000000F /* AdminView.swift in Sources */,
 				AA0000000000000000000011A /* AppDelegate.swift in Sources */,
 				AA0000000000000000000012B /* BackgroundSyncService.swift in Sources */,
-				AA0000000000000000000013C /* TradeNotificationCoordinator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
