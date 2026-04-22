@@ -5,6 +5,7 @@ import { writeAuditLog } from '@/lib/audit';
 import { fail, ok } from '@/lib/apiResponse';
 import { requireAuth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { isSelfManagedPosition } from '@/lib/positions';
 import { notifyAllActiveDevices } from '@/lib/pushNotifications';
 import {
   bitgetGetPrice, 
@@ -174,6 +175,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
 
   for (const pos of positions) {
     const mode = ((pos as any).tradingMode || 'demo') as 'demo' | 'live';
+    const selfManaged = isSelfManagedPosition((pos as any).managementMode);
     const realMap = mode === 'live' ? liveMap : demoMap;
     const snapshot = mode === 'live' ? realLive : realDemo;
     const symbol = pos.symbol.toUpperCase();
@@ -278,6 +280,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     const hasTakeProfit = Number.isFinite(takeProfit) && takeProfit > 0;
 
     if (
+      !selfManaged &&
       exhaustionGuardEnabled &&
       maxProfitPercent >= EXHAUSTION_MIN_MFE_PERCENT &&
       profitPercent > 0 &&
@@ -291,6 +294,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
         `actual ${profitPercent.toFixed(2)}% | estancada ${Math.floor(stagnationMs / 60000)}m`
       );
     } else if (
+      !selfManaged &&
       exhaustionGuardEnabled &&
       maxProfitPercent >= EXHAUSTION_FLAT_MIN_MFE_PERCENT &&
       profitPercent >= EXHAUSTION_FLAT_MIN_PROFIT_PERCENT &&
@@ -306,11 +310,11 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     }
 
     if (!exhaustionTriggered && pos.positionType === 'buy') {
-      if (currentPrice <= pos.stopLoss) {
+      if (!selfManaged && currentPrice <= pos.stopLoss) {
         slTriggered = true;
-      } else if (takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice >= takeProfit) {
+      } else if (!selfManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice >= takeProfit) {
         takeProfitTriggered = true;
-      } else if (marketMovePercent >= 1) {
+      } else if (!selfManaged && marketMovePercent >= 1) {
         const crossedStep = Math.floor(marketMovePercent / 0.5) * 0.5;
         const crossedPrice = pos.entryPrice * (1 + crossedStep / 100);
         const targetSlPrice = crossedPrice * (1 - 0.5 / 100);
@@ -332,11 +336,11 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
         }
       }
     } else if (!exhaustionTriggered) { // short
-      if (currentPrice >= pos.stopLoss) {
+      if (!selfManaged && currentPrice >= pos.stopLoss) {
         slTriggered = true;
-      } else if (takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice <= takeProfit) {
+      } else if (!selfManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice <= takeProfit) {
         takeProfitTriggered = true;
-      } else if (marketMovePercent >= 1) {
+      } else if (!selfManaged && marketMovePercent >= 1) {
         const crossedStep = Math.floor(marketMovePercent / 0.5) * 0.5;
         const crossedPrice = pos.entryPrice * (1 - crossedStep / 100);
         const targetSlPrice = crossedPrice * (1 + 0.5 / 100);

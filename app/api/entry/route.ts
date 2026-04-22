@@ -6,6 +6,12 @@ import { getAuthContext } from '@/lib/auth';
 import { writeAuditLog } from '@/lib/audit';
 import { prisma } from '@/lib/db';
 import {
+  closeTrackedPosition,
+  normalizePositionManagementMode,
+  type PositionManagementMode,
+  type TradingMode,
+} from '@/lib/positions';
+import {
   bitgetCancelAllOrders,
   bitgetCancelOrder,
   bitgetClosePosition,
@@ -30,8 +36,6 @@ import {
   bitgetSetLeverage,
 } from '@/lib/bitget';
 
-type TradingMode = 'demo' | 'live';
-
 const DEFAULT_MAKER_RETRY_DELAYS_MS = [500];
 const DEFAULT_MAX_SPREAD_PERCENT = 0.6;
 const DEFAULT_MAX_TAKER_COST_PERCENT = 1.0;
@@ -50,6 +54,80 @@ const parseOptionalPrice = (...values: unknown[]) => {
 
   return null;
 };
+
+const resolveTradingMode = async () => {
+  const modeSetting = await prisma.setting.findUnique({ where: { key: 'trading_mode' } });
+  return (modeSetting?.value || 'demo') as TradingMode;
+};
+
+async function closePositionFromEntrySignal(
+  data: any,
+  req: NextRequest,
+  auth: Awaited<ReturnType<typeof getAuthContext>>
+) {
+  const symbol = bitgetNormalizeSymbol(data.symbol || '');
+  const modeProvided = data.mode !== undefined && data.mode !== null && String(data.mode).trim() !== '';
+  const managementMode = normalizePositionManagementMode(data.mode);
+
+  if (!symbol) {
+    return NextResponse.json({ error: true, message: 'Invalid symbol for close' }, { status: 400 });
+  }
+
+  const tradingMode = await resolveTradingMode();
+  const where: Record<string, unknown> = {
+    symbol,
+    status: 'open',
+    tradingMode,
+  };
+
+  if (modeProvided) {
+    where.managementMode = managementMode;
+  }
+
+  const position = await prisma.position.findFirst({
+    where: where as any,
+    orderBy: { createdAt: 'desc' },
+  });
+
+  if (!position) {
+    return NextResponse.json({
+      success: true,
+      message: `No open position found for ${symbol} in ${tradingMode}.`,
+    });
+  }
+
+  const closeResult = await closeTrackedPosition(position);
+  if (!closeResult.ok) {
+    const errDetail = `No se pudo cerrar ${symbol} por senal externa: ${closeResult.message}`;
+    await saveLastEntryError(errDetail, symbol, 'close');
+    return NextResponse.json({ error: true, message: closeResult.message, details: closeResult.details }, { status: closeResult.status });
+  }
+
+  await writeAuditLog({
+    action: 'position.close.signal',
+    userId: auth?.user?.id,
+    targetType: 'position',
+    targetId: String(position.id),
+    metadata: {
+      symbol: closeResult.symbol,
+      tradingMode: closeResult.tradingMode,
+      managementMode,
+      trigger: auth ? auth.authType : 'webhook',
+    },
+    req,
+  });
+
+  await prisma.setting.upsert({
+    where: { key: 'last_entry_error' },
+    update: { value: '' },
+    create: { key: 'last_entry_error', value: '' },
+  });
+
+  return NextResponse.json({
+    success: true,
+    message: `Position closed in ${closeResult.tradingMode} for ${closeResult.symbol}`,
+  });
+}
 
 const extractOrderData = (detailResponse: any) => detailResponse?.data?.[0] || detailResponse?.data || {};
 const toDepthFromWsQuote = (quote: any) => {
@@ -89,6 +167,7 @@ async function executeEntry(
     const symbol = bitgetNormalizeSymbol(data.symbol || '');
     let amount = parseFloat(data.amount) || 0;
     const type = String(data.type || '').toLowerCase();
+    const managementMode = normalizePositionManagementMode(data.mode) as PositionManagementMode;
     const origin = data.origin ? String(data.origin) : null;
     const timeframe = data.timeframe ? String(data.timeframe) : null;
     const incomingQuantity = parseFloat(data.quantity || data.contracts) || 0;
@@ -111,19 +190,25 @@ async function executeEntry(
       data.target_price,
       data.tpPrice,
       data.tp_price,
+      data.spPrice,
+      data.sp_price,
+      data.sp,
     );
     const allowTakerFallback = data.allowTakerFallback === undefined
       ? true
       : String(data.allowTakerFallback || '').toLowerCase() === 'true';
     const takerFallbackMode = String(data.takerFallbackMode || 'market').toLowerCase() === 'ioc' ? 'ioc' : 'market';
 
+    if (type === 'close') {
+      return closePositionFromEntrySignal(data, req, auth);
+    }
+
     const botEnabled = await prisma.setting.findUnique({ where: { key: 'bot_enabled' } });
     if (botEnabled?.value === '0') {
       return NextResponse.json({ success: true, message: 'Bot disabled' });
     }
 
-    const modeSetting = await prisma.setting.findUnique({ where: { key: 'trading_mode' } });
-    const tradingMode = (modeSetting?.value || 'demo') as TradingMode;
+    const tradingMode = await resolveTradingMode();
 
     const customAmountSetting = await prisma.setting.findUnique({ where: { key: 'custom_amount' } });
     const leverageEnabledSetting = await prisma.setting.findUnique({ where: { key: 'leverage_enabled' } });
@@ -404,15 +489,29 @@ async function executeEntry(
         (type === 'buy' && normalizedRequestedTakeProfit > entryPrice) ||
         (type === 'sell' && normalizedRequestedTakeProfit < entryPrice)
       );
-    const stopPrice = isRequestedStopValid
+    const stopPrice = managementMode === 'self'
       ? normalizedRequestedStop
-      : legacyStopPrice;
+      : (isRequestedStopValid ? normalizedRequestedStop : legacyStopPrice);
     const takeProfitPrice = isRequestedTakeProfitValid ? normalizedRequestedTakeProfit : null;
-    const slSide = type === 'buy' ? 'SELL' : 'BUY';
-    const slResponse = await bitgetPlaceStopMarket(symbol, slSide as 'BUY' | 'SELL', stopPrice, filledSize, tradingMode);
+    const slSide = (type === 'buy' ? 'SELL' : 'BUY') as 'BUY' | 'SELL';
+    const rollbackCloseSide = slSide;
 
-    if (!bitgetOrderSuccess(slResponse)) {
-      await bitgetClosePosition(symbol, side as 'BUY' | 'SELL', filledSize, tradingMode);
+    if (managementMode === 'self' && !isRequestedStopValid) {
+      await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode);
+      const errDetail = `Mode self requiere un stop valido para ${symbol}. Rollback ejecutado.`;
+      await saveLastEntryError(errDetail, symbol, type);
+      return NextResponse.json({ error: true, message: errDetail }, { status: 400 });
+    }
+
+    const shouldPlaceInitialStop = managementMode === 'auto';
+    let slResponse: any = null;
+
+    if (shouldPlaceInitialStop) {
+      slResponse = await bitgetPlaceStopMarket(symbol, slSide, stopPrice!, filledSize, tradingMode);
+    }
+
+    if (shouldPlaceInitialStop && !bitgetOrderSuccess(slResponse)) {
+      await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode);
       const errDetail = `SL rechazado por Bitget (${tradingMode}) para ${symbol}. Rollback ejecutado.`;
       await saveLastEntryError(errDetail, symbol, type);
       return NextResponse.json({ error: true, message: errDetail, detail: slResponse }, { status: 500 });
@@ -422,11 +521,12 @@ async function executeEntry(
       data: {
         symbol,
         positionType: type,
+        managementMode,
         amount,
         quantity: filledSize,
         entryPrice,
         requestedEntryPrice,
-        stopLoss: stopPrice,
+        stopLoss: stopPrice!,
         takeProfit: takeProfitPrice,
         status: 'open',
         tradingMode,
@@ -444,6 +544,7 @@ async function executeEntry(
       metadata: {
         symbol,
         tradingMode,
+        managementMode,
         type,
         amount,
         quantity: filledSize,
@@ -474,6 +575,7 @@ async function executeEntry(
         requestedStopAccepted: isRequestedStopValid,
         legacyStopPrice,
         appliedStopPrice: stopPrice,
+        initialStopOrderPlaced: shouldPlaceInitialStop,
         requestedTakeProfitPrice,
         normalizedRequestedTakeProfit,
         requestedTakeProfitAccepted: isRequestedTakeProfitValid,
@@ -491,6 +593,7 @@ async function executeEntry(
     return NextResponse.json({
       success: true,
       message: `Position opened in ${tradingMode} for ${symbol}`,
+      managementMode,
       executionMode,
       entryPrice,
       quantity: filledSize,
@@ -501,11 +604,12 @@ async function executeEntry(
         realEntryFee,
       },
       stop: {
-        mode: isRequestedStopValid ? 'signal' : 'legacy',
+        mode: managementMode === 'self' ? 'external' : (isRequestedStopValid ? 'signal' : 'legacy'),
         requested: requestedStopPrice,
         accepted: isRequestedStopValid,
         applied: stopPrice,
         fallback: legacyStopPrice,
+        orderPlaced: shouldPlaceInitialStop,
       },
       takeProfit: {
         requested: requestedTakeProfitPrice,

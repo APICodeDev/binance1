@@ -162,6 +162,7 @@ final class AppViewModel: ObservableObject {
         authUser = nil
         uploadedPushDeviceToken = ""
         KeychainStore.clearToken()
+        TradeNotificationCoordinator.shared.resetAll()
         openPositions = []
         closedPositions = []
         stats = nil
@@ -299,6 +300,10 @@ final class AppViewModel: ObservableObject {
             openPositions = payload.open
             closedPositions = payload.history
             totalPnl = payload.totalPnl
+            await TradeNotificationCoordinator.shared.processPositionsSnapshot(
+                mode: payload.mode ?? tradingMode,
+                payload: payload
+            )
         } catch {
             errorMessage = "Positions: \(error.localizedDescription)"
         }

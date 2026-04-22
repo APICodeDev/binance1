@@ -95,7 +95,9 @@ final class BackgroundSyncService {
             let mode = settings.trading_mode
 
             try await api.runMonitor(baseURL: baseURL, token: token, mode: mode)
-            _ = try? await api.getPositions(baseURL: baseURL, token: token, mode: mode)
+            if let positions = try? await api.getPositions(baseURL: baseURL, token: token, mode: mode) {
+                await TradeNotificationCoordinator.shared.processPositionsSnapshot(mode: positions.mode ?? mode, payload: positions)
+            }
 
             saveSuccess()
             return .newData

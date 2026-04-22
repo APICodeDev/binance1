@@ -12,6 +12,7 @@ model Position {
   id                   Int       @id @default(autoincrement())
   symbol               String
   positionType         String    @map("position_type") // 'buy' or 'sell'
+  managementMode       String    @default("auto") @map("management_mode") // 'auto' or 'self'
   amount               Float
   quantity             Float
   entryPrice           Float     @map("entry_price")

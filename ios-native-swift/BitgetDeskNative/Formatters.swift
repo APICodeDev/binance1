@@ -16,6 +16,15 @@ enum AppFormatters {
         return formatter.string(from: NSNumber(value: value)) ?? String(format: "%.2f", value)
     }
 
+    static func signedCompact(_ value: Double) -> String {
+        let prefix = value >= 0 ? "+" : ""
+        return "\(prefix)\(compact(value))"
+    }
+
+    static func currency(for tradingMode: String) -> String {
+        tradingMode == "live" ? "USDC" : "USDT"
+    }
+
     static func dateTime(_ iso: String?) -> String {
         guard let iso else { return "-" }
         let formatter = ISO8601DateFormatter()

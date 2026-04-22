@@ -48,6 +48,7 @@ struct PositionsPayload: Codable {
     let open: [Position]
     let history: [Position]
     let totalPnl: Double
+    let mode: String?
 }
 
 struct AccountOverviewPayload: Codable {
