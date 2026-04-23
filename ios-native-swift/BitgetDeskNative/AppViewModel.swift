@@ -428,20 +428,12 @@ final class AppViewModel: ObservableObject {
 
         if !pushPermissionRequested {
             do {
-                let granted = try await center.requestAuthorization(options: [.alert, .badge, .sound])
+                _ = try await center.requestAuthorization(options: [.alert, .badge, .sound])
                 pushPermissionRequested = true
-                if granted {
-                    UIApplication.shared.registerForRemoteNotifications()
-                }
             } catch {
                 errorMessage = "Push permission: \(error.localizedDescription)"
             }
             return
-        }
-
-        let settings = await center.notificationSettings()
-        if settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional || settings.authorizationStatus == .ephemeral {
-            UIApplication.shared.registerForRemoteNotifications()
         }
     }
 
