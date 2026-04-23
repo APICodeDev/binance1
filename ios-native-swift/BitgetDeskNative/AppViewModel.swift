@@ -234,6 +234,16 @@ final class AppViewModel: ObservableObject {
         tradingMode == "live" ? "USDC" : "USDT"
     }
 
+    private func shouldSilenceTransientError(_ error: Error) -> Bool {
+        guard let apiError = error as? APIError else { return false }
+        return apiError.isTransient
+    }
+
+    private func presentNonCriticalError(_ prefix: String, error: Error) {
+        guard !shouldSilenceTransientError(error) else { return }
+        errorMessage = "\(prefix): \(error.localizedDescription)"
+    }
+
     private var hasPersistedSessionCandidate: Bool {
         token != nil || !(HTTPCookieStorage.shared.cookies ?? []).isEmpty
     }
@@ -450,7 +460,7 @@ final class AppViewModel: ObservableObject {
             profitSoundEnabled = settings.profit_sound_enabled == "1"
             profitSoundFile = settings.profit_sound_file
         } catch {
-            errorMessage = "Settings: \(error.localizedDescription)"
+            presentNonCriticalError("Settings", error: error)
         }
     }
 
@@ -465,7 +475,7 @@ final class AppViewModel: ObservableObject {
                 payload: payload
             )
         } catch {
-            errorMessage = "Positions: \(error.localizedDescription)"
+            presentNonCriticalError("Positions", error: error)
             return .empty
         }
     }
@@ -478,7 +488,7 @@ final class AppViewModel: ObservableObject {
         do {
             bookmap = try await api.getBookmap(baseURL: baseURL, token: token, symbol: bookmapSymbol)
         } catch {
-            errorMessage = "Bookmap: \(error.localizedDescription)"
+            presentNonCriticalError("Bookmap", error: error)
         }
     }
 
@@ -486,7 +496,7 @@ final class AppViewModel: ObservableObject {
         do {
             stats = try await api.getStats(baseURL: baseURL, token: token)
         } catch {
-            errorMessage = "Stats: \(error.localizedDescription)"
+            presentNonCriticalError("Stats", error: error)
         }
     }
 
@@ -494,7 +504,7 @@ final class AppViewModel: ObservableObject {
         do {
             heatmapPaper = try await api.getHeatmapPaper(baseURL: baseURL, token: token)
         } catch {
-            errorMessage = "Heatmap Paper: \(error.localizedDescription)"
+            presentNonCriticalError("Heatmap Paper", error: error)
         }
     }
 
@@ -502,7 +512,7 @@ final class AppViewModel: ObservableObject {
         do {
             accountOverview = try await api.getAccountOverview(baseURL: baseURL, token: token)
         } catch {
-            errorMessage = "Account Overview: \(error.localizedDescription)"
+            presentNonCriticalError("Account Overview", error: error)
         }
     }
 
@@ -510,7 +520,7 @@ final class AppViewModel: ObservableObject {
         do {
             apiTokens = try await api.getTokens(baseURL: baseURL, token: token)
         } catch {
-            errorMessage = "API Tokens: \(error.localizedDescription)"
+            presentNonCriticalError("API Tokens", error: error)
         }
     }
 
@@ -518,7 +528,7 @@ final class AppViewModel: ObservableObject {
         do {
             auditLogs = try await api.getAuditLogs(baseURL: baseURL, token: token)
         } catch {
-            errorMessage = "Audit Logs: \(error.localizedDescription)"
+            presentNonCriticalError("Audit Logs", error: error)
         }
     }
 
@@ -526,7 +536,7 @@ final class AppViewModel: ObservableObject {
         do {
             availableSounds = try await api.getSounds(baseURL: baseURL, token: token)
         } catch {
-            errorMessage = "Sounds: \(error.localizedDescription)"
+            presentNonCriticalError("Sounds", error: error)
         }
     }
 
@@ -544,7 +554,7 @@ final class AppViewModel: ObservableObject {
             try await api.runMonitor(baseURL: baseURL, token: token, mode: tradingMode)
             await loadPositions()
         } catch {
-            errorMessage = error.localizedDescription
+            presentNonCriticalError("Monitor", error: error)
         }
     }
 

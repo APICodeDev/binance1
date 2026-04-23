@@ -2,7 +2,7 @@ import Foundation
 
 enum APIError: LocalizedError {
     case invalidURL
-    case server(String)
+    case server(statusCode: Int?, message: String)
     case unauthorized
     case transport(String)
     case decoding(String)
@@ -11,7 +11,7 @@ enum APIError: LocalizedError {
         switch self {
         case .invalidURL:
             return "Invalid server URL."
-        case .server(let message):
+        case .server(_, let message):
             return message
         case .unauthorized:
             return "Unauthorized. Please sign in again."
@@ -21,10 +21,29 @@ enum APIError: LocalizedError {
             return message
         }
     }
+
+    var isTransient: Bool {
+        switch self {
+        case .server(let statusCode, _):
+            return statusCode == 429 || statusCode == 502 || statusCode == 503 || statusCode == 504
+        case .transport(let message):
+            let lowered = message.lowercased()
+            return lowered.contains("timed out")
+                || lowered.contains("offline")
+                || lowered.contains("network connection was lost")
+                || lowered.contains("cannot connect")
+                || lowered.contains("could not connect")
+                || lowered.contains("dns")
+                || lowered.contains("host")
+        default:
+            return false
+        }
+    }
 }
 
 final class APIClient {
     static let shared = APIClient()
+    private let retryDelaysNs: [UInt64] = [600_000_000, 1_400_000_000]
 
     private let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
@@ -59,68 +78,94 @@ final class APIClient {
         token: String? = nil,
         type: T.Type
     ) async throws -> T {
-        let url = try buildURL(baseURL: baseURL, path: path)
-        var request = URLRequest(url: url)
-        request.httpMethod = method
-        request.httpBody = body
-        request.timeoutInterval = 20
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let token, !token.isEmpty {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
+        let shouldRetry = method == "GET"
+        let maxAttempts = shouldRetry ? (retryDelaysNs.count + 1) : 1
+        var lastError: Error?
 
-        let configuration = URLSessionConfiguration.default
-        configuration.httpCookieAcceptPolicy = .always
-        configuration.httpShouldSetCookies = true
-        configuration.httpCookieStorage = HTTPCookieStorage.shared
-
-        let session = URLSession(configuration: configuration)
-
-        do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                throw APIError.transport("Invalid server response.")
-            }
-
-            if http.statusCode == 401 || http.statusCode == 403 {
-                throw APIError.unauthorized
-            }
-
-            guard (200...299).contains(http.statusCode) else {
-                if let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    let detailMessage: String?
-                    if let detailString = payload["detail"] as? String {
-                        detailMessage = detailString
-                    } else if let detailObject = payload["detail"] {
-                        if JSONSerialization.isValidJSONObject(detailObject),
-                           let detailData = try? JSONSerialization.data(withJSONObject: detailObject),
-                           let detailString = String(data: detailData, encoding: .utf8) {
-                            detailMessage = detailString
-                        } else {
-                            detailMessage = String(describing: detailObject)
-                        }
-                    } else {
-                        detailMessage = nil
-                    }
-
-                    let message = detailMessage ?? (payload["message"] as? String) ?? "Request failed: \(http.statusCode)"
-                    throw APIError.server(message)
-                }
-                throw APIError.server("Request failed: \(http.statusCode)")
-            }
-
+        for attempt in 0..<maxAttempts {
             do {
-                return try decoder.decode(T.self, from: data)
-            } catch let decodingError as DecodingError {
-                throw APIError.decoding("Response decoding failed: \(describeDecodingError(decodingError))")
+                let url = try buildURL(baseURL: baseURL, path: path)
+                var request = URLRequest(url: url)
+                request.httpMethod = method
+                request.httpBody = body
+                request.timeoutInterval = 20
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                if let token, !token.isEmpty {
+                    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                }
+
+                let configuration = URLSessionConfiguration.default
+                configuration.httpCookieAcceptPolicy = .always
+                configuration.httpShouldSetCookies = true
+                configuration.httpCookieStorage = HTTPCookieStorage.shared
+
+                let session = URLSession(configuration: configuration)
+                let (data, response) = try await session.data(for: request)
+                guard let http = response as? HTTPURLResponse else {
+                    throw APIError.transport("Invalid server response.")
+                }
+
+                if http.statusCode == 401 || http.statusCode == 403 {
+                    throw APIError.unauthorized
+                }
+
+                guard (200...299).contains(http.statusCode) else {
+                    if let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                        let detailMessage: String?
+                        if let detailString = payload["detail"] as? String {
+                            detailMessage = detailString
+                        } else if let detailObject = payload["detail"] {
+                            if JSONSerialization.isValidJSONObject(detailObject),
+                               let detailData = try? JSONSerialization.data(withJSONObject: detailObject),
+                               let detailString = String(data: detailData, encoding: .utf8) {
+                                detailMessage = detailString
+                            } else {
+                                detailMessage = String(describing: detailObject)
+                            }
+                        } else {
+                            detailMessage = nil
+                        }
+
+                        let message = detailMessage ?? (payload["message"] as? String) ?? "Request failed: \(http.statusCode)"
+                        throw APIError.server(statusCode: http.statusCode, message: message)
+                    }
+                    throw APIError.server(statusCode: http.statusCode, message: "Request failed: \(http.statusCode)")
+                }
+
+                do {
+                    return try decoder.decode(T.self, from: data)
+                } catch let decodingError as DecodingError {
+                    throw APIError.decoding("Response decoding failed: \(describeDecodingError(decodingError))")
+                } catch {
+                    throw APIError.decoding("Response decoding failed: \(error.localizedDescription)")
+                }
+            } catch let error as APIError {
+                lastError = error
+                if shouldRetry && error.isTransient && attempt < retryDelaysNs.count {
+                    try? await Task.sleep(nanoseconds: retryDelaysNs[attempt])
+                    continue
+                }
+                throw error
+            } catch let urlError as URLError {
+                let apiError = APIError.transport(urlError.localizedDescription)
+                lastError = apiError
+                if shouldRetry && apiError.isTransient && attempt < retryDelaysNs.count {
+                    try? await Task.sleep(nanoseconds: retryDelaysNs[attempt])
+                    continue
+                }
+                throw apiError
             } catch {
-                throw APIError.decoding("Response decoding failed: \(error.localizedDescription)")
+                let apiError = APIError.transport(error.localizedDescription)
+                lastError = apiError
+                if shouldRetry && apiError.isTransient && attempt < retryDelaysNs.count {
+                    try? await Task.sleep(nanoseconds: retryDelaysNs[attempt])
+                    continue
+                }
+                throw apiError
             }
-        } catch let error as APIError {
-            throw error
-        } catch {
-            throw APIError.transport(error.localizedDescription)
         }
+
+        throw lastError ?? APIError.transport("Unknown request error.")
     }
 
     private func requestVoid(
@@ -141,7 +186,7 @@ final class APIClient {
         ])
         let response = try await request(baseURL: baseURL, path: "/api/auth/login", method: "POST", body: body, type: LoginResponseWrapper.self)
         guard let payload = response.data else {
-            throw APIError.server("Login payload is empty.")
+            throw APIError.server(statusCode: nil, message: "Login payload is empty.")
         }
         return (
             user: AuthUser(id: payload.user.id, email: payload.user.email, username: payload.user.username, role: payload.user.role, authType: payload.authType),
@@ -152,7 +197,7 @@ final class APIClient {
     func authMe(baseURL: String, token: String?) async throws -> AuthUser {
         let response = try await request(baseURL: baseURL, path: "/api/auth/me", token: token, type: AuthMeWrapper.self)
         guard let payload = response.data else {
-            throw APIError.server("Session not found.")
+            throw APIError.server(statusCode: nil, message: "Session not found.")
         }
         return AuthUser(id: payload.user.id, email: payload.user.email, username: payload.user.username, role: payload.user.role, authType: payload.authType)
     }
@@ -203,7 +248,7 @@ final class APIClient {
         let encoded = symbol.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? symbol
         let response = try await request(baseURL: baseURL, path: "/api/bookmap?symbol=\(encoded)", token: token, type: BookmapResponse.self)
         guard let data = response.data else {
-            throw APIError.server("Bookmap data is empty.")
+            throw APIError.server(statusCode: nil, message: "Bookmap data is empty.")
         }
         return data
     }
@@ -211,7 +256,7 @@ final class APIClient {
     func getStats(baseURL: String, token: String?) async throws -> StatsPayload {
         let response = try await request(baseURL: baseURL, path: "/api/stats", token: token, type: StatsResponse.self)
         guard let data = response.data else {
-            throw APIError.server("Stats data is empty.")
+            throw APIError.server(statusCode: nil, message: "Stats data is empty.")
         }
         return data
     }
@@ -219,7 +264,7 @@ final class APIClient {
     func getHeatmapPaper(baseURL: String, token: String?) async throws -> HeatmapPaperPayload {
         let response = try await request(baseURL: baseURL, path: "/api/heatmap-paper", token: token, type: HeatmapPaperResponse.self)
         guard let data = response.data else {
-            throw APIError.server("Heatmap paper data is empty.")
+            throw APIError.server(statusCode: nil, message: "Heatmap paper data is empty.")
         }
         return data
     }
@@ -232,7 +277,7 @@ final class APIClient {
     func getAccountOverview(baseURL: String, token: String?) async throws -> AccountOverviewPayload {
         let response = try await request(baseURL: baseURL, path: "/api/account-overview", token: token, type: OverviewResponse.self)
         guard let data = response.data else {
-            throw APIError.server("Account overview data is empty.")
+            throw APIError.server(statusCode: nil, message: "Account overview data is empty.")
         }
         return data
     }
