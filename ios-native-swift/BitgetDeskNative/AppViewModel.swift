@@ -9,7 +9,7 @@ private struct TradeNotificationState: Codable {
     let closedIDs: [Int]
 }
 
-private struct TradeNotificationDelta {
+struct TradeNotificationDelta {
     let newOpenPositions: [Position]
     let newClosedPositions: [Position]
 
