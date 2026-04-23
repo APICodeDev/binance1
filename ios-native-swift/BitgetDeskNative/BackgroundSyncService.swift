@@ -43,7 +43,7 @@ final class BackgroundSyncService {
     private let lastErrorKey = "native.background.lastError"
 
     static var taskIdentifier: String {
-        "\(Bundle.main.bundleIdentifier ?? "com.bitgetdesk.nativeclone").apprefresh"
+        "\(Bundle.main.bundleIdentifier ?? "com.miquelgd.bitgetdesk").apprefresh"
     }
 
     private init() {}

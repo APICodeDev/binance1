@@ -2,7 +2,7 @@ import SwiftUI
 import WidgetKit
 
 private enum TradingWidgetStore {
-    static let appGroupID = "group.com.bitgetdesk.nativeclone.shared"
+    static let appGroupID = "group.com.miquelgd.bitgetdesk.shared"
 
     private enum Keys {
         static let securedAmount = "widget.securedAmount"

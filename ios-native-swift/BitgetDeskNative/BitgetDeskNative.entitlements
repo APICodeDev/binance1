@@ -4,7 +4,7 @@
 <dict>
 	<key>application-groups</key>
 	<array>
-		<string>group.com.bitgetdesk.nativeclone.shared</string>
+		<string>group.com.miquelgd.bitgetdesk.shared</string>
 	</array>
 	<key>aps-environment</key>
 	<string>$(APS_ENVIRONMENT)</string>

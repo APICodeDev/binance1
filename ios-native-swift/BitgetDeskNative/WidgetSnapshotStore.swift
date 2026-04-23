@@ -2,7 +2,7 @@ import Foundation
 import WidgetKit
 
 enum WidgetSnapshotStore {
-    static let appGroupID = "group.com.bitgetdesk.nativeclone.shared"
+    static let appGroupID = "group.com.miquelgd.bitgetdesk.shared"
 
     private enum Keys {
         static let securedAmount = "widget.securedAmount"
