@@ -1695,7 +1695,7 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 xl:grid-cols-[repeat(auto-fit,minmax(220px,1fr))]">
             <div className="bg-slate-900 border border-slate-800 px-4 py-3 rounded-2xl flex items-center gap-3">
               <Settings size={18} className="text-slate-500 shrink-0" />
               <div className="flex flex-col min-w-0">
