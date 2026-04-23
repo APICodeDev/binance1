@@ -295,6 +295,20 @@ export const bitgetNormalizePriceByContract = (price: number, exchangeInfo: any)
   return parseFloat(normalized.toFixed(pricePlace));
 };
 
+export const bitgetNormalizePriceByContractDirectional = (
+  price: number,
+  exchangeInfo: any,
+  direction: 'down' | 'up' = 'down'
+) => {
+  const pricePlace = parseInt(exchangeInfo?.pricePlace || '4', 10);
+  const tickSize = bitgetGetTickSize(exchangeInfo);
+  const scaled = price / tickSize;
+  const normalized = direction === 'up'
+    ? Math.ceil(scaled) * tickSize
+    : Math.floor(scaled) * tickSize;
+  return parseFloat(normalized.toFixed(pricePlace));
+};
+
 export const bitgetNormalizeSizeByContract = (size: number, exchangeInfo: any) => {
   const minTradeNum = parseFloat(exchangeInfo?.minTradeNum || '0.001');
   const sizeMultiplier = parseFloat(exchangeInfo?.sizeMultiplier || '0');
@@ -334,6 +348,36 @@ export const bitgetPlaceStopMarket = async (symbol: string, side: 'BUY' | 'SELL'
   }
 
   return bitgetRequest('/api/v2/mix/order/place-plan-order', params, 'POST', true, tradingMode);
+};
+
+export const bitgetPlaceTpslMarket = async (
+  symbol: string,
+  planType: 'profit_plan' | 'loss_plan',
+  holdSide: 'long' | 'short',
+  triggerPrice: number,
+  quantity: number,
+  clientOid?: string,
+  tradingMode: 'demo' | 'live' = 'demo'
+) => {
+  const sym = symbol.toUpperCase();
+  const precision = await bitgetGetPricePrecision(sym, tradingMode);
+  const params: Record<string, string> = {
+    symbol: sym,
+    productType: getProductType(sym),
+    marginCoin: getMarginCoin(sym),
+    planType,
+    triggerPrice: triggerPrice.toFixed(precision),
+    triggerType: 'mark_price',
+    executePrice: '0',
+    holdSide,
+    size: quantity.toString(),
+  };
+
+  if (clientOid) {
+    params.clientOid = clientOid;
+  }
+
+  return bitgetRequest('/api/v2/mix/order/place-tpsl-order', params, 'POST', true, tradingMode);
 };
 
 export const bitgetPlaceLimitOrder = async (
@@ -592,9 +636,18 @@ export const bitgetCancelAllOrders = async (symbol: string, tradingMode: 'demo' 
     productType: getProductType(sym),
     marginCoin: getMarginCoin(sym),
   }, method, true, tradingMode);
-  
-  const r2 = await bitgetCancelAlgoOrders(sym, tradingMode);
-  return { normal: r1, algo: r2 };
+
+  const planTypes = ['normal_plan', 'profit_plan', 'loss_plan', 'pos_profit', 'pos_loss', 'moving_plan'] as const;
+  const algo = await Promise.all(planTypes.map((planType) =>
+    bitgetRequest('/api/v2/mix/order/cancel-all-plan-order', {
+      symbol: sym,
+      productType: getProductType(sym),
+      marginCoin: getMarginCoin(sym),
+      planType,
+    }, 'POST', true, tradingMode)
+  ));
+
+  return { normal: r1, algo };
 };
 
 export const bitgetFlashClosePosition = async (

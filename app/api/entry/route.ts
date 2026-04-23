@@ -27,12 +27,14 @@ import {
   bitgetGetVipFeeRates,
   bitgetGetWsBestBidAsk,
   bitgetNormalizePriceByContract,
+  bitgetNormalizePriceByContractDirectional,
   bitgetNormalizeSizeByContract,
   bitgetNormalizeSymbol,
   bitgetOrderSuccess,
   bitgetPlaceLimitOrder,
   bitgetPlaceMarketOrder,
   bitgetPlaceStopMarket,
+  bitgetPlaceTpslMarket,
   bitgetSetLeverage,
 } from '@/lib/bitget';
 
@@ -54,6 +56,21 @@ const parseOptionalPrice = (...values: unknown[]) => {
 
   return null;
 };
+
+const parseOptionalPercent = (...values: unknown[]) => {
+  for (const value of values) {
+    const raw = String(value ?? '').trim().replace('%', '').replace(',', '.');
+    const parsed = Number.parseFloat(raw);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  return null;
+};
+
+const hasPayloadValue = (value: unknown) =>
+  value !== undefined && value !== null && String(value).trim() !== '';
 
 const resolveTradingMode = async () => {
   const modeSetting = await prisma.setting.findUnique({ where: { key: 'trading_mode' } });
@@ -180,14 +197,12 @@ async function executeEntry(
       data.stop_price ??
       data.stopLoss ??
       data.stop_loss ??
-      data.stoploss ??
       data.slPrice ??
       data.sl_price ??
       data.slprice;
     const rawRequestedTakeProfitPrice =
       data.takeProfit ??
       data.take_profit ??
-      data.takeprofit ??
       data.targetPrice ??
       data.target_price ??
       data.targetprice ??
@@ -197,6 +212,30 @@ async function executeEntry(
       data.spPrice ??
       data.sp_price ??
       data.sp;
+    const rawRequestedStopPercent =
+      data.stoploss ??
+      data.stopLossPercent ??
+      data.stop_loss_percent ??
+      data.stoploss_percent ??
+      data.stoplossPercent ??
+      data.stopPercent ??
+      data.stop_percent ??
+      data.stoppercent ??
+      data.slPercent ??
+      data.sl_percent ??
+      data.slpercent;
+    const rawRequestedTakeProfitPercent =
+      data.takeprofit ??
+      data.takeProfitPercent ??
+      data.take_profit_percent ??
+      data.takeprofit_percent ??
+      data.takeprofitPercent ??
+      data.targetPercent ??
+      data.target_percent ??
+      data.targetpercent ??
+      data.tpPercent ??
+      data.tp_percent ??
+      data.tppercent;
     const requestedEntryPrice = parseOptionalPrice(
       rawRequestedEntryPrice,
     );
@@ -206,6 +245,14 @@ async function executeEntry(
     const requestedTakeProfitPrice = parseOptionalPrice(
       rawRequestedTakeProfitPrice,
     );
+    const requestedStopPercent = parseOptionalPercent(
+      rawRequestedStopPercent,
+    );
+    const requestedTakeProfitPercent = parseOptionalPercent(
+      rawRequestedTakeProfitPercent,
+    );
+    const stopInputProvided = hasPayloadValue(rawRequestedStopPrice) || hasPayloadValue(rawRequestedStopPercent);
+    const takeProfitInputProvided = hasPayloadValue(rawRequestedTakeProfitPrice) || hasPayloadValue(rawRequestedTakeProfitPercent);
     const allowTakerFallback = data.allowTakerFallback === undefined
       ? true
       : String(data.allowTakerFallback || '').toLowerCase() === 'true';
@@ -484,17 +531,41 @@ async function executeEntry(
 
     const slPercent = 1.2 / 100;
     const rawLegacyStopPrice = type === 'buy' ? entryPrice * (1 - slPercent) : entryPrice * (1 + slPercent);
-    const legacyStopPrice = bitgetNormalizePriceByContract(rawLegacyStopPrice, exchangeInfo);
-    const normalizedRequestedStop = requestedStopPrice !== null
-      ? bitgetNormalizePriceByContract(requestedStopPrice, exchangeInfo)
+    const stopNormalizeDirection = type === 'buy' ? 'down' : 'up';
+    const takeProfitNormalizeDirection = type === 'buy' ? 'up' : 'down';
+    const normalizeExitPrice = (price: number | null, direction: 'down' | 'up') =>
+      price !== null
+        ? bitgetNormalizePriceByContractDirectional(price, exchangeInfo, direction)
+        : null;
+    const computedStopPriceFromPercent = requestedStopPercent !== null
+      ? (type === 'buy'
+          ? entryPrice * (1 - (requestedStopPercent / 100))
+          : entryPrice * (1 + (requestedStopPercent / 100)))
+      : null;
+    const computedTakeProfitPriceFromPercent = requestedTakeProfitPercent !== null
+      ? (type === 'buy'
+          ? entryPrice * (1 + (requestedTakeProfitPercent / 100))
+          : entryPrice * (1 - (requestedTakeProfitPercent / 100)))
+      : null;
+    const resolvedRequestedStopPrice = requestedStopPrice !== null
+      ? requestedStopPrice
+      : computedStopPriceFromPercent;
+    const resolvedRequestedTakeProfitPrice = requestedTakeProfitPrice !== null
+      ? requestedTakeProfitPrice
+      : computedTakeProfitPriceFromPercent;
+    const stopInputSource = requestedStopPrice !== null ? 'price' : requestedStopPercent !== null ? 'percent' : 'legacy';
+    const takeProfitInputSource = requestedTakeProfitPrice !== null ? 'price' : requestedTakeProfitPercent !== null ? 'percent' : 'none';
+    const legacyStopPrice = normalizeExitPrice(rawLegacyStopPrice, stopNormalizeDirection);
+    const normalizedRequestedStop = resolvedRequestedStopPrice !== null
+      ? normalizeExitPrice(resolvedRequestedStopPrice, stopNormalizeDirection)
       : null;
     const isRequestedStopValid = normalizedRequestedStop !== null &&
       (
         (type === 'buy' && normalizedRequestedStop < entryPrice) ||
         (type === 'sell' && normalizedRequestedStop > entryPrice)
       );
-    const normalizedRequestedTakeProfit = requestedTakeProfitPrice !== null
-      ? bitgetNormalizePriceByContract(requestedTakeProfitPrice, exchangeInfo)
+    const normalizedRequestedTakeProfit = resolvedRequestedTakeProfitPrice !== null
+      ? normalizeExitPrice(resolvedRequestedTakeProfitPrice, takeProfitNormalizeDirection)
       : null;
     const isRequestedTakeProfitValid = normalizedRequestedTakeProfit !== null &&
       (
@@ -506,30 +577,69 @@ async function executeEntry(
       : (isRequestedStopValid ? normalizedRequestedStop : legacyStopPrice);
     const takeProfitPrice = isRequestedTakeProfitValid ? normalizedRequestedTakeProfit : null;
     const slSide = (type === 'buy' ? 'SELL' : 'BUY') as 'BUY' | 'SELL';
+    const holdSide = (type === 'buy' ? 'long' : 'short') as 'long' | 'short';
     const rollbackCloseSide = slSide;
+    const shouldRejectInvalidStop = (managementMode === 'self' && stopInputProvided) || hasPayloadValue(rawRequestedStopPercent);
+    const shouldRejectInvalidTakeProfit = (managementMode === 'self' && takeProfitInputProvided) || hasPayloadValue(rawRequestedTakeProfitPercent);
 
-    if (managementMode === 'self' && !isRequestedStopValid) {
+    if ((managementMode === 'self' && !isRequestedStopValid) || (shouldRejectInvalidStop && stopInputProvided && !isRequestedStopValid)) {
       await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode);
-      const errDetail = `Mode self requiere un stop valido para ${symbol}. ` +
-        `JSON stop=${JSON.stringify(rawRequestedStopPrice)}, takeProfit=${JSON.stringify(rawRequestedTakeProfitPrice)}, ` +
-        `parsedStop=${requestedStopPrice}, normalizedStop=${normalizedRequestedStop}, entry=${entryPrice}. ` +
+      const errDetail = `Stop invalido para ${symbol}. ` +
+        `JSON stop=${JSON.stringify(rawRequestedStopPrice)}, stopPercent=${JSON.stringify(rawRequestedStopPercent)}, ` +
+        `takeProfit=${JSON.stringify(rawRequestedTakeProfitPrice)}, takeProfitPercent=${JSON.stringify(rawRequestedTakeProfitPercent)}, ` +
+        `parsedStop=${requestedStopPrice}, parsedStopPercent=${requestedStopPercent}, resolvedStop=${resolvedRequestedStopPrice}, ` +
+        `normalizedStop=${normalizedRequestedStop}, entry=${entryPrice}. ` +
         `Rollback ejecutado.`;
       await saveLastEntryError(errDetail, symbol, type);
       return NextResponse.json({ error: true, message: errDetail }, { status: 400 });
     }
 
-    const shouldPlaceInitialStop = managementMode === 'auto';
+    if (shouldRejectInvalidTakeProfit && takeProfitInputProvided && !isRequestedTakeProfitValid) {
+      await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode);
+      const errDetail = `Take profit invalido para ${symbol}. ` +
+        `JSON takeProfit=${JSON.stringify(rawRequestedTakeProfitPrice)}, takeProfitPercent=${JSON.stringify(rawRequestedTakeProfitPercent)}, ` +
+        `parsedTakeProfit=${requestedTakeProfitPrice}, parsedTakeProfitPercent=${requestedTakeProfitPercent}, ` +
+        `resolvedTakeProfit=${resolvedRequestedTakeProfitPrice}, normalizedTakeProfit=${normalizedRequestedTakeProfit}, entry=${entryPrice}. ` +
+        `Rollback ejecutado.`;
+      await saveLastEntryError(errDetail, symbol, type);
+      return NextResponse.json({ error: true, message: errDetail }, { status: 400 });
+    }
+
+    const shouldPlaceInitialStop = stopPrice !== null;
+    const shouldPlaceInitialTakeProfit = takeProfitPrice !== null;
     let slResponse: any = null;
+    let tpResponse: any = null;
 
     if (shouldPlaceInitialStop) {
       slResponse = await bitgetPlaceStopMarket(symbol, slSide, stopPrice!, filledSize, tradingMode);
     }
 
     if (shouldPlaceInitialStop && !bitgetOrderSuccess(slResponse)) {
+      await bitgetCancelAllOrders(symbol, tradingMode);
       await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode);
       const errDetail = `SL rechazado por Bitget (${tradingMode}) para ${symbol}. Rollback ejecutado.`;
       await saveLastEntryError(errDetail, symbol, type);
       return NextResponse.json({ error: true, message: errDetail, detail: slResponse }, { status: 500 });
+    }
+
+    if (shouldPlaceInitialTakeProfit) {
+      tpResponse = await bitgetPlaceTpslMarket(
+        symbol,
+        'profit_plan',
+        holdSide,
+        takeProfitPrice!,
+        filledSize,
+        createClientOid(symbol),
+        tradingMode
+      );
+    }
+
+    if (shouldPlaceInitialTakeProfit && !bitgetOrderSuccess(tpResponse)) {
+      await bitgetCancelAllOrders(symbol, tradingMode);
+      await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode);
+      const errDetail = `TP rechazado por Bitget (${tradingMode}) para ${symbol}. Rollback ejecutado.`;
+      await saveLastEntryError(errDetail, symbol, type);
+      return NextResponse.json({ error: true, message: errDetail, detail: tpResponse }, { status: 500 });
     }
 
     await prisma.position.create({
@@ -586,15 +696,24 @@ async function executeEntry(
         realEntryFee,
         requestedEntryPrice,
         requestedStopPrice,
+        requestedStopPercent,
+        requestedStopInputSource: stopInputSource,
+        computedStopPriceFromPercent,
+        resolvedRequestedStopPrice,
         normalizedRequestedStop,
         requestedStopAccepted: isRequestedStopValid,
         legacyStopPrice,
         appliedStopPrice: stopPrice,
         initialStopOrderPlaced: shouldPlaceInitialStop,
         requestedTakeProfitPrice,
+        requestedTakeProfitPercent,
+        requestedTakeProfitInputSource: takeProfitInputSource,
+        computedTakeProfitPriceFromPercent,
+        resolvedRequestedTakeProfitPrice,
         normalizedRequestedTakeProfit,
         requestedTakeProfitAccepted: isRequestedTakeProfitValid,
         appliedTakeProfitPrice: takeProfitPrice,
+        initialTakeProfitOrderPlaced: shouldPlaceInitialTakeProfit,
       },
       req,
     });
@@ -619,8 +738,10 @@ async function executeEntry(
         realEntryFee,
       },
       stop: {
-        mode: managementMode === 'self' ? 'external' : (isRequestedStopValid ? 'signal' : 'legacy'),
+        mode: managementMode === 'self' ? stopInputSource : (isRequestedStopValid ? stopInputSource : 'legacy'),
         requested: requestedStopPrice,
+        requestedPercent: requestedStopPercent,
+        resolved: resolvedRequestedStopPrice,
         accepted: isRequestedStopValid,
         applied: stopPrice,
         fallback: legacyStopPrice,
@@ -628,8 +749,11 @@ async function executeEntry(
       },
       takeProfit: {
         requested: requestedTakeProfitPrice,
+        requestedPercent: requestedTakeProfitPercent,
+        resolved: resolvedRequestedTakeProfitPrice,
         accepted: isRequestedTakeProfitValid,
         applied: takeProfitPrice,
+        orderPlaced: shouldPlaceInitialTakeProfit,
       },
     });
   } catch (error: any) {
