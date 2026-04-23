@@ -111,6 +111,8 @@ final class TradeNotificationCoordinator {
     }
 
     private func enqueueNotification(identifier: String, title: String, body: String) async {
+        guard shouldDeliverBackgroundNotification else { return }
+
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
         let allowedStatuses: Set<UNAuthorizationStatus> = [.authorized, .provisional, .ephemeral]
@@ -124,6 +126,11 @@ final class TradeNotificationCoordinator {
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
         try? await center.add(request)
+    }
+
+    private var shouldDeliverBackgroundNotification: Bool {
+        let state = UIApplication.shared.applicationState
+        return state == .background || state == .inactive
     }
 
     private func stateKey(mode: String) -> String {
