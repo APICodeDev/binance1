@@ -242,8 +242,16 @@ final class AppViewModel: ObservableObject {
     }
 
     private func shouldSilenceTransientError(_ error: Error) -> Bool {
-        guard let apiError = error as? APIError else { return false }
-        return apiError.isTransient
+        if error is CancellationError {
+            return true
+        }
+
+        guard let apiError = error as? APIError else {
+            let lowered = error.localizedDescription.lowercased()
+            return lowered.contains("cancelled") || lowered.contains("canceled")
+        }
+
+        return apiError.isTransient || apiError.isCancellationLike
     }
 
     private func presentNonCriticalError(_ prefix: String, error: Error) {
@@ -276,12 +284,16 @@ final class AppViewModel: ObservableObject {
             startAutoRefresh()
             BackgroundSyncService.shared.scheduleAppRefresh()
         } catch let error as APIError {
-            errorMessage = error.localizedDescription
+            if !shouldSilenceTransientError(error) {
+                errorMessage = error.localizedDescription
+            }
             if case .unauthorized = error {
                 signOut()
             }
         } catch {
-            errorMessage = error.localizedDescription
+            if !shouldSilenceTransientError(error) {
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
@@ -426,7 +438,9 @@ final class AppViewModel: ObservableObject {
             )
             uploadedPushDeviceToken = pushDeviceToken
         } catch {
-            errorMessage = "Push device: \(error.localizedDescription)"
+            if !shouldSilenceTransientError(error) {
+                errorMessage = "Push device: \(error.localizedDescription)"
+            }
         }
     }
 

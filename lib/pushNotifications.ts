@@ -16,6 +16,9 @@ async function deactivateDeviceToken(token: string) {
 
 export async function notifyAllActiveDevices(input: PushBroadcastInput) {
   if (!isAPNSConfigured()) {
+    console.warn('[push] APNs not configured. Skipping iOS notification broadcast.', {
+      title: input.title,
+    });
     return { sent: 0, skipped: true as const };
   }
 

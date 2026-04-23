@@ -39,6 +39,19 @@ enum APIError: LocalizedError {
             return false
         }
     }
+
+    var isCancellationLike: Bool {
+        switch self {
+        case .transport(let message), .decoding(let message), .server(_, let message):
+            let lowered = message.lowercased()
+            return lowered.contains("cancelled")
+                || lowered.contains("canceled")
+                || lowered.contains("cancelled.")
+                || lowered.contains("canceled.")
+        default:
+            return false
+        }
+    }
 }
 
 final class APIClient {

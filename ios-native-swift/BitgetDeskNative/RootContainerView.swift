@@ -3,6 +3,20 @@ import SwiftUI
 struct RootContainerView: View {
     @EnvironmentObject private var appModel: AppViewModel
 
+    private var visibleErrorMessage: String? {
+        guard let message = appModel.errorMessage?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !message.isEmpty else {
+            return nil
+        }
+
+        let lowered = message.lowercased()
+        guard !lowered.contains("cancelled"), !lowered.contains("canceled") else {
+            return nil
+        }
+
+        return message
+    }
+
     var body: some View {
         Group {
             if appModel.authUser != nil {
@@ -12,7 +26,7 @@ struct RootContainerView: View {
             }
         }
         .overlay(alignment: .top) {
-            if let error = appModel.errorMessage, !error.isEmpty {
+            if let error = visibleErrorMessage {
                 ErrorBanner(message: error) {
                     appModel.errorMessage = nil
                 }
