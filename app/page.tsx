@@ -577,6 +577,7 @@ export default function Dashboard() {
   const [bookmapExpanded, setBookmapExpanded] = useState(true);
   const [profitSoundEnabled, setProfitSoundEnabled] = useState(false);
   const [profitSoundFile, setProfitSoundFile] = useState('');
+  const [apiStopMode, setApiStopMode] = useState<'signal' | 'legacy'>('signal');
   const [exhaustionGuardEnabled, setExhaustionGuardEnabled] = useState(false);
   const [takeProfitAutoCloseEnabled, setTakeProfitAutoCloseEnabled] = useState(false);
   const [availableSounds, setAvailableSounds] = useState<string[]>([]);
@@ -855,6 +856,7 @@ export default function Dashboard() {
     setLeverageValue(settings.leverage_value || '1');
     setProfitSoundEnabled(settings.profit_sound_enabled === '1');
     setProfitSoundFile(settings.profit_sound_file || '');
+    setApiStopMode(settings.api_stop_mode === 'legacy' ? 'legacy' : 'signal');
     setExhaustionGuardEnabled(settings.exhaustion_guard_enabled === '1');
     setTakeProfitAutoCloseEnabled(settings.take_profit_auto_close_enabled === '1');
 
@@ -1221,6 +1223,16 @@ export default function Dashboard() {
       setTakeProfitAutoCloseEnabled(nextValue);
     } catch (error) {
       setErrorPopup(getApiErrorMessage(error, 'Unable to update take profit auto-close.'));
+    }
+  };
+
+  const toggleApiStopMode = async () => {
+    const nextValue = apiStopMode === 'signal' ? 'legacy' : 'signal';
+    try {
+      await apiClient.updateSettings({ api_stop_mode: nextValue });
+      setApiStopMode(nextValue);
+    } catch (error) {
+      setErrorPopup(getApiErrorMessage(error, 'Unable to update API initial stop mode.'));
     }
   };
 
@@ -1791,12 +1803,23 @@ export default function Dashboard() {
               <div className="flex min-w-0 flex-1 flex-col">
                 <span className="text-[9px] uppercase font-black text-slate-500 tracking-widest">API Initial Stop</span>
                 <div className="mt-1 flex items-center gap-3">
-                  <span className="rounded-xl border border-cyan-300 bg-cyan-300 px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-950">
-                    Signal Stop First
-                  </span>
+                  <button
+                    type="button"
+                    onClick={toggleApiStopMode}
+                    className={cn(
+                      "rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] transition-colors",
+                      apiStopMode === 'signal'
+                        ? "border-cyan-300 bg-cyan-300 text-slate-950"
+                        : "border-slate-700 bg-slate-950/40 text-slate-300"
+                    )}
+                  >
+                    {apiStopMode === 'signal' ? 'Signal Stop First' : 'Legacy Stop Only'}
+                  </button>
                 </div>
                 <span className="mt-1 text-[9px] font-bold uppercase tracking-widest text-slate-600">
-                  Si el JSON trae Stop Loss valido se respeta como SL inicial. Si no llega, el sistema cae al 1.2% legacy.
+                  {apiStopMode === 'signal'
+                    ? 'Si el JSON trae Stop Loss valido se respeta como SL inicial. Si no llega, el sistema cae al 1.2% legacy.'
+                    : 'Ignora el Stop Loss recibido por JSON y usa siempre el stop legacy del 1.2%.'}
                 </span>
               </div>
             </div>

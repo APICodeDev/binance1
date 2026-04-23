@@ -284,6 +284,8 @@ async function executeEntry(
     }
 
     const tradingMode = await resolveTradingMode();
+    const apiStopModeSetting = await prisma.setting.findUnique({ where: { key: 'api_stop_mode' } });
+    const apiStopMode = apiStopModeSetting?.value === 'legacy' ? 'legacy' : 'signal';
     const forcedPositionMode = (() => {
       const raw = String(process.env.BITGET_FORCE_POSITION_MODE || '').trim().toLowerCase();
       if (raw === 'hedge_mode' || raw === 'one_way_mode') {
@@ -615,7 +617,7 @@ async function executeEntry(
       );
     const stopPrice = managementMode === 'self'
       ? normalizedRequestedStop
-      : (isRequestedStopValid ? normalizedRequestedStop : legacyStopPrice);
+      : (apiStopMode === 'legacy' ? legacyStopPrice : (isRequestedStopValid ? normalizedRequestedStop : legacyStopPrice));
     const takeProfitPrice = isRequestedTakeProfitValid ? normalizedRequestedTakeProfit : null;
     const slSide = positionContext.closeSide;
     const holdSide = positionContext.holdSide;
@@ -744,6 +746,7 @@ async function executeEntry(
         requestedStopPrice,
         requestedStopPercent,
         requestedStopInputSource: stopInputSource,
+        apiStopMode,
         computedStopPriceFromPercent,
         resolvedRequestedStopPrice,
         normalizedRequestedStop,
@@ -797,7 +800,9 @@ async function executeEntry(
         realEntryFee,
       },
       stop: {
-        mode: managementMode === 'self' ? stopInputSource : (isRequestedStopValid ? stopInputSource : 'legacy'),
+        mode: managementMode === 'self'
+          ? stopInputSource
+          : (apiStopMode === 'legacy' ? 'legacy' : (isRequestedStopValid ? stopInputSource : 'legacy')),
         requested: requestedStopPrice,
         requestedPercent: requestedStopPercent,
         resolved: resolvedRequestedStopPrice,

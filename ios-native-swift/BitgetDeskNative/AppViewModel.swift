@@ -9,6 +9,13 @@ private struct TradeNotificationState: Codable {
     let closedIDs: [Int]
 }
 
+private struct TradeNotificationDelta {
+    let newOpenPositions: [Position]
+    let newClosedPositions: [Position]
+
+    static let empty = TradeNotificationDelta(newOpenPositions: [], newClosedPositions: [])
+}
+
 final class TradeNotificationCoordinator {
     static let shared = TradeNotificationCoordinator()
 
@@ -17,7 +24,7 @@ final class TradeNotificationCoordinator {
 
     private init() {}
 
-    func processPositionsSnapshot(mode: String, payload: PositionsPayload) async {
+    func processPositionsSnapshot(mode: String, payload: PositionsPayload) async -> TradeNotificationDelta {
         let state = loadState(mode: mode)
         let currentOpenIDs = payload.open.map(\.id)
         let currentClosedIDs = payload.history.map(\.id)
@@ -31,7 +38,7 @@ final class TradeNotificationCoordinator {
                     closedIDs: Array(currentClosedIDs.prefix(maxStoredClosedIDs))
                 )
             )
-            return
+            return .empty
         }
 
         let knownOpen = Set(state.openIDs)
@@ -57,6 +64,11 @@ final class TradeNotificationCoordinator {
                 closedIDs: mergedClosedIDs
             )
         )
+
+        return TradeNotificationDelta(
+            newOpenPositions: newOpenPositions,
+            newClosedPositions: newClosedPositions
+        )
     }
 
     func resetAll() {
@@ -64,6 +76,14 @@ final class TradeNotificationCoordinator {
         for key in keys {
             userDefaults.removeObject(forKey: key)
         }
+    }
+
+    func notifyConfirmedOpen(position: Position) async {
+        await notifyOpen(position: position)
+    }
+
+    func notifyConfirmedClose(position: Position, accumulatedPnL: Double) async {
+        await notifyClose(position: position, accumulatedPnL: accumulatedPnL)
     }
 
     private func notifyOpen(position: Position) async {
@@ -172,6 +192,7 @@ final class AppViewModel: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     private var refreshTick = 0
     private var notificationObservers: [NSObjectProtocol] = []
+    private let activeRefreshIntervalNs: UInt64 = 5_000_000_000
 
     init() {
         let tokenObserver = NotificationCenter.default.addObserver(
@@ -433,19 +454,24 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func loadPositions() async {
+    private func syncPositionsSnapshot() async -> TradeNotificationDelta {
         do {
             let payload = try await api.getPositions(baseURL: baseURL, token: token, mode: tradingMode)
             openPositions = payload.open
             closedPositions = payload.history
             totalPnl = payload.totalPnl
-            await TradeNotificationCoordinator.shared.processPositionsSnapshot(
+            return await TradeNotificationCoordinator.shared.processPositionsSnapshot(
                 mode: payload.mode ?? tradingMode,
                 payload: payload
             )
         } catch {
             errorMessage = "Positions: \(error.localizedDescription)"
+            return .empty
         }
+    }
+
+    func loadPositions() async {
+        _ = await syncPositionsSnapshot()
     }
 
     func loadBookmap() async {
@@ -534,7 +560,11 @@ final class AppViewModel: ObservableObject {
     func closePosition(_ position: Position) async {
         do {
             try await api.closePosition(baseURL: baseURL, token: token, id: position.id)
-            await loadPositions()
+            let delta = await syncPositionsSnapshot()
+            if delta.newClosedPositions.isEmpty,
+               let closed = closedPositions.first(where: { $0.id == position.id }) {
+                await TradeNotificationCoordinator.shared.notifyConfirmedClose(position: closed, accumulatedPnL: totalPnl)
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -565,7 +595,15 @@ final class AppViewModel: ObservableObject {
 
         do {
             try await api.openPosition(baseURL: baseURL, token: token, payload: payload)
-            await loadPositions()
+            let delta = await syncPositionsSnapshot()
+            if delta.newOpenPositions.isEmpty,
+               let opened = openPositions.first(where: {
+                   $0.symbol.uppercased() == symbol.uppercased() &&
+                   $0.positionType == side &&
+                   $0.tradingMode == tradingMode
+               }) {
+                await TradeNotificationCoordinator.shared.notifyConfirmedOpen(position: opened)
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -641,14 +679,17 @@ final class AppViewModel: ObservableObject {
         refreshTask?.cancel()
         refreshTick = 0
         refreshTask = Task {
+            await refreshAll()
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                try? await Task.sleep(nanoseconds: activeRefreshIntervalNs)
                 if Task.isCancelled { break }
-                await runMonitor()
                 refreshTick += 1
                 if refreshTick % 6 == 0 {
                     await refreshAll()
+                } else if refreshTick % 3 == 0 {
+                    await runMonitor()
                 } else {
+                    await loadPositions()
                     await loadSettings()
                 }
             }
