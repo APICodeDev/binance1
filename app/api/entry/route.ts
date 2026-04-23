@@ -47,6 +47,17 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const createClientOid = (symbol: string) =>
   `bgd-${symbol.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+const summarizeBitgetResponse = (resp: any) => {
+  if (!resp || typeof resp !== 'object') {
+    return 'without response payload';
+  }
+
+  const code = resp.code ? `code=${resp.code}` : null;
+  const msg = resp.msg || resp.message ? `msg=${JSON.stringify(resp.msg || resp.message)}` : null;
+  const data = resp.data !== undefined ? `data=${JSON.stringify(resp.data)}` : null;
+  return [code, msg, data].filter(Boolean).join(' | ') || JSON.stringify(resp);
+};
+
 const parseOptionalPrice = (...values: unknown[]) => {
   for (const value of values) {
     const parsed = Number.parseFloat(String(value ?? ''));
@@ -618,7 +629,8 @@ async function executeEntry(
     if (shouldPlaceInitialStop && !bitgetOrderSuccess(slResponse)) {
       await bitgetCancelAllOrders(symbol, tradingMode);
       await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode);
-      const errDetail = `SL rechazado por Bitget (${tradingMode}) para ${symbol}. Rollback ejecutado.`;
+      const errDetail = `SL rechazado por Bitget (${tradingMode}) para ${symbol}. ` +
+        `${summarizeBitgetResponse(slResponse)}. Rollback ejecutado.`;
       await saveLastEntryError(errDetail, symbol, type);
       return NextResponse.json({ error: true, message: errDetail, detail: slResponse }, { status: 500 });
     }
@@ -638,7 +650,8 @@ async function executeEntry(
     if (shouldPlaceInitialTakeProfit && !bitgetOrderSuccess(tpResponse)) {
       await bitgetCancelAllOrders(symbol, tradingMode);
       await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode);
-      const errDetail = `TP rechazado por Bitget (${tradingMode}) para ${symbol}. Rollback ejecutado.`;
+      const errDetail = `TP rechazado por Bitget (${tradingMode}) para ${symbol}. ` +
+        `${summarizeBitgetResponse(tpResponse)}. Rollback ejecutado.`;
       await saveLastEntryError(errDetail, symbol, type);
       return NextResponse.json({ error: true, message: errDetail, detail: tpResponse }, { status: 500 });
     }

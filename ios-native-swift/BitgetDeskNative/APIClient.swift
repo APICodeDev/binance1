@@ -88,7 +88,22 @@ final class APIClient {
 
             guard (200...299).contains(http.statusCode) else {
                 if let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    let message = (payload["detail"] as? String) ?? (payload["message"] as? String) ?? "Request failed: \(http.statusCode)"
+                    let detailMessage: String?
+                    if let detailString = payload["detail"] as? String {
+                        detailMessage = detailString
+                    } else if let detailObject = payload["detail"] {
+                        if JSONSerialization.isValidJSONObject(detailObject),
+                           let detailData = try? JSONSerialization.data(withJSONObject: detailObject),
+                           let detailString = String(data: detailData, encoding: .utf8) {
+                            detailMessage = detailString
+                        } else {
+                            detailMessage = String(describing: detailObject)
+                        }
+                    } else {
+                        detailMessage = nil
+                    }
+
+                    let message = detailMessage ?? (payload["message"] as? String) ?? "Request failed: \(http.statusCode)"
                     throw APIError.server(message)
                 }
                 throw APIError.server("Request failed: \(http.statusCode)")
