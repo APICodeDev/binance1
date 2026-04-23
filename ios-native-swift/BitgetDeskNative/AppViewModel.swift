@@ -237,9 +237,13 @@ final class AppViewModel: ObservableObject {
             await refreshAll()
             startAutoRefresh()
             BackgroundSyncService.shared.scheduleAppRefresh()
+        } catch let error as APIError {
+            errorMessage = error.localizedDescription
+            if case .unauthorized = error {
+                signOut()
+            }
         } catch {
-            self.errorMessage = error.localizedDescription
-            signOut()
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -248,9 +252,14 @@ final class AppViewModel: ObservableObject {
         defer { isLoading = false }
 
         do {
-            let user = try await api.login(baseURL: baseURL, identifier: identifier, password: password)
-            authUser = user
-            token = nil
+            let result = try await api.login(baseURL: baseURL, identifier: identifier, password: password)
+            authUser = result.user
+            token = result.sessionToken
+            if let sessionToken = result.sessionToken, !sessionToken.isEmpty {
+                KeychainStore.saveToken(sessionToken)
+            } else {
+                KeychainStore.clearToken()
+            }
             await syncPushRegistrationIfPossible()
             await refreshAll()
             startAutoRefresh()

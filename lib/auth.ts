@@ -33,33 +33,62 @@ export async function getAuthContext(req: NextRequest): Promise<AuthContext | nu
       include: { user: true },
     });
 
-    if (!apiToken) {
-      return null;
-    }
+    if (apiToken) {
+      if ((apiToken.expiresAt && apiToken.expiresAt.getTime() <= Date.now()) || !apiToken.isActive || !apiToken.user.isActive) {
+        await prisma.apiToken.update({
+          where: { id: apiToken.id },
+          data: { isActive: false },
+        }).catch(() => undefined);
+        return null;
+      }
 
-    if ((apiToken.expiresAt && apiToken.expiresAt.getTime() <= Date.now()) || !apiToken.isActive || !apiToken.user.isActive) {
       await prisma.apiToken.update({
         where: { id: apiToken.id },
-        data: { isActive: false },
+        data: { lastUsedAt: new Date() },
       }).catch(() => undefined);
+
+      return {
+        user: {
+          id: apiToken.user.id,
+          email: apiToken.user.email,
+          username: apiToken.user.username,
+          role: apiToken.user.role,
+          isActive: apiToken.user.isActive,
+        },
+        apiTokenId: apiToken.id,
+        authType: 'api-token',
+      };
+    }
+
+    const session = await prisma.session.findUnique({
+      where: { tokenHash },
+      include: { user: true },
+    });
+
+    if (!session) {
       return null;
     }
 
-    await prisma.apiToken.update({
-      where: { id: apiToken.id },
+    if (session.expiresAt.getTime() <= Date.now() || !session.user.isActive) {
+      await prisma.session.delete({ where: { id: session.id } }).catch(() => undefined);
+      return null;
+    }
+
+    await prisma.session.update({
+      where: { id: session.id },
       data: { lastUsedAt: new Date() },
     }).catch(() => undefined);
 
     return {
       user: {
-        id: apiToken.user.id,
-        email: apiToken.user.email,
-        username: apiToken.user.username,
-        role: apiToken.user.role,
-        isActive: apiToken.user.isActive,
+        id: session.user.id,
+        email: session.user.email,
+        username: session.user.username,
+        role: session.user.role,
+        isActive: session.user.isActive,
       },
-      apiTokenId: apiToken.id,
-      authType: 'api-token',
+      sessionId: session.id,
+      authType: 'session',
     };
   }
 

@@ -119,7 +119,7 @@ final class APIClient {
         _ = try await request(baseURL: baseURL, path: path, method: method, body: body, token: token, type: EmptyResponse.self)
     }
 
-    func login(baseURL: String, identifier: String, password: String) async throws -> AuthUser {
+    func login(baseURL: String, identifier: String, password: String) async throws -> (user: AuthUser, sessionToken: String?) {
         let body = try JSONEncoder().encode([
             "identifier": identifier,
             "password": password
@@ -128,7 +128,10 @@ final class APIClient {
         guard let payload = response.data else {
             throw APIError.server("Login payload is empty.")
         }
-        return AuthUser(id: payload.user.id, email: payload.user.email, username: payload.user.username, role: payload.user.role, authType: payload.authType)
+        return (
+            user: AuthUser(id: payload.user.id, email: payload.user.email, username: payload.user.username, role: payload.user.role, authType: payload.authType),
+            sessionToken: payload.sessionToken
+        )
     }
 
     func authMe(baseURL: String, token: String?) async throws -> AuthUser {

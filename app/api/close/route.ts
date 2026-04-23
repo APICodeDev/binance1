@@ -5,6 +5,7 @@ import { requireAuth } from '@/lib/auth';
 import { writeAuditLog } from '@/lib/audit';
 import { prisma } from '@/lib/db';
 import { closeTrackedPosition } from '@/lib/positions';
+import { notifyAllActiveDevices } from '@/lib/pushNotifications';
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -34,6 +35,19 @@ export async function POST(req: NextRequest) {
       metadata: { symbol: closeResult.symbol, mode: closeResult.tradingMode },
       req,
     });
+
+    await notifyAllActiveDevices({
+      title: `${closeResult.symbol} cerrada`,
+      body: `La posicion #${pos.id} en ${closeResult.tradingMode.toUpperCase()} se cerro manualmente.`,
+      data: {
+        kind: 'position_closed_manual',
+        positionId: pos.id,
+        symbol: closeResult.symbol,
+        tradingMode: closeResult.tradingMode,
+        profitPercent: Number(closeResult.profitPercent.toFixed(2)),
+        profitFiat: Number(closeResult.profitFiat.toFixed(2)),
+      },
+    }).catch(() => undefined);
 
     return NextResponse.json({ success: true, message: `Position ejected in ${closeResult.tradingMode}.` });
   } catch (error: any) {

@@ -5,6 +5,7 @@ import { waitUntil } from '@vercel/functions';
 import { getAuthContext } from '@/lib/auth';
 import { writeAuditLog } from '@/lib/audit';
 import { prisma } from '@/lib/db';
+import { notifyAllActiveDevices } from '@/lib/pushNotifications';
 import {
   closeTrackedPosition,
   normalizePositionManagementMode,
@@ -717,6 +718,18 @@ async function executeEntry(
       },
       req,
     });
+
+    await notifyAllActiveDevices({
+      title: `${symbol} abierta`,
+      body: `Nueva posicion ${type.toUpperCase()} en ${tradingMode.toUpperCase()} @ ${entryPrice.toFixed(pricePrecision)}.`,
+      data: {
+        kind: 'position_opened',
+        symbol,
+        tradingMode,
+        positionType: type,
+        entryPrice: Number(entryPrice.toFixed(pricePrecision)),
+      },
+    }).catch(() => undefined);
 
     await prisma.setting.upsert({
       where: { key: 'last_entry_error' },

@@ -62,6 +62,7 @@ export async function POST(req: NextRequest) {
           role: user.role,
         },
         authType: 'session',
+        sessionToken: token,
       },
     });
 

@@ -387,6 +387,7 @@ struct LoginResponseWrapper: Codable {
     struct DataPayload: Codable {
         let user: AuthUser
         let authType: String?
+        let sessionToken: String?
     }
 
     let data: DataPayload?

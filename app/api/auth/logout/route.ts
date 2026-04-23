@@ -16,6 +16,20 @@ export async function POST(req: NextRequest) {
     }).catch(() => undefined);
   }
 
+  const bearer = req.headers.get('authorization');
+  const bearerToken = bearer?.startsWith('Bearer ') ? bearer.slice(7).trim() : null;
+  if (bearerToken) {
+    await prisma.session.deleteMany({
+      where: { tokenHash: hashToken(bearerToken) },
+    }).catch(() => undefined);
+  }
+
+  if (auth?.sessionId) {
+    await prisma.session.deleteMany({
+      where: { id: auth.sessionId },
+    }).catch(() => undefined);
+  }
+
   if (auth) {
     await writeAuditLog({ action: 'auth.logout', userId: auth.user.id, targetType: 'session', targetId: auth.sessionId, req });
   }
