@@ -5,9 +5,11 @@ import { requireRole } from '@/lib/auth';
 import { writeAuditLog } from '@/lib/audit';
 import { prisma } from '@/lib/db';
 import { 
+  bitgetBuildPositionContext,
   bitgetGetPrice, 
   bitgetCancelAllOrders, 
   bitgetClosePosition, 
+  bitgetGetPositionMode,
   bitgetOrderSuccess,
   bitgetGetCommissionRate
 } from '@/lib/bitget';
@@ -32,10 +34,11 @@ export async function POST(req: NextRequest) {
 
     const comm = await bitgetGetCommissionRate(symbol, mode);
     const entryComm = (pos as any).commission ?? 0.0004;
+    const positionMode = await bitgetGetPositionMode(symbol, mode) || 'one_way_mode';
+    const positionContext = bitgetBuildPositionContext(pos.positionType as 'buy' | 'sell', positionMode);
 
-    const closeSide = pos.positionType === 'buy' ? 'SELL' : 'BUY';
     await bitgetCancelAllOrders(symbol, mode);
-    const closeResp = await bitgetClosePosition(symbol, closeSide, pos.quantity, mode);
+    const closeResp = await bitgetClosePosition(symbol, positionContext.closeSide, pos.quantity, mode, positionContext.closeTradeSide);
 
     if (bitgetOrderSuccess(closeResp)) {
       const entryCost = pos.entryPrice * pos.quantity * entryComm;

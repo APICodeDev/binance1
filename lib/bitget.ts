@@ -137,6 +137,32 @@ const normalizeBitgetPositionMode = (value: unknown): BitgetPositionMode | null 
   return null;
 };
 
+export const bitgetBuildPositionContext = (
+  positionType: 'buy' | 'sell',
+  positionMode: BitgetPositionMode
+) => {
+  const openSide = positionType === 'buy' ? 'BUY' : 'SELL';
+  const closeSide = positionMode === 'hedge_mode'
+    ? (positionType === 'buy' ? 'BUY' : 'SELL')
+    : (positionType === 'buy' ? 'SELL' : 'BUY');
+  const holdSide = positionMode === 'hedge_mode'
+    ? (positionType === 'buy' ? 'long' : 'short')
+    : (positionType === 'buy' ? 'buy' : 'sell');
+  const leverageHoldSide = positionType === 'buy' ? 'long' : 'short';
+
+  return {
+    openSide: openSide as 'BUY' | 'SELL',
+    closeSide: closeSide as 'BUY' | 'SELL',
+    holdSide: holdSide as 'long' | 'short' | 'buy' | 'sell',
+    leverageHoldSide: leverageHoldSide as 'long' | 'short',
+    openTradeSide: positionMode === 'hedge_mode' ? ('open' as const) : undefined,
+    closeTradeSide: positionMode === 'hedge_mode' ? ('close' as const) : undefined,
+    flashCloseHoldSide: positionMode === 'hedge_mode'
+      ? (positionType === 'buy' ? 'long' : 'short') as 'long' | 'short'
+      : undefined,
+  };
+};
+
 export const bitgetGetPrice = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo'): Promise<number | false> => {
   const sym = symbol.toUpperCase();
   const res = await bitgetRequest('/api/v2/mix/market/ticker', { symbol: sym, productType: getProductType(sym) }, 'GET', false, tradingMode);

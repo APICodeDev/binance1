@@ -1,9 +1,11 @@
 import { prisma } from '@/lib/db';
 import {
+  bitgetBuildPositionContext,
   bitgetCancelAllOrders,
   bitgetClosePosition,
   bitgetFlashClosePosition,
   bitgetGetCommissionRate,
+  bitgetGetPositionMode,
   bitgetGetPrice,
   bitgetGetSinglePosition,
   bitgetOrderSuccess,
@@ -59,14 +61,14 @@ export async function closeTrackedPosition(pos: CloseablePosition): Promise<Clos
 
   const exitComm = await bitgetGetCommissionRate(symbol, tradingMode);
   const entryComm = pos.commission ?? exitComm;
-  const closeSide = pos.positionType === 'buy' ? 'SELL' : 'BUY';
-  const holdSide = pos.positionType === 'buy' ? 'long' : 'short';
+  const positionMode = await bitgetGetPositionMode(symbol, tradingMode) || 'one_way_mode';
+  const positionContext = bitgetBuildPositionContext(pos.positionType as 'buy' | 'sell', positionMode);
 
   await bitgetCancelAllOrders(symbol, tradingMode);
 
-  let closeResp = await bitgetFlashClosePosition(symbol, holdSide, tradingMode);
+  let closeResp = await bitgetFlashClosePosition(symbol, positionContext.flashCloseHoldSide, tradingMode);
   if (!bitgetOrderSuccess(closeResp)) {
-    closeResp = await bitgetClosePosition(symbol, closeSide, pos.quantity, tradingMode);
+    closeResp = await bitgetClosePosition(symbol, positionContext.closeSide, pos.quantity, tradingMode, positionContext.closeTradeSide);
   }
 
   await bitgetCancelAllOrders(symbol, tradingMode);

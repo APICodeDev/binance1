@@ -8,7 +8,9 @@ import { prisma } from '@/lib/db';
 import { isSelfManagedPosition } from '@/lib/positions';
 import { notifyAllActiveDevices } from '@/lib/pushNotifications';
 import {
+  bitgetBuildPositionContext,
   bitgetGetPrice, 
+  bitgetGetPositionMode,
   bitgetGetPositions, 
   bitgetGetSinglePosition,
   bitgetCancelAllOrders, 
@@ -142,7 +144,8 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     side: 'BUY' | 'SELL',
     stopPrice: number,
     quantity: number,
-    mode: 'demo' | 'live'
+    mode: 'demo' | 'live',
+    tradeSide?: 'open' | 'close'
   ) => {
     const pending = await bitgetGetPendingStopOrders(symbol, mode);
     if (!pending.ok) {
@@ -165,7 +168,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     }
 
     await bitgetCancelAlgoOrders(symbol, mode);
-    const placeResp = await bitgetPlaceStopMarket(symbol, side, stopPrice, quantity, mode);
+    const placeResp = await bitgetPlaceStopMarket(symbol, side, stopPrice, quantity, mode, tradeSide);
     if (bitgetOrderSuccess(placeResp)) {
       return { ok: true, message: 'placed' };
     }
@@ -179,6 +182,8 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     const realMap = mode === 'live' ? liveMap : demoMap;
     const snapshot = mode === 'live' ? realLive : realDemo;
     const symbol = pos.symbol.toUpperCase();
+    const positionMode = await bitgetGetPositionMode(symbol, mode) || 'one_way_mode';
+    const positionContext = bitgetBuildPositionContext(pos.positionType as 'buy' | 'sell', positionMode);
 
     if (!snapshot.ok) {
       results.push(`SYNC_SKIPPED (${mode}): No se pudo verificar ${symbol} en Bitget. ${snapshot.errors.join(' | ')}`);
@@ -319,7 +324,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
         const crossedPrice = pos.entryPrice * (1 + crossedStep / 100);
         const targetSlPrice = crossedPrice * (1 - 0.5 / 100);
         if (targetSlPrice > pos.stopLoss) {
-          const slResp = await syncStopOrder(symbol, 'SELL', targetSlPrice, pos.quantity, mode);
+          const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
           if (slResp.ok) {
             newSl = targetSlPrice;
             results.push(`SL_UPDATE (${mode}): ${symbol} trailing -> ${targetSlPrice}`);
@@ -328,7 +333,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       } else if (marketMovePercent >= 0.5) {
         const targetSlPrice = pos.entryPrice * (1 + entryComm) / (1 - comm);
         if (targetSlPrice > pos.stopLoss) {
-          const slResp = await syncStopOrder(symbol, 'SELL', targetSlPrice, pos.quantity, mode);
+          const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
           if (slResp.ok) {
             newSl = targetSlPrice;
             results.push(`SL_UPDATE (${mode}): ${symbol} -> breakeven+fees`);
@@ -345,7 +350,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
         const crossedPrice = pos.entryPrice * (1 - crossedStep / 100);
         const targetSlPrice = crossedPrice * (1 + 0.5 / 100);
         if (targetSlPrice < pos.stopLoss) {
-          const slResp = await syncStopOrder(symbol, 'BUY', targetSlPrice, pos.quantity, mode);
+          const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
           if (slResp.ok) {
             newSl = targetSlPrice;
             results.push(`SL_UPDATE (${mode}): ${symbol} trailing -> ${targetSlPrice}`);
@@ -354,7 +359,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       } else if (marketMovePercent >= 0.5) {
         const targetSlPrice = pos.entryPrice * (1 - entryComm) / (1 + comm);
         if (targetSlPrice < pos.stopLoss) {
-          const slResp = await syncStopOrder(symbol, 'BUY', targetSlPrice, pos.quantity, mode);
+          const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
           if (slResp.ok) {
             newSl = targetSlPrice;
             results.push(`SL_UPDATE (${mode}): ${symbol} -> breakeven+fees`);
@@ -364,9 +369,9 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     }
 
     if (slTriggered || takeProfitTriggered || exhaustionTriggered) {
-      const closeSide = (pos.positionType === 'buy' ? 'SELL' : 'BUY') as 'BUY' | 'SELL';
+      const closeSide = positionContext.closeSide;
       await bitgetCancelAllOrders(symbol, mode);
-      const closeResp = await bitgetClosePosition(symbol, closeSide, pos.quantity, mode);
+      const closeResp = await bitgetClosePosition(symbol, closeSide, pos.quantity, mode, positionContext.closeTradeSide);
 
       if (bitgetOrderSuccess(closeResp)) {
         await prisma.position.update({

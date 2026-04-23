@@ -13,6 +13,7 @@ import {
   type TradingMode,
 } from '@/lib/positions';
 import {
+  bitgetBuildPositionContext,
   bitgetCancelAllOrders,
   bitgetCancelOrder,
   bitgetClosePosition,
@@ -304,8 +305,9 @@ async function executeEntry(
       effectivePositionMode = forcedPositionMode;
     }
 
-    const openTradeSide = effectivePositionMode === 'hedge_mode' ? 'open' : undefined;
-    const closeTradeSide = effectivePositionMode === 'hedge_mode' ? 'close' : undefined;
+    const positionContext = bitgetBuildPositionContext(type as 'buy' | 'sell', effectivePositionMode);
+    const openTradeSide = positionContext.openTradeSide;
+    const closeTradeSide = positionContext.closeTradeSide;
 
     const customAmountSetting = await prisma.setting.findUnique({ where: { key: 'custom_amount' } });
     const leverageEnabledSetting = await prisma.setting.findUnique({ where: { key: 'leverage_enabled' } });
@@ -344,9 +346,8 @@ async function executeEntry(
       }
 
       await bitgetCancelAllOrders(symbol, tradingMode);
-      const closeSide = effectivePositionMode === 'hedge_mode'
-        ? (existing.positionType === 'buy' ? 'BUY' : 'SELL')
-        : (existing.positionType === 'buy' ? 'SELL' : 'BUY');
+      const existingContext = bitgetBuildPositionContext(existing.positionType as 'buy' | 'sell', effectivePositionMode);
+      const closeSide = existingContext.closeSide;
       const closeResp = await bitgetClosePosition(symbol, closeSide as 'BUY' | 'SELL', existing.quantity, tradingMode, closeTradeSide);
       if (!bitgetOrderSuccess(closeResp)) {
         const errDetail = `Error al cerrar posicion previa de ${symbol} en ${tradingMode} para cambio de direccion.`;
@@ -411,8 +412,7 @@ async function executeEntry(
     const maxLever = Math.max(minLever, Number.parseFloat(String(exchangeInfo?.maxLever || '1')) || 1);
     const requestedLeverage = leverageEnabled ? (Number.isFinite(configuredLeverage) ? configuredLeverage : 1) : 1;
     const appliedLeverage = Math.min(maxLever, Math.max(minLever, requestedLeverage));
-    const positionHoldSide = (type === 'buy' ? 'long' : 'short') as 'long' | 'short';
-    const leverageHoldSide = positionHoldSide;
+    const leverageHoldSide = positionContext.leverageHoldSide;
 
     const leverageResp = await bitgetSetLeverage(symbol, appliedLeverage, leverageHoldSide, tradingMode);
     if (!bitgetOrderSuccess(leverageResp)) {
@@ -617,12 +617,8 @@ async function executeEntry(
       ? normalizedRequestedStop
       : (isRequestedStopValid ? normalizedRequestedStop : legacyStopPrice);
     const takeProfitPrice = isRequestedTakeProfitValid ? normalizedRequestedTakeProfit : null;
-    const slSide = (effectivePositionMode === 'hedge_mode'
-      ? (type === 'buy' ? 'BUY' : 'SELL')
-      : (type === 'buy' ? 'SELL' : 'BUY')) as 'BUY' | 'SELL';
-    const holdSide = effectivePositionMode === 'hedge_mode'
-      ? positionHoldSide
-      : ((type === 'buy' ? 'buy' : 'sell') as 'buy' | 'sell');
+    const slSide = positionContext.closeSide;
+    const holdSide = positionContext.holdSide;
     const rollbackCloseSide = slSide;
     const shouldRejectInvalidStop = (managementMode === 'self' && stopInputProvided) || hasPayloadValue(rawRequestedStopPercent);
     const shouldRejectInvalidTakeProfit = (managementMode === 'self' && takeProfitInputProvided) || hasPayloadValue(rawRequestedTakeProfitPercent);
