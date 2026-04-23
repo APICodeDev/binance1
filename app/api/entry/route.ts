@@ -171,28 +171,40 @@ async function executeEntry(
     const origin = data.origin ? String(data.origin) : null;
     const timeframe = data.timeframe ? String(data.timeframe) : null;
     const incomingQuantity = parseFloat(data.quantity || data.contracts) || 0;
+    const rawRequestedEntryPrice =
+      data.entryPrice ??
+      data.entry_price ??
+      data.entryprice;
+    const rawRequestedStopPrice =
+      data.stopPrice ??
+      data.stop_price ??
+      data.stopLoss ??
+      data.stop_loss ??
+      data.stoploss ??
+      data.slPrice ??
+      data.sl_price ??
+      data.slprice;
+    const rawRequestedTakeProfitPrice =
+      data.takeProfit ??
+      data.take_profit ??
+      data.takeprofit ??
+      data.targetPrice ??
+      data.target_price ??
+      data.targetprice ??
+      data.tpPrice ??
+      data.tp_price ??
+      data.tpprice ??
+      data.spPrice ??
+      data.sp_price ??
+      data.sp;
     const requestedEntryPrice = parseOptionalPrice(
-      data.entryPrice,
-      data.entry_price,
+      rawRequestedEntryPrice,
     );
     const requestedStopPrice = parseOptionalPrice(
-      data.stopPrice,
-      data.stop_price,
-      data.stopLoss,
-      data.stop_loss,
-      data.slPrice,
-      data.sl_price,
+      rawRequestedStopPrice,
     );
     const requestedTakeProfitPrice = parseOptionalPrice(
-      data.takeProfit,
-      data.take_profit,
-      data.targetPrice,
-      data.target_price,
-      data.tpPrice,
-      data.tp_price,
-      data.spPrice,
-      data.sp_price,
-      data.sp,
+      rawRequestedTakeProfitPrice,
     );
     const allowTakerFallback = data.allowTakerFallback === undefined
       ? true
@@ -498,7 +510,10 @@ async function executeEntry(
 
     if (managementMode === 'self' && !isRequestedStopValid) {
       await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode);
-      const errDetail = `Mode self requiere un stop valido para ${symbol}. Rollback ejecutado.`;
+      const errDetail = `Mode self requiere un stop valido para ${symbol}. ` +
+        `JSON stop=${JSON.stringify(rawRequestedStopPrice)}, takeProfit=${JSON.stringify(rawRequestedTakeProfitPrice)}, ` +
+        `parsedStop=${requestedStopPrice}, normalizedStop=${normalizedRequestedStop}, entry=${entryPrice}. ` +
+        `Rollback ejecutado.`;
       await saveLastEntryError(errDetail, symbol, type);
       return NextResponse.json({ error: true, message: errDetail }, { status: 400 });
     }
