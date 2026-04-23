@@ -25,10 +25,39 @@
 		AA0000000000000000000010 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000020 /* Assets.xcassets */; };
 		AA0000000000000000000011A /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000021 /* AppDelegate.swift */; };
 		AA0000000000000000000012B /* BackgroundSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000022 /* BackgroundSyncService.swift */; };
+		AA0000000000000000000013C /* WidgetSnapshotStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000025 /* WidgetSnapshotStore.swift */; };
+		AA0000000000000000000014D /* BitgetDeskWidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000026 /* BitgetDeskWidgetsBundle.swift */; };
+		AA0000000000000000000015E /* TradingSummaryWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000027 /* TradingSummaryWidget.swift */; };
+		AA0000000000000000000016F /* BitgetDeskWidgets.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000101 /* BitgetDeskWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		AA0000000000000000000801 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AA0000000000000000000500 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AA0000000000000000000401;
+			remoteInfo = BitgetDeskWidgets;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		AA0000000000000000000203 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				AA0000000000000000000016F /* BitgetDeskWidgets.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		AA0000000000000000000100 /* BitgetDeskNative.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BitgetDeskNative.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA0000000000000000000101 /* BitgetDeskWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BitgetDeskWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000011 /* BitgetDeskNativeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitgetDeskNativeApp.swift; sourceTree = "<group>"; };
 		AA0000000000000000000012 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		AA0000000000000000000013 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
@@ -49,10 +78,16 @@
 		AA0000000000000000000022 /* BackgroundSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundSyncService.swift; sourceTree = "<group>"; };
 		AA0000000000000000000023 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AA0000000000000000000024 /* BitgetDeskNative.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = BitgetDeskNative.entitlements; sourceTree = "<group>"; };
+		AA0000000000000000000025 /* WidgetSnapshotStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetSnapshotStore.swift; sourceTree = "<group>"; };
+		AA0000000000000000000026 /* BitgetDeskWidgetsBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitgetDeskWidgetsBundle.swift; sourceTree = "<group>"; };
+		AA0000000000000000000027 /* TradingSummaryWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradingSummaryWidget.swift; sourceTree = "<group>"; };
+		AA0000000000000000000028 /* BitgetDeskWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = BitgetDeskWidgets.entitlements; sourceTree = "<group>"; };
+		AA0000000000000000000029 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		AA0000000000000000000200 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = ( ); runOnlyForDeploymentPostprocessing = 0; };
+		AA0000000000000000000204 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = ( ); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -60,6 +95,7 @@
 			isa = PBXGroup;
 			children = (
 				AA0000000000000000000301 /* BitgetDeskNative */,
+				AA0000000000000000000303 /* BitgetDeskWidgets */,
 				AA0000000000000000000302 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -84,6 +120,7 @@
 				AA000000000000000000001F /* AdminView.swift */,
 				AA0000000000000000000021 /* AppDelegate.swift */,
 				AA0000000000000000000022 /* BackgroundSyncService.swift */,
+				AA0000000000000000000025 /* WidgetSnapshotStore.swift */,
 				AA0000000000000000000023 /* Info.plist */,
 				AA0000000000000000000024 /* BitgetDeskNative.entitlements */,
 				AA0000000000000000000020 /* Assets.xcassets */,
@@ -91,10 +128,22 @@
 			path = BitgetDeskNative;
 			sourceTree = "<group>";
 		};
+		AA0000000000000000000303 /* BitgetDeskWidgets */ = {
+			isa = PBXGroup;
+			children = (
+				AA0000000000000000000026 /* BitgetDeskWidgetsBundle.swift */,
+				AA0000000000000000000027 /* TradingSummaryWidget.swift */,
+				AA0000000000000000000029 /* Info.plist */,
+				AA0000000000000000000028 /* BitgetDeskWidgets.entitlements */,
+			);
+			path = BitgetDeskWidgets;
+			sourceTree = "<group>";
+		};
 		AA0000000000000000000302 /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				AA0000000000000000000100 /* BitgetDeskNative.app */,
+				AA0000000000000000000101 /* BitgetDeskWidgets.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -109,13 +158,31 @@
 				AA0000000000000000000201 /* Sources */,
 				AA0000000000000000000200 /* Frameworks */,
 				AA0000000000000000000202 /* Resources */,
+				AA0000000000000000000203 /* Embed App Extensions */,
 			);
 			buildRules = ( );
-			dependencies = ( );
+			dependencies = (
+				AA0000000000000000000901 /* PBXTargetDependency */,
+			);
 			name = BitgetDeskNative;
 			productName = BitgetDeskNative;
 			productReference = AA0000000000000000000100 /* BitgetDeskNative.app */;
 			productType = "com.apple.product-type.application";
+		};
+		AA0000000000000000000401 /* BitgetDeskWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA0000000000000000000603 /* Build configuration list for PBXNativeTarget "BitgetDeskWidgets" */;
+			buildPhases = (
+				AA0000000000000000000205 /* Sources */,
+				AA0000000000000000000204 /* Frameworks */,
+				AA0000000000000000000206 /* Resources */,
+			);
+			buildRules = ( );
+			dependencies = ( );
+			name = BitgetDeskWidgets;
+			productName = BitgetDeskWidgets;
+			productReference = AA0000000000000000000101 /* BitgetDeskWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -130,7 +197,18 @@
 					AA0000000000000000000400 = {
 						CreatedOnToolsVersion = 16.0;
 						SystemCapabilities = {
+							com.apple.ApplicationGroups.iOS = {
+								enabled = 1;
+							};
 							com.apple.Push = {
+								enabled = 1;
+							};
+						};
+					};
+					AA0000000000000000000401 = {
+						CreatedOnToolsVersion = 16.0;
+						SystemCapabilities = {
+							com.apple.ApplicationGroups.iOS = {
 								enabled = 1;
 							};
 						};
@@ -148,6 +226,7 @@
 			projectRoot = "";
 			targets = (
 				AA0000000000000000000400 /* BitgetDeskNative */,
+				AA0000000000000000000401 /* BitgetDeskWidgets */,
 			);
 		};
 /* End PBXProject section */
@@ -159,6 +238,12 @@
 			files = (
 				AA0000000000000000000010 /* Assets.xcassets in Resources */,
 			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA0000000000000000000206 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = ( );
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
@@ -185,10 +270,28 @@
 				AA000000000000000000000F /* AdminView.swift in Sources */,
 				AA0000000000000000000011A /* AppDelegate.swift in Sources */,
 				AA0000000000000000000012B /* BackgroundSyncService.swift in Sources */,
+				AA0000000000000000000013C /* WidgetSnapshotStore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA0000000000000000000205 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA0000000000000000000014D /* BitgetDeskWidgetsBundle.swift in Sources */,
+				AA0000000000000000000015E /* TradingSummaryWidget.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		AA0000000000000000000901 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AA0000000000000000000401 /* BitgetDeskWidgets */;
+			targetProxy = AA0000000000000000000801 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		AA0000000000000000000701 /* Debug */ = {
@@ -289,6 +392,46 @@
 			};
 			name = Release;
 		};
+		AA0000000000000000000705 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = BitgetDeskWidgets/BitgetDeskWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BitgetDeskWidgets/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bitgetdesk.nativeclone.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AA0000000000000000000706 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = BitgetDeskWidgets/BitgetDeskWidgets.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BitgetDeskWidgets/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bitgetdesk.nativeclone.widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -306,6 +449,15 @@
 			buildConfigurations = (
 				AA0000000000000000000703 /* Debug */,
 				AA0000000000000000000704 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AA0000000000000000000603 /* Build configuration list for PBXNativeTarget "BitgetDeskWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA0000000000000000000705 /* Debug */,
+				AA0000000000000000000706 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

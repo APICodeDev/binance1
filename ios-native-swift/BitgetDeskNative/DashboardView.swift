@@ -7,7 +7,6 @@ struct DashboardView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                header
                 settingsPanel
                 actionBar
                 openPositionsPanel
@@ -16,7 +15,8 @@ struct DashboardView: View {
             .padding()
         }
         .background(Color.black.ignoresSafeArea())
-        .navigationTitle("Dashboard")
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Salir") {
@@ -29,24 +29,21 @@ struct DashboardView: View {
         }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(appModel.tradingMode == "live" ? "BITGET LIVE" : "BITGET SIGNALS")
-                .font(.system(size: 30, weight: .black, design: .rounded))
-            HStack {
-                Label(appModel.authUser?.role.uppercased() ?? "-", systemImage: "person.crop.circle.fill")
-                Spacer()
-                Text("PnL \(AppFormatters.compact(appModel.totalPnl)) \(appModel.currencyLabel)")
-                    .fontWeight(.bold)
-                    .foregroundStyle(appModel.totalPnl >= 0 ? .green : .red)
-            }
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-        }
-    }
-
     private var settingsPanel: some View {
         VStack(spacing: 12) {
+            HStack(spacing: 12) {
+                HighlightMetricTile(
+                    title: "PnL",
+                    value: "\(AppFormatters.signedCompact(appModel.totalPnl)) \(appModel.currencyLabel)",
+                    background: appModel.totalPnl >= 0 ? Color.green : Color.red
+                )
+                MetricTile(
+                    title: "Amount Secure",
+                    value: "\(AppFormatters.compact(appModel.securedAmount)) \(appModel.currencyLabel)",
+                    tint: appModel.securedAmount > 0 ? .cyan : .gray,
+                    titleColor: .white.opacity(0.82)
+                )
+            }
             HStack(spacing: 12) {
                 MetricTile(title: "Mode", value: appModel.tradingMode.uppercased(), tint: appModel.tradingMode == "live" ? .red : .yellow)
                 MetricTile(title: "Bot", value: appModel.botEnabled ? "ACTIVE" : "OFF", tint: appModel.botEnabled ? .green : .gray)
@@ -125,20 +122,43 @@ struct MetricTile: View {
     let title: String
     let value: String
     let tint: Color
+    var titleColor: Color = .secondary
+    var valueColor: Color = .white
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title.uppercased())
                 .font(.caption2.bold())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(titleColor)
+            Text(value)
+                .font(.headline.bold())
+                .foregroundStyle(valueColor)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(tint.opacity(0.14))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(tint.opacity(0.25), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+}
+
+struct HighlightMetricTile: View {
+    let title: String
+    let value: String
+    let background: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title.uppercased())
+                .font(.caption2.bold())
+                .foregroundStyle(.white.opacity(0.78))
             Text(value)
                 .font(.headline.bold())
                 .foregroundStyle(.white)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
-        .background(tint.opacity(0.14))
-        .overlay(RoundedRectangle(cornerRadius: 18).stroke(tint.opacity(0.25), lineWidth: 1))
+        .background(background.opacity(0.92))
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }

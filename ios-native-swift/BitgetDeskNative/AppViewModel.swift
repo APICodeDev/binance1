@@ -241,6 +241,26 @@ final class AppViewModel: ObservableObject {
         tradingMode == "live" ? "USDC" : "USDT"
     }
 
+    var securedAmount: Double {
+        openPositions.reduce(0) { partialResult, position in
+            let isBuy = position.positionType == "buy"
+            let commissionRate = position.commission ?? 0.0006
+            let hasProtectedProfit =
+                (isBuy && position.stopLoss > position.entryPrice) ||
+                (!isBuy && position.stopLoss < position.entryPrice)
+
+            guard hasProtectedProfit else { return partialResult }
+
+            let entryCost = position.entryPrice * position.quantity * commissionRate
+            let exitCost = position.stopLoss * position.quantity * commissionRate
+            let secured = isBuy
+                ? ((position.stopLoss - position.entryPrice) * position.quantity) - entryCost - exitCost
+                : ((position.entryPrice - position.stopLoss) * position.quantity) - entryCost - exitCost
+
+            return partialResult + max(0, secured)
+        }
+    }
+
     private func shouldSilenceTransientError(_ error: Error) -> Bool {
         if error is CancellationError {
             return true
@@ -273,6 +293,15 @@ final class AppViewModel: ObservableObject {
         if !trimmed.hasPrefix("http://") && !trimmed.hasPrefix("https://") {
             baseURL = "https://\(trimmed)"
         }
+    }
+
+    private func syncWidgetSnapshot() {
+        WidgetSnapshotStore.save(
+            securedAmount: securedAmount,
+            totalPnl: totalPnl,
+            currency: currencyLabel,
+            tradingMode: tradingMode
+        )
     }
 
     func restoreSession() async {
@@ -360,6 +389,7 @@ final class AppViewModel: ObservableObject {
         accountOverview = nil
         apiTokens = []
         auditLogs = []
+        WidgetSnapshotStore.clear()
     }
 
     func refreshAll() async {
@@ -480,6 +510,7 @@ final class AppViewModel: ObservableObject {
             takeProfitAutoCloseEnabled = settings.take_profit_auto_close_enabled == "1"
             profitSoundEnabled = settings.profit_sound_enabled == "1"
             profitSoundFile = settings.profit_sound_file
+            syncWidgetSnapshot()
         } catch {
             presentNonCriticalError("Settings", error: error)
         }
@@ -491,6 +522,7 @@ final class AppViewModel: ObservableObject {
             openPositions = payload.open
             closedPositions = payload.history
             totalPnl = payload.totalPnl
+            syncWidgetSnapshot()
             return await TradeNotificationCoordinator.shared.processPositionsSnapshot(
                 mode: payload.mode ?? tradingMode,
                 payload: payload
