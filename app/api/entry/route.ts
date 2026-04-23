@@ -23,10 +23,12 @@ import {
   bitgetGetMergeDepth,
   bitgetGetOrderDetail,
   bitgetGetOrderFills,
+  bitgetGetPositionMode,
   bitgetGetPrice,
   bitgetGetTickSize,
   bitgetGetVipFeeRates,
   bitgetGetWsBestBidAsk,
+  bitgetSetPositionMode,
   bitgetNormalizePriceByContract,
   bitgetNormalizePriceByContractDirectional,
   bitgetNormalizeSizeByContract,
@@ -36,6 +38,7 @@ import {
   bitgetPlaceMarketOrder,
   bitgetPlaceStopMarket,
   bitgetPlaceTpslMarket,
+  type BitgetPositionMode,
   bitgetSetLeverage,
 } from '@/lib/bitget';
 
@@ -280,6 +283,29 @@ async function executeEntry(
     }
 
     const tradingMode = await resolveTradingMode();
+    const forcedPositionMode = (() => {
+      const raw = String(process.env.BITGET_FORCE_POSITION_MODE || '').trim().toLowerCase();
+      if (raw === 'hedge_mode' || raw === 'one_way_mode') {
+        return raw as BitgetPositionMode;
+      }
+      return null;
+    })();
+    const detectedPositionMode = await bitgetGetPositionMode(symbol, tradingMode);
+    let effectivePositionMode = detectedPositionMode || 'one_way_mode';
+
+    if (forcedPositionMode && forcedPositionMode !== effectivePositionMode) {
+      const setPositionModeResp = await bitgetSetPositionMode(symbol, forcedPositionMode, tradingMode);
+      if (!bitgetOrderSuccess(setPositionModeResp)) {
+        const errDetail = `Bitget no permitio fijar position mode ${forcedPositionMode} para ${symbol}. ` +
+          `${summarizeBitgetResponse(setPositionModeResp)}.`;
+        await saveLastEntryError(errDetail, symbol, type);
+        return NextResponse.json({ error: true, message: errDetail, detail: setPositionModeResp }, { status: 500 });
+      }
+      effectivePositionMode = forcedPositionMode;
+    }
+
+    const openTradeSide = effectivePositionMode === 'hedge_mode' ? 'open' : undefined;
+    const closeTradeSide = effectivePositionMode === 'hedge_mode' ? 'close' : undefined;
 
     const customAmountSetting = await prisma.setting.findUnique({ where: { key: 'custom_amount' } });
     const leverageEnabledSetting = await prisma.setting.findUnique({ where: { key: 'leverage_enabled' } });
@@ -318,8 +344,10 @@ async function executeEntry(
       }
 
       await bitgetCancelAllOrders(symbol, tradingMode);
-      const closeSide = existing.positionType === 'buy' ? 'SELL' : 'BUY';
-      const closeResp = await bitgetClosePosition(symbol, closeSide as 'BUY' | 'SELL', existing.quantity, tradingMode);
+      const closeSide = effectivePositionMode === 'hedge_mode'
+        ? (existing.positionType === 'buy' ? 'BUY' : 'SELL')
+        : (existing.positionType === 'buy' ? 'SELL' : 'BUY');
+      const closeResp = await bitgetClosePosition(symbol, closeSide as 'BUY' | 'SELL', existing.quantity, tradingMode, closeTradeSide);
       if (!bitgetOrderSuccess(closeResp)) {
         const errDetail = `Error al cerrar posicion previa de ${symbol} en ${tradingMode} para cambio de direccion.`;
         await saveLastEntryError(errDetail, symbol, type);
@@ -383,7 +411,8 @@ async function executeEntry(
     const maxLever = Math.max(minLever, Number.parseFloat(String(exchangeInfo?.maxLever || '1')) || 1);
     const requestedLeverage = leverageEnabled ? (Number.isFinite(configuredLeverage) ? configuredLeverage : 1) : 1;
     const appliedLeverage = Math.min(maxLever, Math.max(minLever, requestedLeverage));
-    const leverageHoldSide = type === 'buy' ? 'long' : 'short';
+    const positionHoldSide = (type === 'buy' ? 'long' : 'short') as 'long' | 'short';
+    const leverageHoldSide = positionHoldSide;
 
     const leverageResp = await bitgetSetLeverage(symbol, appliedLeverage, leverageHoldSide, tradingMode);
     if (!bitgetOrderSuccess(leverageResp)) {
@@ -446,7 +475,7 @@ async function executeEntry(
       const ask = parseFloat(attemptDepth.asks[0][0]);
       const makerPrice = computeMakerPrice(bid, ask);
       const clientOid = createClientOid(symbol);
-      const makerResp = await bitgetPlaceLimitOrder(symbol, side, size, makerPrice, 'post_only', clientOid, tradingMode);
+      const makerResp = await bitgetPlaceLimitOrder(symbol, side, size, makerPrice, 'post_only', clientOid, tradingMode, openTradeSide);
       lastOrderResponse = makerResp;
 
       if (!bitgetOrderSuccess(makerResp)) {
@@ -496,7 +525,7 @@ async function executeEntry(
       executionMode = takerFallbackMode;
 
       if (takerFallbackMode === 'market') {
-        const marketResp = await bitgetPlaceMarketOrder(symbol, side, size, tradingMode);
+        const marketResp = await bitgetPlaceMarketOrder(symbol, side, size, tradingMode, openTradeSide);
         lastOrderResponse = marketResp;
         if (!bitgetOrderSuccess(marketResp)) {
           const errDetail = `Fallback market rechazado para ${symbol}.`;
@@ -509,7 +538,7 @@ async function executeEntry(
         realEntryFee = filledSize * entryPrice * takerFeeRate;
       } else {
         const iocPrice = bitgetNormalizePriceByContract(takerReferencePrice, exchangeInfo);
-        const iocResp = await bitgetPlaceLimitOrder(symbol, side, size, iocPrice, 'ioc', executionClientOid, tradingMode);
+        const iocResp = await bitgetPlaceLimitOrder(symbol, side, size, iocPrice, 'ioc', executionClientOid, tradingMode, openTradeSide);
         lastOrderResponse = iocResp;
         if (!bitgetOrderSuccess(iocResp)) {
           const errDetail = `Fallback IOC rechazado para ${symbol}.`;
@@ -588,14 +617,18 @@ async function executeEntry(
       ? normalizedRequestedStop
       : (isRequestedStopValid ? normalizedRequestedStop : legacyStopPrice);
     const takeProfitPrice = isRequestedTakeProfitValid ? normalizedRequestedTakeProfit : null;
-    const slSide = (type === 'buy' ? 'SELL' : 'BUY') as 'BUY' | 'SELL';
-    const holdSide = (type === 'buy' ? 'long' : 'short') as 'long' | 'short';
+    const slSide = (effectivePositionMode === 'hedge_mode'
+      ? (type === 'buy' ? 'BUY' : 'SELL')
+      : (type === 'buy' ? 'SELL' : 'BUY')) as 'BUY' | 'SELL';
+    const holdSide = effectivePositionMode === 'hedge_mode'
+      ? positionHoldSide
+      : ((type === 'buy' ? 'buy' : 'sell') as 'buy' | 'sell');
     const rollbackCloseSide = slSide;
     const shouldRejectInvalidStop = (managementMode === 'self' && stopInputProvided) || hasPayloadValue(rawRequestedStopPercent);
     const shouldRejectInvalidTakeProfit = (managementMode === 'self' && takeProfitInputProvided) || hasPayloadValue(rawRequestedTakeProfitPercent);
 
     if ((managementMode === 'self' && !isRequestedStopValid) || (shouldRejectInvalidStop && stopInputProvided && !isRequestedStopValid)) {
-      await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode);
+      await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
       const errDetail = `Stop invalido para ${symbol}. ` +
         `JSON stop=${JSON.stringify(rawRequestedStopPrice)}, stopPercent=${JSON.stringify(rawRequestedStopPercent)}, ` +
         `takeProfit=${JSON.stringify(rawRequestedTakeProfitPrice)}, takeProfitPercent=${JSON.stringify(rawRequestedTakeProfitPercent)}, ` +
@@ -607,7 +640,7 @@ async function executeEntry(
     }
 
     if (shouldRejectInvalidTakeProfit && takeProfitInputProvided && !isRequestedTakeProfitValid) {
-      await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode);
+      await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
       const errDetail = `Take profit invalido para ${symbol}. ` +
         `JSON takeProfit=${JSON.stringify(rawRequestedTakeProfitPrice)}, takeProfitPercent=${JSON.stringify(rawRequestedTakeProfitPercent)}, ` +
         `parsedTakeProfit=${requestedTakeProfitPrice}, parsedTakeProfitPercent=${requestedTakeProfitPercent}, ` +
@@ -623,12 +656,12 @@ async function executeEntry(
     let tpResponse: any = null;
 
     if (shouldPlaceInitialStop) {
-      slResponse = await bitgetPlaceStopMarket(symbol, slSide, stopPrice!, filledSize, tradingMode);
+      slResponse = await bitgetPlaceStopMarket(symbol, slSide, stopPrice!, filledSize, tradingMode, closeTradeSide);
     }
 
     if (shouldPlaceInitialStop && !bitgetOrderSuccess(slResponse)) {
       await bitgetCancelAllOrders(symbol, tradingMode);
-      await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode);
+      await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
       const errDetail = `SL rechazado por Bitget (${tradingMode}) para ${symbol}. ` +
         `${summarizeBitgetResponse(slResponse)}. Rollback ejecutado.`;
       await saveLastEntryError(errDetail, symbol, type);
@@ -649,7 +682,7 @@ async function executeEntry(
 
     if (shouldPlaceInitialTakeProfit && !bitgetOrderSuccess(tpResponse)) {
       await bitgetCancelAllOrders(symbol, tradingMode);
-      await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode);
+      await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
       const errDetail = `TP rechazado por Bitget (${tradingMode}) para ${symbol}. ` +
         `${summarizeBitgetResponse(tpResponse)}. Rollback ejecutado.`;
       await saveLastEntryError(errDetail, symbol, type);
@@ -702,6 +735,9 @@ async function executeEntry(
         leverageRequested: requestedLeverage,
         leverageApplied: appliedLeverage,
         leverageHoldSide,
+        detectedPositionMode,
+        forcedPositionMode,
+        effectivePositionMode,
         contractMinLever: minLever,
         contractMaxLever: maxLever,
         marketDataSource: wsQuote.ok ? 'websocket' : 'rest',
@@ -754,6 +790,7 @@ async function executeEntry(
       success: true,
       message: `Position opened in ${tradingMode} for ${symbol}`,
       managementMode,
+      positionMode: effectivePositionMode,
       executionMode,
       entryPrice,
       quantity: filledSize,

@@ -127,6 +127,16 @@ const getMarginCoin = (symbol: string) => {
   return 'USDT';
 };
 
+export type BitgetPositionMode = 'one_way_mode' | 'hedge_mode';
+
+const normalizeBitgetPositionMode = (value: unknown): BitgetPositionMode | null => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'one_way_mode' || raw === 'hedge_mode') {
+    return raw;
+  }
+  return null;
+};
+
 export const bitgetGetPrice = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo'): Promise<number | false> => {
   const sym = symbol.toUpperCase();
   const res = await bitgetRequest('/api/v2/mix/market/ticker', { symbol: sym, productType: getProductType(sym) }, 'GET', false, tradingMode);
@@ -136,17 +146,29 @@ export const bitgetGetPrice = async (symbol: string, tradingMode: 'demo' | 'live
   return false;
 };
 
-export const bitgetPlaceMarketOrder = async (symbol: string, side: 'BUY' | 'SELL', quantity: number, tradingMode: 'demo' | 'live' = 'demo') => {
+export const bitgetPlaceMarketOrder = async (
+  symbol: string,
+  side: 'BUY' | 'SELL',
+  quantity: number,
+  tradingMode: 'demo' | 'live' = 'demo',
+  tradeSide?: 'open' | 'close'
+) => {
   const sym = symbol.toUpperCase();
-  return bitgetRequest('/api/v2/mix/order/place-order', {
+  const params: Record<string, string> = {
     symbol: sym,
     productType: getProductType(sym),
     marginMode: 'crossed',
     marginCoin: getMarginCoin(sym),
     side: side.toLowerCase(), // 'buy' or 'sell'
     orderType: 'market',
-    size: quantity.toString()
-  }, 'POST', true, tradingMode);
+    size: quantity.toString(),
+  };
+
+  if (tradeSide) {
+    params.tradeSide = tradeSide;
+  }
+
+  return bitgetRequest('/api/v2/mix/order/place-order', params, 'POST', true, tradingMode);
 };
 
 export const bitgetOrderSuccess = (resp: any) => {
@@ -177,6 +199,36 @@ export const bitgetSetLeverage = async (
   return bitgetRequest('/api/v2/mix/account/set-leverage', params, 'POST', true, tradingMode);
 };
 
+export const bitgetGetPositionMode = async (
+  symbol: string,
+  tradingMode: 'demo' | 'live' = 'demo'
+): Promise<BitgetPositionMode | null> => {
+  const sym = symbol.toUpperCase();
+  const resp = await bitgetRequest('/api/v2/mix/account/account', {
+    symbol: sym,
+    productType: getProductType(sym),
+    marginCoin: getMarginCoin(sym),
+  }, 'GET', true, tradingMode);
+
+  if (!bitgetOrderSuccess(resp)) {
+    return null;
+  }
+
+  return normalizeBitgetPositionMode(resp?.data?.posMode);
+};
+
+export const bitgetSetPositionMode = async (
+  symbol: string,
+  posMode: BitgetPositionMode,
+  tradingMode: 'demo' | 'live' = 'demo'
+) => {
+  const sym = symbol.toUpperCase();
+  return bitgetRequest('/api/v2/mix/account/set-position-mode', {
+    productType: getProductType(sym),
+    posMode,
+  }, 'POST', true, tradingMode);
+};
+
 type BitgetPositionSnapshot = {
   ok: boolean;
   positions: Array<{
@@ -199,10 +251,16 @@ const mapBitgetPosition = (p: any) => ({
   positionSide: p.holdSide === 'long' ? 'LONG' : (p.holdSide === 'short' ? 'SHORT' : 'BOTH')
 });
 
-export const bitgetClosePosition = async (symbol: string, side: 'BUY' | 'SELL', quantity: number, tradingMode: 'demo' | 'live' = 'demo') => {
+export const bitgetClosePosition = async (
+  symbol: string,
+  side: 'BUY' | 'SELL',
+  quantity: number,
+  tradingMode: 'demo' | 'live' = 'demo',
+  tradeSide?: 'open' | 'close'
+) => {
   const sym = symbol.toUpperCase();
-  
-  const res = await bitgetRequest('/api/v2/mix/order/place-order', {
+
+  const params: Record<string, string> = {
     symbol: sym,
     productType: getProductType(sym),
     marginMode: 'crossed',
@@ -210,8 +268,15 @@ export const bitgetClosePosition = async (symbol: string, side: 'BUY' | 'SELL', 
     side: side.toLowerCase(),
     orderType: 'market',
     size: quantity.toString(),
-    reduceOnly: 'YES'
-  }, 'POST', true, tradingMode);
+  };
+
+  if (tradeSide) {
+    params.tradeSide = tradeSide;
+  } else {
+    params.reduceOnly = 'YES';
+  }
+
+  const res = await bitgetRequest('/api/v2/mix/order/place-order', params, 'POST', true, tradingMode);
 
   return res;
 };
@@ -325,7 +390,14 @@ export const bitgetNormalizeSizeByContract = (size: number, exchangeInfo: any) =
   return parseFloat(normalized.toFixed(volumePlace));
 };
 
-export const bitgetPlaceStopMarket = async (symbol: string, side: 'BUY' | 'SELL', stopPrice: number, quantity?: number, tradingMode: 'demo' | 'live' = 'demo') => {
+export const bitgetPlaceStopMarket = async (
+  symbol: string,
+  side: 'BUY' | 'SELL',
+  stopPrice: number,
+  quantity?: number,
+  tradingMode: 'demo' | 'live' = 'demo',
+  tradeSide?: 'open' | 'close'
+) => {
   const sym = symbol.toUpperCase();
   const precision = await bitgetGetPricePrecision(sym, tradingMode);
   
@@ -340,8 +412,13 @@ export const bitgetPlaceStopMarket = async (symbol: string, side: 'BUY' | 'SELL'
     orderType: 'market',
     marginCoin: getMarginCoin(sym),
     marginMode: 'crossed',
-    reduceOnly: 'YES'
   };
+
+  if (tradeSide) {
+    params.tradeSide = tradeSide;
+  } else {
+    params.reduceOnly = 'YES';
+  }
 
   if (quantity) {
     params.size = quantity.toString();
@@ -353,7 +430,7 @@ export const bitgetPlaceStopMarket = async (symbol: string, side: 'BUY' | 'SELL'
 export const bitgetPlaceTpslMarket = async (
   symbol: string,
   planType: 'profit_plan' | 'loss_plan',
-  holdSide: 'long' | 'short',
+  holdSide: 'long' | 'short' | 'buy' | 'sell',
   triggerPrice: number,
   quantity: number,
   clientOid?: string,
@@ -387,7 +464,8 @@ export const bitgetPlaceLimitOrder = async (
   price: number,
   force: 'post_only' | 'ioc' | 'gtc' = 'post_only',
   clientOid?: string,
-  tradingMode: 'demo' | 'live' = 'demo'
+  tradingMode: 'demo' | 'live' = 'demo',
+  tradeSide?: 'open' | 'close'
 ) => {
   const sym = symbol.toUpperCase();
   const params: Record<string, string> = {
@@ -404,6 +482,10 @@ export const bitgetPlaceLimitOrder = async (
 
   if (clientOid) {
     params.clientOid = clientOid;
+  }
+
+  if (tradeSide) {
+    params.tradeSide = tradeSide;
   }
 
   return bitgetRequest('/api/v2/mix/order/place-order', params, 'POST', true, tradingMode);
