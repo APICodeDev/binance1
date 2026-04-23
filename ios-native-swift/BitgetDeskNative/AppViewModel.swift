@@ -196,6 +196,7 @@ final class AppViewModel: ObservableObject {
     @Published var backgroundStatusSummary = "Background sync pending."
 
     private let api = APIClient.shared
+    private let supportsRemotePush = false
     private var refreshTask: Task<Void, Never>?
     private var refreshTick = 0
     private var notificationObservers: [NSObjectProtocol] = []
@@ -225,6 +226,9 @@ final class AppViewModel: ObservableObject {
         notificationObservers = [tokenObserver, failureObserver]
 
         migrateLegacyBaseURLIfNeeded()
+        if !supportsRemotePush {
+            uploadedPushDeviceToken = ""
+        }
         loadBackgroundStatus()
         if hasPersistedSessionCandidate {
             Task { await restoreSession() }
@@ -371,7 +375,7 @@ final class AppViewModel: ObservableObject {
         refreshTask = nil
         let currentToken = token
         let deviceToken = pushDeviceToken
-        if !deviceToken.isEmpty {
+        if supportsRemotePush && !deviceToken.isEmpty {
             Task { try? await api.unregisterPushDevice(baseURL: baseURL, token: currentToken, deviceToken: deviceToken) }
         }
         Task { await api.logout(baseURL: baseURL, token: currentToken) }
@@ -438,6 +442,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private func handleReceivedPushToken(_ token: String) {
+        guard supportsRemotePush else { return }
         pushDeviceTokenStorage = token
         Task {
             await syncPushRegistrationIfPossible()
@@ -445,6 +450,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func syncPushRegistrationIfPossible() async {
+        guard supportsRemotePush else { return }
         guard !pushDeviceToken.isEmpty else { return }
         guard authUser != nil || token != nil else { return }
         guard uploadedPushDeviceToken != pushDeviceToken else { return }
