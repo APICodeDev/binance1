@@ -123,8 +123,7 @@ final class TradeNotificationCoordinator {
         content.body = body
         content.sound = .default
 
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
-        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
         try? await center.add(request)
     }
 
@@ -429,15 +428,24 @@ final class AppViewModel: ObservableObject {
 
     func requestPushAuthorizationIfNeeded() async {
         let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
 
-        if !pushPermissionRequested {
+        if settings.authorizationStatus == .notDetermined || !pushPermissionRequested {
             do {
-                _ = try await center.requestAuthorization(options: [.alert, .badge, .sound])
+                let granted = try await center.requestAuthorization(options: [.alert, .badge, .sound])
                 pushPermissionRequested = true
+                if !granted {
+                    errorMessage = "Notifications are disabled for this app."
+                }
             } catch {
                 errorMessage = "Push permission: \(error.localizedDescription)"
             }
             return
+        }
+
+        let allowedStatuses: Set<UNAuthorizationStatus> = [.authorized, .provisional, .ephemeral]
+        if !allowedStatuses.contains(settings.authorizationStatus) {
+            errorMessage = "Notifications are disabled in iOS Settings for this app."
         }
     }
 
