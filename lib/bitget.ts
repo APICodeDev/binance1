@@ -676,6 +676,25 @@ export const bitgetGetPendingStopOrders = async (symbol: string, tradingMode: 'd
   };
 };
 
+export const bitgetGetPendingTpslOrders = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo') => {
+  const sym = symbol.toUpperCase();
+  const resp = await bitgetRequest('/api/v2/mix/order/orders-plan-pending', {
+    symbol: sym,
+    planType: 'profit_loss',
+    productType: getProductType(sym),
+  }, 'GET', true, tradingMode);
+
+  if (!bitgetOrderSuccess(resp)) {
+    return { ok: false, orders: [], error: resp?.msg || resp?.message || JSON.stringify(resp) };
+  }
+
+  return {
+    ok: true,
+    orders: Array.isArray(resp?.data?.entrustedList) ? resp.data.entrustedList : [],
+    error: null,
+  };
+};
+
 export const bitgetModifyStopOrder = async (
   symbol: string,
   orderId: string,
@@ -693,6 +712,28 @@ export const bitgetModifyStopOrder = async (
     marginCoin: getMarginCoin(sym),
     newTriggerPrice: stopPrice.toFixed(precision),
     newTriggerType: 'mark_price',
+  }, 'POST', true, tradingMode);
+};
+
+export const bitgetModifyTpslOrder = async (
+  symbol: string,
+  orderId: string,
+  triggerPrice: number,
+  quantity: number,
+  tradingMode: 'demo' | 'live' = 'demo'
+) => {
+  const sym = symbol.toUpperCase();
+  const precision = await bitgetGetPricePrecision(sym, tradingMode);
+
+  return bitgetRequest('/api/v2/mix/order/modify-tpsl-order', {
+    orderId,
+    symbol: sym,
+    productType: getProductType(sym),
+    marginCoin: getMarginCoin(sym),
+    triggerPrice: triggerPrice.toFixed(precision),
+    triggerType: 'mark_price',
+    executePrice: '0',
+    size: quantity.toString(),
   }, 'POST', true, tradingMode);
 };
 

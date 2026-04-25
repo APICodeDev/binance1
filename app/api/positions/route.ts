@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { fail, ok } from '@/lib/apiResponse';
 import { requireAuth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { attachTakeProfitUpgradeMeta } from '@/lib/positionSignals';
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -31,14 +32,19 @@ export async function GET(req: NextRequest) {
     take: 50,
   });
 
+  const [openWithTpMeta, historyWithTpMeta] = await Promise.all([
+    attachTakeProfitUpgradeMeta(open as any),
+    attachTakeProfitUpgradeMeta(history as any),
+  ]);
+
   const totalPnlRows = await prisma.position.aggregate({
     where: { status: 'closed', tradingMode: mode } as any,
     _sum: { profitLossFiat: true },
   });
 
   return NextResponse.json({
-    open,
-    history,
+    open: openWithTpMeta,
+    history: historyWithTpMeta,
     totalPnl: totalPnlRows._sum?.profitLossFiat || 0,
     mode
   });

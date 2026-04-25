@@ -24,11 +24,14 @@ import {
   bitgetGetMergeDepth,
   bitgetGetOrderDetail,
   bitgetGetOrderFills,
+  bitgetGetPendingTpslOrders,
   bitgetGetPositionMode,
   bitgetGetPrice,
+  bitgetGetSinglePosition,
   bitgetGetTickSize,
   bitgetGetVipFeeRates,
   bitgetGetWsBestBidAsk,
+  bitgetModifyTpslOrder,
   bitgetSetPositionMode,
   bitgetNormalizePriceByContract,
   bitgetNormalizePriceByContractDirectional,
@@ -46,6 +49,7 @@ import {
 const DEFAULT_MAKER_RETRY_DELAYS_MS = [500];
 const DEFAULT_MAX_SPREAD_PERCENT = 0.6;
 const DEFAULT_MAX_TAKER_COST_PERCENT = 1.0;
+const DEFAULT_PROTECTION_RETRY_DELAYS_MS = [500, 1000, 1500];
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const createClientOid = (symbol: string) =>
@@ -61,6 +65,10 @@ const summarizeBitgetResponse = (resp: any) => {
   const data = resp.data !== undefined ? `data=${JSON.stringify(resp.data)}` : null;
   return [code, msg, data].filter(Boolean).join(' | ') || JSON.stringify(resp);
 };
+
+const getBitgetResponseCode = (resp: any) => String(resp?.code || '').trim();
+const RETRYABLE_PROTECTION_CODES = new Set(['43023', '40891']);
+const isRetryableProtectionPlacementError = (resp: any) => RETRYABLE_PROTECTION_CODES.has(getBitgetResponseCode(resp));
 
 const parseOptionalPrice = (...values: unknown[]) => {
   for (const value of values) {
@@ -87,6 +95,118 @@ const parseOptionalPercent = (...values: unknown[]) => {
 
 const hasPayloadValue = (value: unknown) =>
   value !== undefined && value !== null && String(value).trim() !== '';
+
+const getProtectionRetryDelays = () => {
+  const rawValue = process.env.BITGET_PROTECTION_RETRY_DELAYS_MS;
+  if (!rawValue) {
+    return DEFAULT_PROTECTION_RETRY_DELAYS_MS;
+  }
+
+  const parsed = rawValue
+    .split(',')
+    .map((item) => Number.parseInt(item.trim(), 10))
+    .filter((value) => Number.isFinite(value) && value > 0);
+
+  return parsed.length > 0 ? parsed : DEFAULT_PROTECTION_RETRY_DELAYS_MS;
+};
+
+async function hasBitgetOpenPosition(symbol: string, tradingMode: TradingMode) {
+  const snapshot = await bitgetGetSinglePosition(symbol, tradingMode);
+  if (!snapshot.ok) {
+    return false;
+  }
+
+  return snapshot.positions.some((position: any) => position.symbol && parseFloat(position.positionAmt) !== 0);
+}
+
+async function placeProtectionOrderWithRetries(params: {
+  kind: 'stop' | 'takeProfit';
+  symbol: string;
+  tradingMode: TradingMode;
+  place: () => Promise<any>;
+}) {
+  const { kind, symbol, tradingMode, place } = params;
+  const delays = getProtectionRetryDelays();
+  let response = await place();
+  let attempts = 1;
+
+  while (!bitgetOrderSuccess(response) && isRetryableProtectionPlacementError(response) && attempts <= delays.length) {
+    const delayMs = delays[attempts - 1];
+    await sleep(delayMs);
+    await hasBitgetOpenPosition(symbol, tradingMode).catch(() => false);
+    response = await place();
+    attempts += 1;
+  }
+
+  const exhaustedRetryable = !bitgetOrderSuccess(response) && isRetryableProtectionPlacementError(response);
+  return {
+    ok: bitgetOrderSuccess(response),
+    response,
+    attempts,
+    exhaustedRetryable,
+    kind,
+  };
+}
+
+const isBetterTakeProfit = (
+  currentTakeProfit: number | null,
+  nextTakeProfit: number,
+  positionType: 'buy' | 'sell'
+) => {
+  if (currentTakeProfit === null) {
+    return true;
+  }
+
+  return positionType === 'buy'
+    ? nextTakeProfit > currentTakeProfit
+    : nextTakeProfit < currentTakeProfit;
+};
+
+function resolveRequestedTakeProfit(params: {
+  entryPrice: number;
+  positionType: 'buy' | 'sell';
+  exchangeInfo: any;
+  requestedTakeProfitPrice: number | null;
+  requestedTakeProfitPercent: number | null;
+}) {
+  const {
+    entryPrice,
+    positionType,
+    exchangeInfo,
+    requestedTakeProfitPrice,
+    requestedTakeProfitPercent,
+  } = params;
+  const takeProfitNormalizeDirection = positionType === 'buy' ? 'up' : 'down';
+  const normalizeExitPrice = (price: number | null, direction: 'down' | 'up') =>
+    price !== null
+      ? bitgetNormalizePriceByContractDirectional(price, exchangeInfo, direction)
+      : null;
+  const computedTakeProfitPriceFromPercent = requestedTakeProfitPercent !== null
+    ? (positionType === 'buy'
+        ? entryPrice * (1 + (requestedTakeProfitPercent / 100))
+        : entryPrice * (1 - (requestedTakeProfitPercent / 100)))
+    : null;
+  const resolvedRequestedTakeProfitPrice = requestedTakeProfitPrice !== null
+    ? requestedTakeProfitPrice
+    : computedTakeProfitPriceFromPercent;
+  const takeProfitInputSource = requestedTakeProfitPrice !== null ? 'price' : requestedTakeProfitPercent !== null ? 'percent' : 'none';
+  const normalizedRequestedTakeProfit = resolvedRequestedTakeProfitPrice !== null
+    ? normalizeExitPrice(resolvedRequestedTakeProfitPrice, takeProfitNormalizeDirection)
+    : null;
+  const isRequestedTakeProfitValid = normalizedRequestedTakeProfit !== null &&
+    (
+      (positionType === 'buy' && normalizedRequestedTakeProfit > entryPrice) ||
+      (positionType === 'sell' && normalizedRequestedTakeProfit < entryPrice)
+    );
+
+  return {
+    computedTakeProfitPriceFromPercent,
+    resolvedRequestedTakeProfitPrice,
+    takeProfitInputSource,
+    normalizedRequestedTakeProfit,
+    isRequestedTakeProfitValid,
+  };
+}
 
 const resolveTradingMode = async () => {
   const modeSetting = await prisma.setting.findUnique({ where: { key: 'trading_mode' } });
@@ -159,6 +279,151 @@ async function closePositionFromEntrySignal(
   return NextResponse.json({
     success: true,
     message: `Position closed in ${closeResult.tradingMode} for ${closeResult.symbol}`,
+  });
+}
+
+async function maybeUpgradeTakeProfitFromSameDirectionSignal(params: {
+  existing: any;
+  symbol: string;
+  type: 'buy' | 'sell';
+  tradingMode: TradingMode;
+  effectivePositionMode: BitgetPositionMode;
+  exchangeInfo: any;
+  requestedTakeProfitPrice: number | null;
+  requestedTakeProfitPercent: number | null;
+  req: NextRequest;
+  auth: Awaited<ReturnType<typeof getAuthContext>>;
+}) {
+  const {
+    existing,
+    symbol,
+    type,
+    tradingMode,
+    effectivePositionMode,
+    exchangeInfo,
+    requestedTakeProfitPrice,
+    requestedTakeProfitPercent,
+    req,
+    auth,
+  } = params;
+
+  const takeProfitResolution = resolveRequestedTakeProfit({
+    entryPrice: existing.entryPrice,
+    positionType: type,
+    exchangeInfo,
+    requestedTakeProfitPrice,
+    requestedTakeProfitPercent,
+  });
+
+  const candidateTakeProfit = takeProfitResolution.isRequestedTakeProfitValid
+    ? takeProfitResolution.normalizedRequestedTakeProfit
+    : null;
+  const currentTakeProfit = Number.isFinite(existing.takeProfit) ? Number(existing.takeProfit) : null;
+
+  if (candidateTakeProfit === null) {
+    return NextResponse.json({
+      success: true,
+      message: `Ignorada (${tradingMode}): Ya existe una posicion abierta en direccion ${type} para ${symbol} y la nueva senal no trae un TP valido para mejorarla.`,
+    });
+  }
+
+  if (!isBetterTakeProfit(currentTakeProfit, candidateTakeProfit, type)) {
+    return NextResponse.json({
+      success: true,
+      message: `Ignorada (${tradingMode}): Ya existe una posicion abierta en direccion ${type} para ${symbol} y el TP entrante no mejora el actual.`,
+    });
+  }
+
+  const existingContext = bitgetBuildPositionContext(existing.positionType as 'buy' | 'sell', effectivePositionMode);
+  const pendingProfitOrders = await bitgetGetPendingTpslOrders(symbol, tradingMode);
+  if (!pendingProfitOrders.ok) {
+    const errDetail = `No se pudieron consultar los TP pendientes de ${symbol} para evaluar mejora de take profit. ${pendingProfitOrders.error || 'unknown error'}`;
+    await saveLastEntryError(errDetail, symbol, type);
+    return NextResponse.json({ error: true, message: errDetail }, { status: 502 });
+  }
+
+  const currentProfitOrder = pendingProfitOrders.orders.find((order: any) => {
+    const planType = String(order?.planType || '').toLowerCase();
+    const orderSource = String(order?.orderSource || '').toLowerCase();
+    return planType.includes('profit') || orderSource.includes('profit');
+  });
+
+  const tpResp = currentProfitOrder?.orderId
+    ? await bitgetModifyTpslOrder(symbol, String(currentProfitOrder.orderId), candidateTakeProfit, existing.quantity, tradingMode)
+    : await bitgetPlaceTpslMarket(
+        symbol,
+        'profit_plan',
+        existingContext.holdSide,
+        candidateTakeProfit,
+        existing.quantity,
+        createClientOid(symbol),
+        tradingMode
+      );
+
+  if (!bitgetOrderSuccess(tpResp)) {
+    const errDetail = `Bitget no permitio actualizar el TP de ${symbol} en ${tradingMode}. ${summarizeBitgetResponse(tpResp)}.`;
+    await saveLastEntryError(errDetail, symbol, type);
+    return NextResponse.json({ error: true, message: errDetail, detail: tpResp }, { status: 500 });
+  }
+
+  await prisma.position.update({
+    where: { id: existing.id },
+    data: {
+      takeProfit: candidateTakeProfit,
+    },
+  });
+
+  await writeAuditLog({
+    action: 'position.tp_upgraded_from_signal',
+    userId: auth?.user?.id,
+    targetType: 'position',
+    targetId: String(existing.id),
+    metadata: {
+      symbol,
+      tradingMode,
+      positionType: existing.positionType,
+      managementMode: existing.managementMode,
+      previousTakeProfit: currentTakeProfit,
+      appliedTakeProfit: candidateTakeProfit,
+      requestedTakeProfitPrice,
+      requestedTakeProfitPercent,
+      resolvedRequestedTakeProfitPrice: takeProfitResolution.resolvedRequestedTakeProfitPrice,
+      computedTakeProfitPriceFromPercent: takeProfitResolution.computedTakeProfitPriceFromPercent,
+      requestedTakeProfitAccepted: takeProfitResolution.isRequestedTakeProfitValid,
+      requestedTakeProfitInputSource: takeProfitResolution.takeProfitInputSource,
+      bitgetAction: currentProfitOrder?.orderId ? 'modify-tpsl-order' : 'place-tpsl-order',
+      bitgetOrderId: currentProfitOrder?.orderId || null,
+      trigger: auth ? auth.authType : 'webhook',
+    },
+    req,
+  });
+
+  const pricePrecision = Number.isFinite(existing.pricePrecision)
+    ? Number(existing.pricePrecision)
+    : parseInt(exchangeInfo?.pricePlace || '4', 10);
+
+  await notifyAllActiveDevices({
+    title: `${symbol} TP ampliado`,
+    body: `La posicion #${existing.id} ahora apunta a ${candidateTakeProfit.toFixed(pricePrecision)}.`,
+    data: {
+      kind: 'position_take_profit_expanded',
+      positionId: existing.id,
+      symbol,
+      tradingMode,
+      previousTakeProfit: currentTakeProfit,
+      takeProfit: candidateTakeProfit,
+    },
+  }).catch(() => undefined);
+
+  return NextResponse.json({
+    success: true,
+    message: `TP actualizado (${tradingMode}) para ${symbol}.`,
+    takeProfit: {
+      previous: currentTakeProfit,
+      applied: candidateTakeProfit,
+      source: takeProfitResolution.takeProfitInputSource,
+      action: currentProfitOrder?.orderId ? 'modified' : 'created',
+    },
   });
 }
 
@@ -344,7 +609,29 @@ async function executeEntry(
 
     if (existing) {
       if (existing.positionType === type) {
-        return NextResponse.json({ success: true, message: `Ignorada (${tradingMode}): Ya existe una posicion abierta en direccion ${type} para ${symbol}.` });
+        if (!takeProfitInputProvided) {
+          return NextResponse.json({ success: true, message: `Ignorada (${tradingMode}): Ya existe una posicion abierta en direccion ${type} para ${symbol}.` });
+        }
+
+        const existingExchangeInfo = await bitgetGetExchangeInfo(symbol, tradingMode);
+        if (!existingExchangeInfo) {
+          const errDetail = `No se pudo obtener la configuracion del contrato de ${symbol} para evaluar mejora de TP sobre posicion existente.`;
+          await saveLastEntryError(errDetail, symbol, type);
+          return NextResponse.json({ error: true, message: errDetail }, { status: 500 });
+        }
+
+        return maybeUpgradeTakeProfitFromSameDirectionSignal({
+          existing,
+          symbol,
+          type: type as 'buy' | 'sell',
+          tradingMode,
+          effectivePositionMode,
+          exchangeInfo: existingExchangeInfo,
+          requestedTakeProfitPrice,
+          requestedTakeProfitPercent,
+          req,
+          auth,
+        });
       }
 
       await bitgetCancelAllOrders(symbol, tradingMode);
@@ -575,7 +862,6 @@ async function executeEntry(
     const slPercent = 1.2 / 100;
     const rawLegacyStopPrice = type === 'buy' ? entryPrice * (1 - slPercent) : entryPrice * (1 + slPercent);
     const stopNormalizeDirection = type === 'buy' ? 'down' : 'up';
-    const takeProfitNormalizeDirection = type === 'buy' ? 'up' : 'down';
     const normalizeExitPrice = (price: number | null, direction: 'down' | 'up') =>
       price !== null
         ? bitgetNormalizePriceByContractDirectional(price, exchangeInfo, direction)
@@ -585,19 +871,20 @@ async function executeEntry(
           ? entryPrice * (1 - (requestedStopPercent / 100))
           : entryPrice * (1 + (requestedStopPercent / 100)))
       : null;
-    const computedTakeProfitPriceFromPercent = requestedTakeProfitPercent !== null
-      ? (type === 'buy'
-          ? entryPrice * (1 + (requestedTakeProfitPercent / 100))
-          : entryPrice * (1 - (requestedTakeProfitPercent / 100)))
-      : null;
+    const takeProfitResolution = resolveRequestedTakeProfit({
+      entryPrice,
+      positionType: type as 'buy' | 'sell',
+      exchangeInfo,
+      requestedTakeProfitPrice,
+      requestedTakeProfitPercent,
+    });
+    const computedTakeProfitPriceFromPercent = takeProfitResolution.computedTakeProfitPriceFromPercent;
     const resolvedRequestedStopPrice = requestedStopPrice !== null
       ? requestedStopPrice
       : computedStopPriceFromPercent;
-    const resolvedRequestedTakeProfitPrice = requestedTakeProfitPrice !== null
-      ? requestedTakeProfitPrice
-      : computedTakeProfitPriceFromPercent;
+    const resolvedRequestedTakeProfitPrice = takeProfitResolution.resolvedRequestedTakeProfitPrice;
     const stopInputSource = requestedStopPrice !== null ? 'price' : requestedStopPercent !== null ? 'percent' : 'legacy';
-    const takeProfitInputSource = requestedTakeProfitPrice !== null ? 'price' : requestedTakeProfitPercent !== null ? 'percent' : 'none';
+    const takeProfitInputSource = takeProfitResolution.takeProfitInputSource;
     const legacyStopPrice = normalizeExitPrice(rawLegacyStopPrice, stopNormalizeDirection);
     const normalizedRequestedStop = resolvedRequestedStopPrice !== null
       ? normalizeExitPrice(resolvedRequestedStopPrice, stopNormalizeDirection)
@@ -607,14 +894,8 @@ async function executeEntry(
         (type === 'buy' && normalizedRequestedStop < entryPrice) ||
         (type === 'sell' && normalizedRequestedStop > entryPrice)
       );
-    const normalizedRequestedTakeProfit = resolvedRequestedTakeProfitPrice !== null
-      ? normalizeExitPrice(resolvedRequestedTakeProfitPrice, takeProfitNormalizeDirection)
-      : null;
-    const isRequestedTakeProfitValid = normalizedRequestedTakeProfit !== null &&
-      (
-        (type === 'buy' && normalizedRequestedTakeProfit > entryPrice) ||
-        (type === 'sell' && normalizedRequestedTakeProfit < entryPrice)
-      );
+    const normalizedRequestedTakeProfit = takeProfitResolution.normalizedRequestedTakeProfit;
+    const isRequestedTakeProfitValid = takeProfitResolution.isRequestedTakeProfitValid;
     const stopPrice = managementMode === 'self'
       ? normalizedRequestedStop
       : (apiStopMode === 'legacy' ? legacyStopPrice : (isRequestedStopValid ? normalizedRequestedStop : legacyStopPrice));
@@ -652,42 +933,65 @@ async function executeEntry(
     const shouldPlaceInitialTakeProfit = takeProfitPrice !== null;
     let slResponse: any = null;
     let tpResponse: any = null;
+    let initialStopAttempts = 0;
+    let initialTakeProfitAttempts = 0;
+    let initialTakeProfitPending = false;
+    let persistedTakeProfitPrice = takeProfitPrice;
 
     if (shouldPlaceInitialStop) {
-      slResponse = await bitgetPlaceStopMarket(symbol, slSide, stopPrice!, filledSize, tradingMode, closeTradeSide);
+      const stopPlacement = await placeProtectionOrderWithRetries({
+        kind: 'stop',
+        symbol,
+        tradingMode,
+        place: () => bitgetPlaceStopMarket(symbol, slSide, stopPrice!, filledSize, tradingMode, closeTradeSide),
+      });
+      slResponse = stopPlacement.response;
+      initialStopAttempts = stopPlacement.attempts;
     }
 
     if (shouldPlaceInitialStop && !bitgetOrderSuccess(slResponse)) {
       await bitgetCancelAllOrders(symbol, tradingMode);
       await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
       const errDetail = `SL rechazado por Bitget (${tradingMode}) para ${symbol}. ` +
-        `${summarizeBitgetResponse(slResponse)}. Rollback ejecutado.`;
+        `${summarizeBitgetResponse(slResponse)}. Intentos=${initialStopAttempts || 1}. Rollback ejecutado.`;
       await saveLastEntryError(errDetail, symbol, type);
       return NextResponse.json({ error: true, message: errDetail, detail: slResponse }, { status: 500 });
     }
 
     if (shouldPlaceInitialTakeProfit) {
-      tpResponse = await bitgetPlaceTpslMarket(
+      const takeProfitPlacement = await placeProtectionOrderWithRetries({
+        kind: 'takeProfit',
         symbol,
-        'profit_plan',
-        holdSide,
-        takeProfitPrice!,
-        filledSize,
-        createClientOid(symbol),
-        tradingMode
-      );
+        tradingMode,
+        place: () => bitgetPlaceTpslMarket(
+          symbol,
+          'profit_plan',
+          holdSide,
+          takeProfitPrice!,
+          filledSize,
+          createClientOid(symbol),
+          tradingMode
+        ),
+      });
+      tpResponse = takeProfitPlacement.response;
+      initialTakeProfitAttempts = takeProfitPlacement.attempts;
+      initialTakeProfitPending = takeProfitPlacement.exhaustedRetryable;
     }
 
-    if (shouldPlaceInitialTakeProfit && !bitgetOrderSuccess(tpResponse)) {
+    if (shouldPlaceInitialTakeProfit && !bitgetOrderSuccess(tpResponse) && !initialTakeProfitPending) {
       await bitgetCancelAllOrders(symbol, tradingMode);
       await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
       const errDetail = `TP rechazado por Bitget (${tradingMode}) para ${symbol}. ` +
-        `${summarizeBitgetResponse(tpResponse)}. Rollback ejecutado.`;
+        `${summarizeBitgetResponse(tpResponse)}. Intentos=${initialTakeProfitAttempts || 1}. Rollback ejecutado.`;
       await saveLastEntryError(errDetail, symbol, type);
       return NextResponse.json({ error: true, message: errDetail, detail: tpResponse }, { status: 500 });
     }
 
-    await prisma.position.create({
+    if (initialTakeProfitPending) {
+      persistedTakeProfitPrice = takeProfitPrice;
+    }
+
+    const createdPosition = await prisma.position.create({
       data: {
         symbol,
         positionType: type,
@@ -697,7 +1001,7 @@ async function executeEntry(
         entryPrice,
         requestedEntryPrice,
         stopLoss: stopPrice!,
-        takeProfit: takeProfitPrice,
+        takeProfit: persistedTakeProfitPrice,
         status: 'open',
         tradingMode,
         origin,
@@ -711,6 +1015,7 @@ async function executeEntry(
       action: 'position.open',
       userId: auth?.user.id,
       targetType: 'position',
+      targetId: String(createdPosition.id),
       metadata: {
         symbol,
         tradingMode,
@@ -761,17 +1066,47 @@ async function executeEntry(
         resolvedRequestedTakeProfitPrice,
         normalizedRequestedTakeProfit,
         requestedTakeProfitAccepted: isRequestedTakeProfitValid,
-        appliedTakeProfitPrice: takeProfitPrice,
-        initialTakeProfitOrderPlaced: shouldPlaceInitialTakeProfit,
+        appliedTakeProfitPrice: persistedTakeProfitPrice,
+        initialTakeProfitOrderPlaced: shouldPlaceInitialTakeProfit && !initialTakeProfitPending && bitgetOrderSuccess(tpResponse),
+        initialTakeProfitPending,
+        initialTakeProfitAttempts,
+        initialStopAttempts,
+        initialTakeProfitResponseCode: getBitgetResponseCode(tpResponse),
       },
       req,
     });
 
+    if (initialTakeProfitPending) {
+      await writeAuditLog({
+        action: 'position.open.tp_pending',
+        userId: auth?.user?.id,
+        targetType: 'position',
+        targetId: String(createdPosition.id),
+        metadata: {
+          symbol,
+          tradingMode,
+          type,
+          requestedTakeProfitPrice,
+          requestedTakeProfitPercent,
+          appliedTakeProfitPrice: takeProfitPrice,
+          quantity: filledSize,
+          attempts: initialTakeProfitAttempts,
+          responseCode: getBitgetResponseCode(tpResponse),
+          responseSummary: summarizeBitgetResponse(tpResponse),
+          trigger: auth ? auth.authType : 'webhook',
+        },
+        req,
+      });
+    }
+
     await notifyAllActiveDevices({
-      title: `${symbol} abierta`,
-      body: `Nueva posicion ${type.toUpperCase()} en ${tradingMode.toUpperCase()} @ ${entryPrice.toFixed(pricePrecision)}.`,
+      title: initialTakeProfitPending ? `${symbol} abierta con TP pendiente` : `${symbol} abierta`,
+      body: initialTakeProfitPending
+        ? `Nueva posicion ${type.toUpperCase()} en ${tradingMode.toUpperCase()} @ ${entryPrice.toFixed(pricePrecision)}. El TP ha quedado pendiente en Bitget.`
+        : `Nueva posicion ${type.toUpperCase()} en ${tradingMode.toUpperCase()} @ ${entryPrice.toFixed(pricePrecision)}.`,
       data: {
-        kind: 'position_opened',
+        kind: initialTakeProfitPending ? 'position_opened_tp_pending' : 'position_opened',
+        positionId: createdPosition.id,
         symbol,
         tradingMode,
         positionType: type,
@@ -787,7 +1122,9 @@ async function executeEntry(
 
     return NextResponse.json({
       success: true,
-      message: `Position opened in ${tradingMode} for ${symbol}`,
+      message: initialTakeProfitPending
+        ? `Position opened in ${tradingMode} for ${symbol} with TP pending on Bitget`
+        : `Position opened in ${tradingMode} for ${symbol}`,
       managementMode,
       positionMode: effectivePositionMode,
       executionMode,
@@ -816,8 +1153,10 @@ async function executeEntry(
         requestedPercent: requestedTakeProfitPercent,
         resolved: resolvedRequestedTakeProfitPrice,
         accepted: isRequestedTakeProfitValid,
-        applied: takeProfitPrice,
-        orderPlaced: shouldPlaceInitialTakeProfit,
+        applied: persistedTakeProfitPrice,
+        orderPlaced: shouldPlaceInitialTakeProfit && !initialTakeProfitPending && bitgetOrderSuccess(tpResponse),
+        pending: initialTakeProfitPending,
+        attempts: initialTakeProfitAttempts,
       },
     });
   } catch (error: any) {

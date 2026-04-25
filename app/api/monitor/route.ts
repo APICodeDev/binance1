@@ -6,6 +6,7 @@ import { fail, ok } from '@/lib/apiResponse';
 import { requireAuth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { isSelfManagedPosition } from '@/lib/positions';
+import { attachTakeProfitUpgradeMeta } from '@/lib/positionSignals';
 import { notifyAllActiveDevices } from '@/lib/pushNotifications';
 import {
   bitgetBuildPositionContext,
@@ -78,9 +79,14 @@ async function buildDashboardSnapshot(mode: DashboardMode) {
     return acc;
   }, {});
 
+  const [openWithTpMeta, historyWithTpMeta] = await Promise.all([
+    attachTakeProfitUpgradeMeta(open as any),
+    attachTakeProfitUpgradeMeta(history as any),
+  ]);
+
   return {
-    open,
-    history,
+    open: openWithTpMeta,
+    history: historyWithTpMeta,
     totalPnl: totalPnlRows._sum?.profitLossFiat || 0,
     mode,
     settings: {

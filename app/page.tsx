@@ -26,7 +26,8 @@ import {
   ChevronDown,
   ChevronUp,
   Volume2,
-  Play
+  Play,
+  Flag
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { apiClient } from '@/lib/apiClient';
@@ -85,6 +86,15 @@ interface Position {
   pricePrecision?: number | null;
   maxProfitPercent?: number | null;
   maxProfitAt?: string | null;
+  takeProfitExpanded?: boolean;
+  takeProfitExpandedAt?: string | null;
+  takeProfitExpandedFrom?: number | null;
+  takeProfitExpandedTo?: number | null;
+  takeProfitExpansionCount?: number;
+  takeProfitPending?: boolean;
+  takeProfitPendingAt?: string | null;
+  takeProfitPendingCode?: string | null;
+  takeProfitPendingAttempts?: number;
 }
 
 interface AuthUser {
@@ -2778,6 +2788,32 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
 
   const exchangeUrl = `https://www.bitget.com/en/futures/usdt/${pos.symbol}`;
   const tradingViewUrl = `https://www.tradingview.com/chart/?symbol=BITGET%3A${encodeURIComponent(`${pos.symbol}.P`)}`;
+  const takeProfitExpandedTitle = pos.takeProfitExpanded
+    ? `TP ampliado${
+        typeof pos.takeProfitExpandedFrom === 'number' && typeof pos.takeProfitExpandedTo === 'number'
+          ? ` de ${formatPrice(pos.takeProfitExpandedFrom, pos.pricePrecision)} a ${formatPrice(pos.takeProfitExpandedTo, pos.pricePrecision)}`
+          : ''
+      }${
+        pos.takeProfitExpandedAt
+          ? ` · ${new Date(pos.takeProfitExpandedAt).toLocaleString()}`
+          : ''
+      }`
+    : '';
+  const takeProfitPendingTitle = pos.takeProfitPending
+    ? `TP pendiente en Bitget${
+        pos.takeProfitPendingCode
+          ? ` · code=${pos.takeProfitPendingCode}`
+          : ''
+      }${
+        (pos.takeProfitPendingAttempts || 0) > 0
+          ? ` · intentos=${pos.takeProfitPendingAttempts}`
+          : ''
+      }${
+        pos.takeProfitPendingAt
+          ? ` · ${new Date(pos.takeProfitPendingAt).toLocaleString()}`
+          : ''
+      }`
+    : '';
 
   return (
     <motion.div 
@@ -2822,6 +2858,24 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
               </a>
             </div>
             {pos.tradingMode === 'live' && <span className="bg-rose-500 text-[8px] font-black px-1.5 py-0.5 rounded text-white animate-pulse">LIVE</span>}
+            {pos.takeProfitExpanded && (
+              <span
+                className="inline-flex items-center gap-1 rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2 py-1 text-[9px] font-black uppercase tracking-[0.18em] text-emerald-300"
+                title={takeProfitExpandedTitle}
+              >
+                <Flag size={10} />
+                TP Up{(pos.takeProfitExpansionCount || 0) > 1 ? ` x${pos.takeProfitExpansionCount}` : ''}
+              </span>
+            )}
+            {pos.takeProfitPending && (
+              <span
+                className="inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-500/15 px-2 py-1 text-[9px] font-black uppercase tracking-[0.18em] text-amber-300"
+                title={takeProfitPendingTitle}
+              >
+                <AlertTriangle size={10} />
+                TP Pending
+              </span>
+            )}
           </div>
           <span className="text-[10px] text-slate-500 font-bold tracking-widest uppercase flex gap-2">
             ID: CMD-{pos.id.toString().padStart(4, '0')}
