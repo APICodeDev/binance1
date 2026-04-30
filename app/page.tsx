@@ -60,6 +60,8 @@ const AVAILABLE_SYMBOLS = [
 ];
 
 const BOOKMAP_SYMBOL_STORAGE_KEY = 'bookmap:last-symbol';
+const LEVERAGE_ENABLED_STORAGE_KEY = 'dashboard:leverage-enabled';
+const LEVERAGE_VALUE_STORAGE_KEY = 'dashboard:leverage-value';
 const ACTIVE_MONITOR_POLL_MS = 3000;
 const IDLE_MONITOR_POLL_MS = 10000;
 
@@ -712,6 +714,15 @@ export default function Dashboard() {
       return;
     }
 
+    const storedLeverageEnabled = window.localStorage.getItem(LEVERAGE_ENABLED_STORAGE_KEY);
+    const storedLeverageValue = window.localStorage.getItem(LEVERAGE_VALUE_STORAGE_KEY);
+    if (storedLeverageEnabled === '0' || storedLeverageEnabled === '1') {
+      setLeverageEnabled(storedLeverageEnabled === '1');
+    }
+    if (storedLeverageValue && storedLeverageValue.trim()) {
+      setLeverageValue(storedLeverageValue);
+    }
+
     const savedBookmapSymbol = window.localStorage.getItem(BOOKMAP_SYMBOL_STORAGE_KEY);
     if (savedBookmapSymbol && AVAILABLE_SYMBOLS.includes(savedBookmapSymbol)) {
       setBookmapSymbol(savedBookmapSymbol);
@@ -735,6 +746,15 @@ export default function Dashboard() {
 
     window.localStorage.setItem(BOOKMAP_SYMBOL_STORAGE_KEY, bookmapSymbol);
   }, [bookmapSymbol]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    window.localStorage.setItem(LEVERAGE_ENABLED_STORAGE_KEY, leverageEnabled ? '1' : '0');
+    window.localStorage.setItem(LEVERAGE_VALUE_STORAGE_KEY, leverageValue || '1');
+  }, [leverageEnabled, leverageValue]);
 
   const fetchAuth = useCallback(async () => {
     setAuthLoading(true);
@@ -1176,9 +1196,10 @@ export default function Dashboard() {
   };
 
   const saveLeverageValue = async (val: string) => {
-    setLeverageValue(val);
+    const normalized = String(Math.max(1, Number.parseInt(val || '1', 10) || 1));
+    setLeverageValue(normalized);
     try {
-      await apiClient.updateSettings({ leverage_value: val || '1' });
+      await apiClient.updateSettings({ leverage_value: normalized });
     } catch (error) {
       setErrorPopup(getApiErrorMessage(error, 'Unable to save leverage value.'));
     }

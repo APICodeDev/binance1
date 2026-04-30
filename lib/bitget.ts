@@ -568,6 +568,42 @@ export const bitgetGetOrderFills = async (
   }, 'GET', true, tradingMode);
 };
 
+export const bitgetGetOrderHistory = async (
+  symbol: string,
+  startTime: number,
+  endTime: number,
+  tradingMode: 'demo' | 'live' = 'demo',
+  limit = 100
+) => {
+  const sym = symbol.toUpperCase();
+  return bitgetRequest('/api/v2/mix/order/orders-history', {
+    symbol: sym,
+    productType: getProductType(sym),
+    startTime: String(startTime),
+    endTime: String(endTime),
+    limit: String(limit),
+  }, 'GET', true, tradingMode);
+};
+
+export const bitgetGetPlanOrderHistory = async (
+  symbol: string,
+  planType: 'normal_plan' | 'profit_loss',
+  startTime: number,
+  endTime: number,
+  tradingMode: 'demo' | 'live' = 'demo',
+  limit = 100
+) => {
+  const sym = symbol.toUpperCase();
+  return bitgetRequest('/api/v2/mix/order/orders-plan-history', {
+    symbol: sym,
+    productType: getProductType(sym),
+    planType,
+    startTime: String(startTime),
+    endTime: String(endTime),
+    limit: String(limit),
+  }, 'GET', true, tradingMode);
+};
+
 export const bitgetGetMergeDepth = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo') => {
   const sym = symbol.toUpperCase();
   const resp = await bitgetRequest('/api/v2/mix/market/merge-depth', {

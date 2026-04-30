@@ -75,6 +75,7 @@ async function request<T>(url: string, options: ApiOptions = {}): Promise<T> {
   });
 
   const res = await fetch(buildUrl(url), {
+    cache: options.cache ?? 'no-store',
     credentials: 'include',
     ...options,
     headers,

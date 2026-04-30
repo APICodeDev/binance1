@@ -288,6 +288,12 @@ final class AppViewModel: ObservableObject {
 
     private func migrateLegacyBaseURLIfNeeded() {
         let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = trimmed.lowercased()
+        if normalized.contains("binance.apicode.cloud") {
+            baseURL = "https://trades.apicode.cloud"
+            return
+        }
+
         if trimmed.isEmpty || trimmed == "http://localhost:3000" || trimmed == "http://127.0.0.1:3000" {
             baseURL = "https://trades.apicode.cloud"
             return

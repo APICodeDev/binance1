@@ -11,7 +11,8 @@ const config: CapacitorConfig = {
     cleartext: serverUrl.startsWith('http://'),
     allowNavigation: [
       'localhost',
-      '*.vercel.app',
+      'trades.apicode.cloud',
+      '*.apicode.cloud',
     ],
   },
   ios: {

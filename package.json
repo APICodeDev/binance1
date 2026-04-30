@@ -9,6 +9,7 @@
     "start": "next start",
     "marketdata:start": "npx tsx scripts/bitget-ws-service.ts",
     "bookmap:start": "npx tsx scripts/bookmap-ws-service.ts",
+    "analyze:performance": "npx tsx scripts/analyze-performance.ts",
     "lint": "next lint",
     "create-admin": "npx tsx scripts/create-admin.ts",
     "postinstall": "prisma generate",

@@ -96,6 +96,14 @@ const parseOptionalPercent = (...values: unknown[]) => {
 const hasPayloadValue = (value: unknown) =>
   value !== undefined && value !== null && String(value).trim() !== '';
 
+const normalizeSignalOrigin = (value: unknown) => {
+  const raw = String(value ?? '').trim();
+  return raw ? raw : null;
+};
+
+const isSameOrigin = (left: unknown, right: unknown) =>
+  normalizeSignalOrigin(left) === normalizeSignalOrigin(right);
+
 const getProtectionRetryDelays = () => {
   const rawValue = process.env.BITGET_PROTECTION_RETRY_DELAYS_MS;
   if (!rawValue) {
@@ -221,6 +229,7 @@ async function closePositionFromEntrySignal(
   const symbol = bitgetNormalizeSymbol(data.symbol || '');
   const modeProvided = data.mode !== undefined && data.mode !== null && String(data.mode).trim() !== '';
   const managementMode = normalizePositionManagementMode(data.mode);
+  const signalOrigin = normalizeSignalOrigin(data.origin);
 
   if (!symbol) {
     return NextResponse.json({ error: true, message: 'Invalid symbol for close' }, { status: 400 });
@@ -249,6 +258,29 @@ async function closePositionFromEntrySignal(
     });
   }
 
+  if (!isSameOrigin(position.origin, signalOrigin)) {
+    await writeAuditLog({
+      action: 'position.close_signal_ignored_origin',
+      userId: auth?.user?.id,
+      targetType: 'position',
+      targetId: String(position.id),
+      metadata: {
+        symbol,
+        tradingMode,
+        managementMode,
+        positionOrigin: position.origin || null,
+        signalOrigin,
+        trigger: auth ? auth.authType : 'webhook',
+      },
+      req,
+    });
+
+    return NextResponse.json({
+      success: true,
+      message: `Ignorada (${tradingMode}): El close de ${signalOrigin || 'sin origin'} no coincide con el origin ${position.origin || 'sin origin'} de la posicion abierta en ${symbol}.`,
+    });
+  }
+
   const closeResult = await closeTrackedPosition(position);
   if (!closeResult.ok) {
     const errDetail = `No se pudo cerrar ${symbol} por senal externa: ${closeResult.message}`;
@@ -261,13 +293,14 @@ async function closePositionFromEntrySignal(
     userId: auth?.user?.id,
     targetType: 'position',
     targetId: String(position.id),
-    metadata: {
-      symbol: closeResult.symbol,
-      tradingMode: closeResult.tradingMode,
-      managementMode,
-      trigger: auth ? auth.authType : 'webhook',
-    },
-    req,
+      metadata: {
+        symbol: closeResult.symbol,
+        tradingMode: closeResult.tradingMode,
+        managementMode,
+        origin: signalOrigin,
+        trigger: auth ? auth.authType : 'webhook',
+      },
+      req,
   });
 
   await prisma.setting.upsert({
@@ -466,7 +499,7 @@ async function executeEntry(
     let amount = parseFloat(data.amount) || 0;
     const type = String(data.type || '').toLowerCase();
     const managementMode = normalizePositionManagementMode(data.mode) as PositionManagementMode;
-    const origin = data.origin ? String(data.origin) : null;
+    const origin = normalizeSignalOrigin(data.origin);
     const timeframe = data.timeframe ? String(data.timeframe) : null;
     const incomingQuantity = parseFloat(data.quantity || data.contracts) || 0;
     const rawRequestedEntryPrice =
@@ -608,7 +641,34 @@ async function executeEntry(
     });
 
     if (existing) {
+      const sameOrigin = isSameOrigin(existing.origin, origin);
+
       if (existing.positionType === type) {
+        if (!sameOrigin) {
+          await writeAuditLog({
+            action: 'position.same_direction_ignored_origin',
+            userId: auth?.user?.id,
+            targetType: 'position',
+            targetId: String(existing.id),
+            metadata: {
+              symbol,
+              tradingMode,
+              existingPositionType: existing.positionType,
+              incomingPositionType: type,
+              managementMode: existing.managementMode,
+              positionOrigin: existing.origin || null,
+              signalOrigin: origin,
+              trigger: auth ? auth.authType : 'webhook',
+            },
+            req,
+          });
+
+          return NextResponse.json({
+            success: true,
+            message: `Ignorada (${tradingMode}): Ya existe una posicion abierta en ${symbol} del origin ${existing.origin || 'sin origin'} y la nueva senal llega desde ${origin || 'sin origin'}.`,
+          });
+        }
+
         if (!takeProfitInputProvided) {
           return NextResponse.json({ success: true, message: `Ignorada (${tradingMode}): Ya existe una posicion abierta en direccion ${type} para ${symbol}.` });
         }
@@ -634,36 +694,54 @@ async function executeEntry(
         });
       }
 
-      await bitgetCancelAllOrders(symbol, tradingMode);
-      const existingContext = bitgetBuildPositionContext(existing.positionType as 'buy' | 'sell', effectivePositionMode);
-      const closeSide = existingContext.closeSide;
-      const closeResp = await bitgetClosePosition(symbol, closeSide as 'BUY' | 'SELL', existing.quantity, tradingMode, closeTradeSide);
-      if (!bitgetOrderSuccess(closeResp)) {
-        const errDetail = `Error al cerrar posicion previa de ${symbol} en ${tradingMode} para cambio de direccion.`;
-        await saveLastEntryError(errDetail, symbol, type);
-        return NextResponse.json({ error: true, message: errDetail, detail: closeResp }, { status: 500 });
+      if (!sameOrigin) {
+        await writeAuditLog({
+          action: 'position.reverse_signal_ignored_origin',
+          userId: auth?.user?.id,
+          targetType: 'position',
+          targetId: String(existing.id),
+          metadata: {
+            symbol,
+            tradingMode,
+            existingPositionType: existing.positionType,
+            incomingPositionType: type,
+            managementMode: existing.managementMode,
+            positionOrigin: existing.origin || null,
+            signalOrigin: origin,
+            trigger: auth ? auth.authType : 'webhook',
+          },
+          req,
+        });
+
+        return NextResponse.json({
+          success: true,
+          message: `Ignorada (${tradingMode}): Ya existe una posicion abierta en ${symbol} del origin ${existing.origin || 'sin origin'} y no se revierte con una senal opuesta de ${origin || 'sin origin'}.`,
+        });
       }
 
-      const currentPrice = (await bitgetGetPrice(symbol, tradingMode)) || existing.entryPrice;
-      const exitComm = await bitgetGetCommissionRate(symbol, tradingMode);
-      const entryComm = (existing as any).commission ?? exitComm;
-      const entryCost = existing.entryPrice * existing.quantity * entryComm;
-      const exitCost = currentPrice * existing.quantity * exitComm;
-      const profitFiat = existing.positionType === 'buy'
-        ? ((currentPrice - existing.entryPrice) * existing.quantity) - entryCost - exitCost
-        : ((existing.entryPrice - currentPrice) * existing.quantity) - entryCost - exitCost;
-      const profitPercent = existing.positionType === 'buy'
-        ? ((currentPrice - existing.entryPrice) / existing.entryPrice) * 100
-        : ((existing.entryPrice - currentPrice) / existing.entryPrice) * 100;
+      const closeResult = await closeTrackedPosition(existing);
+      if (!closeResult.ok) {
+        const errDetail = `Error al cerrar posicion previa de ${symbol} en ${tradingMode} para cambio de direccion del mismo origin. ${closeResult.message}`;
+        await saveLastEntryError(errDetail, symbol, type);
+        return NextResponse.json({ error: true, message: errDetail, details: closeResult.details }, { status: closeResult.status });
+      }
 
-      await prisma.position.update({
-        where: { id: existing.id },
-        data: {
-          status: 'closed',
-          closedAt: new Date(),
-          profitLossPercent: profitPercent,
-          profitLossFiat: profitFiat,
+      await writeAuditLog({
+        action: 'position.reversed_from_signal',
+        userId: auth?.user?.id,
+        targetType: 'position',
+        targetId: String(existing.id),
+        metadata: {
+          symbol,
+          tradingMode,
+          existingPositionType: existing.positionType,
+          incomingPositionType: type,
+          managementMode: existing.managementMode,
+          positionOrigin: existing.origin || null,
+          signalOrigin: origin,
+          trigger: auth ? auth.authType : 'webhook',
         },
+        req,
       });
     }
 
@@ -1186,6 +1264,19 @@ export async function POST(req: NextRequest) {
         try {
           const symbol = bitgetNormalizeSymbol(data?.symbol || 'N/A');
           const type = String(data?.type || 'N/A');
+          await writeAuditLog({
+            action: 'entry.async_failed',
+            userId: auth?.user?.id,
+            targetType: 'entry',
+            targetId: symbol,
+            metadata: {
+              symbol,
+              type,
+              detail: error?.message || 'unknown error',
+              requestBody: data,
+            },
+            req,
+          });
           await saveLastEntryError(`Excepcion async entry: ${error?.message || 'unknown error'}`, symbol, type);
         } catch {
           return;

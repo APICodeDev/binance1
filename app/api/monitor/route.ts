@@ -5,7 +5,7 @@ import { writeAuditLog } from '@/lib/audit';
 import { fail, ok } from '@/lib/apiResponse';
 import { requireAuth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { isSelfManagedPosition } from '@/lib/positions';
+import { calculateCloseMetrics, isSelfManagedPosition, resolveBitgetCloseExecution } from '@/lib/positions';
 import { attachTakeProfitUpgradeMeta } from '@/lib/positionSignals';
 import { notifyAllActiveDevices } from '@/lib/pushNotifications';
 import {
@@ -167,6 +167,11 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     }
 
     if (primary?.orderId) {
+      const currentTriggerPrice = Number.parseFloat(String(primary.triggerPrice || ''));
+      if (Number.isFinite(currentTriggerPrice) && Math.abs(currentTriggerPrice - stopPrice) < Math.max(1e-8, stopPrice * 0.000001)) {
+        return { ok: true, message: 'unchanged' };
+      }
+
       const modifyResp = await bitgetModifyStopOrder(symbol, primary.orderId, stopPrice, mode);
       if (bitgetOrderSuccess(modifyResp)) {
         return { ok: true, message: 'modified' };
@@ -210,29 +215,39 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
         continue;
       }
 
-      const currentPrice = (await bitgetGetPrice(symbol, mode)) || pos.entryPrice;
       const comm = await bitgetGetCommissionRate(symbol, mode);
       const entryComm = (pos as any).commission ?? comm;
-      const entryCost = pos.entryPrice * pos.quantity * entryComm;
-      const exitCost = currentPrice * pos.quantity * comm;
-
-      const profitFiat = pos.positionType === 'buy'
-        ? ((currentPrice - pos.entryPrice) * pos.quantity) - entryCost - exitCost
-        : ((pos.entryPrice - currentPrice) * pos.quantity) - entryCost - exitCost;
-      
-      const profitPercent = pos.positionType === 'buy'
-        ? ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100
-        : ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100;
+      const currentPrice = (await bitgetGetPrice(symbol, mode)) || pos.entryPrice;
+      const exchangeClose = await resolveBitgetCloseExecution({
+        position: pos as any,
+        tradingMode: mode,
+        targetTime: new Date(),
+        fallbackExitPrice: currentPrice,
+        fallbackReason: 'exchange_closed',
+      });
+      const exitPrice = exchangeClose?.exitPrice || currentPrice;
+      const closeMetrics = calculateCloseMetrics({
+        positionType: pos.positionType,
+        entryPrice: pos.entryPrice,
+        quantity: pos.quantity,
+        entryCommission: entryComm,
+        exitCommission: comm,
+        exitPrice,
+      });
 
       await bitgetCancelAllOrders(symbol, mode);
       await prisma.position.update({
         where: { id: pos.id },
         data: {
           status: 'closed',
-          closedAt: new Date(),
-          profitLossPercent: profitPercent,
-          profitLossFiat: profitFiat,
-        },
+          closedAt: exchangeClose?.closedAt || new Date(),
+          profitLossPercent: closeMetrics.profitPercent,
+          profitLossFiat: closeMetrics.profitFiat,
+          exitPrice,
+          exitReason: exchangeClose?.exitReason || 'exchange_closed',
+          exitOrderId: exchangeClose?.exitOrderId || null,
+          exitSource: exchangeClose?.exitSource || null,
+        } as any,
       });
       results.push(`SINC_CERRADA (${mode}): Position #${pos.id} (${symbol}) cerrada en Bitget.`);
       pushEvents.push({
@@ -283,7 +298,6 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     const givebackPercent = Math.max(0, maxProfitPercent - profitPercent);
 
     let newSl = pos.stopLoss;
-    let slTriggered = false;
     let takeProfitTriggered = false;
     let exhaustionTriggered = false;
     let exhaustionReason: 'retracement' | 'flat_timeout' | null = null;
@@ -320,10 +334,25 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       );
     }
 
+    if (!selfManaged) {
+      const ensuredStopResp = await syncStopOrder(
+        symbol,
+        positionContext.closeSide,
+        newSl,
+        pos.quantity,
+        mode,
+        positionContext.closeTradeSide
+      );
+
+      if (!ensuredStopResp.ok) {
+        results.push(`SL_SYNC_WARNING (${mode}): ${symbol} -> ${ensuredStopResp.message}`);
+      } else if (ensuredStopResp.message === 'placed') {
+        results.push(`SL_RESTORED (${mode}): ${symbol} -> ${newSl}`);
+      }
+    }
+
     if (!exhaustionTriggered && pos.positionType === 'buy') {
-      if (!selfManaged && currentPrice <= pos.stopLoss) {
-        slTriggered = true;
-      } else if (!selfManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice >= takeProfit) {
+      if (!selfManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice >= takeProfit) {
         takeProfitTriggered = true;
       } else if (!selfManaged && marketMovePercent >= 1) {
         const crossedStep = Math.floor(marketMovePercent / 0.5) * 0.5;
@@ -347,9 +376,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
         }
       }
     } else if (!exhaustionTriggered) { // short
-      if (!selfManaged && currentPrice >= pos.stopLoss) {
-        slTriggered = true;
-      } else if (!selfManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice <= takeProfit) {
+      if (!selfManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice <= takeProfit) {
         takeProfitTriggered = true;
       } else if (!selfManaged && marketMovePercent >= 1) {
         const crossedStep = Math.floor(marketMovePercent / 0.5) * 0.5;
@@ -374,45 +401,66 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       }
     }
 
-    if (slTriggered || takeProfitTriggered || exhaustionTriggered) {
+    if (takeProfitTriggered || exhaustionTriggered) {
       const closeSide = positionContext.closeSide;
       await bitgetCancelAllOrders(symbol, mode);
       const closeResp = await bitgetClosePosition(symbol, closeSide, pos.quantity, mode, positionContext.closeTradeSide);
 
       if (bitgetOrderSuccess(closeResp)) {
+        const exchangeClose = await resolveBitgetCloseExecution({
+          position: pos as any,
+          tradingMode: mode,
+          targetTime: new Date(),
+          fallbackExitPrice: currentPrice,
+          knownCloseResp: closeResp,
+          fallbackReason: exhaustionTriggered ? 'exhaustion' : 'take_profit',
+        });
+        const exitPrice = exchangeClose?.exitPrice || currentPrice;
+        const closeMetrics = calculateCloseMetrics({
+          positionType: pos.positionType,
+          entryPrice: pos.entryPrice,
+          quantity: pos.quantity,
+          entryCommission: entryComm,
+          exitCommission: comm,
+          exitPrice,
+        });
         await prisma.position.update({
           where: { id: pos.id },
           data: {
             status: 'closed',
-            closedAt: new Date(),
-            profitLossPercent: profitPercent,
-            profitLossFiat: profitFiat,
+            closedAt: exchangeClose?.closedAt || new Date(),
+            profitLossPercent: closeMetrics.profitPercent,
+            profitLossFiat: closeMetrics.profitFiat,
             maxProfitPercent,
             maxProfitAt,
-          },
+            exitPrice,
+            exitReason: exchangeClose?.exitReason || (exhaustionTriggered ? 'exhaustion' : 'take_profit'),
+            exitOrderId: exchangeClose?.exitOrderId || null,
+            exitSource: exchangeClose?.exitSource || null,
+          } as any,
         });
         pushEvents.push({
           title: exhaustionTriggered
             ? `${symbol} cerrada por agotamiento`
             : takeProfitTriggered
               ? `${symbol} take profit ejecutado`
-              : `${symbol} stop ejecutado`,
+              : `${symbol} cerrada`,
           body: exhaustionTriggered
             ? `La posicion #${pos.id} en ${mode.toUpperCase()} se cerro automaticamente por agotamiento.`
             : takeProfitTriggered
               ? `La posicion #${pos.id} en ${mode.toUpperCase()} se cerro automaticamente por take profit.`
-              : `La posicion #${pos.id} en ${mode.toUpperCase()} se cerro automaticamente por stop.`,
+              : `La posicion #${pos.id} en ${mode.toUpperCase()} se cerro automaticamente.`,
           data: {
             kind: exhaustionTriggered
               ? 'position_closed_exhaustion'
               : takeProfitTriggered
                 ? 'position_closed_take_profit'
-                : 'position_closed_stop',
+                : 'position_closed',
             positionId: pos.id,
             symbol,
             tradingMode: mode,
-            profitPercent: Number(profitPercent.toFixed(2)),
-            profitFiat: Number(profitFiat.toFixed(2)),
+            profitPercent: Number(closeMetrics.profitPercent.toFixed(2)),
+            profitFiat: Number(closeMetrics.profitFiat.toFixed(2)),
           },
         });
         results.push(
@@ -420,7 +468,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
             ? `EXHAUSTION_CERRADA (${mode}): Position #${pos.id} (${symbol}) cerrada por ${exhaustionReason === 'flat_timeout' ? 'lateralidad prolongada' : 'agotamiento con retroceso'}.`
             : takeProfitTriggered
               ? `TP_CERRADA (${mode}): Position #${pos.id} (${symbol}) closed por take profit.`
-              : `SL_CERRADA (${mode}): Position #${pos.id} (${symbol}) closed.`
+              : `CERRADA (${mode}): Position #${pos.id} (${symbol}) closed.`
         );
       }
     } else {
