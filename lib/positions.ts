@@ -17,6 +17,8 @@ export type TradingMode = 'demo' | 'live';
 export type PositionManagementMode = 'auto' | 'self';
 
 const SELF_MODE_ALIASES = new Set(['self', 'sefl', 'selft']);
+const CLOSE_RETRY_DELAYS_MS = [400, 900, 1600];
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function normalizePositionManagementMode(value: unknown): PositionManagementMode {
   const raw = String(value ?? '').trim().toLowerCase();
@@ -214,28 +216,102 @@ export async function closeTrackedPosition(pos: CloseablePosition): Promise<Clos
   const entryComm = pos.commission ?? exitComm;
   const positionMode = await bitgetGetPositionMode(symbol, tradingMode) || 'one_way_mode';
   const positionContext = bitgetBuildPositionContext(pos.positionType as 'buy' | 'sell', positionMode);
+  let closeResp: any = null;
+  let lastVerifyErrors: string[] = [];
+  let lastConfirmedStillOpen = false;
+  let verifiedClosed = false;
 
-  await bitgetCancelAllOrders(symbol, tradingMode);
+  for (let attempt = 0; attempt <= CLOSE_RETRY_DELAYS_MS.length; attempt += 1) {
+    await bitgetCancelAllOrders(symbol, tradingMode);
 
-  let closeResp = await bitgetFlashClosePosition(symbol, positionContext.flashCloseHoldSide, tradingMode);
-  if (!bitgetOrderSuccess(closeResp)) {
-    closeResp = await bitgetClosePosition(symbol, positionContext.closeSide, pos.quantity, tradingMode, positionContext.closeTradeSide);
+    const flashResp = await bitgetFlashClosePosition(symbol, positionContext.flashCloseHoldSide, tradingMode);
+    closeResp = flashResp;
+
+    if (!bitgetOrderSuccess(flashResp)) {
+      const marketResp = await bitgetClosePosition(
+        symbol,
+        positionContext.closeSide,
+        pos.quantity,
+        tradingMode,
+        positionContext.closeTradeSide
+      );
+      closeResp = marketResp;
+    }
+
+    await bitgetCancelAllOrders(symbol, tradingMode);
+
+    if (!bitgetOrderSuccess(closeResp)) {
+      if (attempt < CLOSE_RETRY_DELAYS_MS.length) {
+        await sleep(CLOSE_RETRY_DELAYS_MS[attempt]);
+        continue;
+      }
+
+      return { ok: false, status: 500, message: 'Bitget close failed', details: closeResp };
+    }
+
+    let attemptConfirmedStillOpen = false;
+    let attemptVerifyErrors: string[] = [];
+
+    for (const verifyDelayMs of [250, 600, 1200]) {
+      if (verifyDelayMs > 0) {
+        await sleep(verifyDelayMs);
+      }
+
+      const verifySnapshot = await bitgetGetSinglePosition(symbol, tradingMode);
+      if (!verifySnapshot.ok) {
+        attemptVerifyErrors = verifySnapshot.errors;
+        continue;
+      }
+
+      const stillOpen = verifySnapshot.positions.some((rp: any) => rp.symbol && parseFloat(rp.positionAmt) !== 0);
+      if (!stillOpen) {
+        verifiedClosed = true;
+        break;
+      }
+
+      attemptConfirmedStillOpen = true;
+      attemptVerifyErrors = [];
+    }
+
+    if (verifiedClosed) {
+      break;
+    }
+
+    lastVerifyErrors = attemptVerifyErrors;
+    lastConfirmedStillOpen = attemptConfirmedStillOpen;
+
+    if (attempt < CLOSE_RETRY_DELAYS_MS.length) {
+      await sleep(CLOSE_RETRY_DELAYS_MS[attempt]);
+    }
   }
 
-  await bitgetCancelAllOrders(symbol, tradingMode);
+  if (!verifiedClosed) {
+    if (lastConfirmedStillOpen) {
+      return {
+        ok: false,
+        status: 409,
+        message: `Position still open on Bitget after ${CLOSE_RETRY_DELAYS_MS.length + 1} close attempts`,
+        details: closeResp,
+      };
+    }
 
-  if (!bitgetOrderSuccess(closeResp)) {
-    return { ok: false, status: 500, message: 'Bitget close failed', details: closeResp };
-  }
+    const closeDetailsFromHistory = await resolveBitgetCloseExecution({
+      position: pos,
+      tradingMode,
+      targetTime: new Date(),
+      fallbackExitPrice: currentPrice,
+      knownCloseResp: closeResp,
+      fallbackReason: 'manual',
+    });
 
-  const verifySnapshot = await bitgetGetSinglePosition(symbol, tradingMode);
-  if (!verifySnapshot.ok) {
-    return { ok: false, status: 502, message: 'Bitget close verification failed', details: verifySnapshot.errors };
-  }
-
-  const stillOpen = verifySnapshot.positions.some((rp: any) => rp.symbol && parseFloat(rp.positionAmt) !== 0);
-  if (stillOpen) {
-    return { ok: false, status: 409, message: 'Position still open on Bitget after close attempt', details: closeResp };
+    if (!closeDetailsFromHistory) {
+      return {
+        ok: false,
+        status: 502,
+        message: 'Bitget close verification failed after repeated attempts',
+        details: lastVerifyErrors.length > 0 ? lastVerifyErrors : closeResp,
+      };
+    }
   }
 
   const closeDetails = await resolveBitgetCloseExecution({
