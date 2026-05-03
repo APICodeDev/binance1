@@ -43,7 +43,11 @@ final class BackgroundSyncService {
     private let lastErrorKey = "native.background.lastError"
 
     static var taskIdentifier: String {
-        "\(Bundle.main.bundleIdentifier ?? "com.miquelgd.bitgetdesk").apprefresh"
+        "\(Bundle.main.bundleIdentifier ?? "com.miquelgd.BitgetDeskNative").apprefresh"
+    }
+
+    static var processingTaskIdentifier: String {
+        "\(Bundle.main.bundleIdentifier ?? "com.miquelgd.BitgetDeskNative").processing"
     }
 
     private init() {}
@@ -57,9 +61,19 @@ final class BackgroundSyncService {
 
             self.handleAppRefresh(task: refreshTask)
         }
+
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.processingTaskIdentifier, using: nil) { task in
+            guard let processingTask = task as? BGProcessingTask else {
+                task.setTaskCompleted(success: false)
+                return
+            }
+
+            self.handleProcessing(task: processingTask)
+        }
     }
 
     func scheduleAppRefresh(after seconds: TimeInterval = 15 * 60) {
+        BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.taskIdentifier)
         let request = BGAppRefreshTaskRequest(identifier: Self.taskIdentifier)
         request.earliestBeginDate = Date(timeIntervalSinceNow: max(60, seconds))
 
@@ -71,8 +85,24 @@ final class BackgroundSyncService {
         }
     }
 
+    func scheduleProcessingRefresh(after seconds: TimeInterval = 30 * 60) {
+        BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.processingTaskIdentifier)
+        let request = BGProcessingTaskRequest(identifier: Self.processingTaskIdentifier)
+        request.requiresExternalPower = false
+        request.requiresNetworkConnectivity = true
+        request.earliestBeginDate = Date(timeIntervalSinceNow: max(5 * 60, seconds))
+
+        do {
+            try BGTaskScheduler.shared.submit(request)
+            clearError()
+        } catch {
+            saveError("Unable to schedule iOS background processing: \(error.localizedDescription)")
+        }
+    }
+
     func cancelPendingRefresh() {
         BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.taskIdentifier)
+        BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.processingTaskIdentifier)
     }
 
     func currentStatus() -> BackgroundSyncStatus {
@@ -110,6 +140,23 @@ final class BackgroundSyncService {
 
     private func handleAppRefresh(task: BGAppRefreshTask) {
         scheduleAppRefresh()
+        scheduleProcessingRefresh()
+
+        let worker = Task {
+            let outcome = await performBackgroundRefresh()
+            if !Task.isCancelled {
+                task.setTaskCompleted(success: outcome.taskSuccess)
+            }
+        }
+
+        task.expirationHandler = {
+            worker.cancel()
+        }
+    }
+
+    private func handleProcessing(task: BGProcessingTask) {
+        scheduleAppRefresh()
+        scheduleProcessingRefresh()
 
         let worker = Task {
             let outcome = await performBackgroundRefresh()

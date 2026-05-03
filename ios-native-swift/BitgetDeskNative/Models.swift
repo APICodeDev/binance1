@@ -12,6 +12,7 @@ struct Position: Codable, Identifiable {
     let id: Int
     let symbol: String
     let positionType: String
+    let managementMode: String?
     let amount: Double
     let quantity: Double
     let entryPrice: Double
@@ -28,6 +29,9 @@ struct Position: Codable, Identifiable {
     let timeframe: String?
     let commission: Double?
     let pricePrecision: Int?
+    let requestedTakeProfitPercent: Double?
+    let requestedTakeProfitInputSource: String?
+    let takeProfitTargetPercent: Double?
 }
 
 struct SettingsPayload: Codable {

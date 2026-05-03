@@ -187,6 +187,15 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     return { ok: false, message: placeResp?.msg || placeResp?.message || JSON.stringify(placeResp) };
   };
 
+  const getSelfManagedTrailingStep = (marketMovePercent: number) => {
+    if (marketMovePercent < 1.25) {
+      return null;
+    }
+
+    const lockedPercent = Math.floor((marketMovePercent - 0.25) + 1e-9);
+    return lockedPercent >= 1 ? lockedPercent : null;
+  };
+
   for (const pos of positions) {
     const mode = ((pos as any).tradingMode || 'demo') as 'demo' | 'live';
     const selfManaged = isSelfManagedPosition((pos as any).managementMode);
@@ -354,6 +363,27 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     if (!exhaustionTriggered && pos.positionType === 'buy') {
       if (!selfManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice >= takeProfit) {
         takeProfitTriggered = true;
+      } else if (selfManaged) {
+        const trailingStep = getSelfManagedTrailingStep(marketMovePercent);
+        if (trailingStep !== null) {
+          const targetSlPrice = pos.entryPrice * (1 + (trailingStep / 100));
+          if (targetSlPrice > pos.stopLoss) {
+            const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
+            if (slResp.ok) {
+              newSl = targetSlPrice;
+              results.push(`SL_UPDATE (${mode}): ${symbol} self trailing -> ${targetSlPrice}`);
+            }
+          }
+        } else if (marketMovePercent >= 0.5) {
+          const targetSlPrice = pos.entryPrice * (1 + entryComm) / (1 - comm);
+          if (targetSlPrice > pos.stopLoss) {
+            const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
+            if (slResp.ok) {
+              newSl = targetSlPrice;
+              results.push(`SL_UPDATE (${mode}): ${symbol} -> breakeven+fees`);
+            }
+          }
+        }
       } else if (!selfManaged && marketMovePercent >= 1) {
         const crossedStep = Math.floor(marketMovePercent / 0.5) * 0.5;
         const crossedPrice = pos.entryPrice * (1 + crossedStep / 100);
@@ -378,6 +408,27 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     } else if (!exhaustionTriggered) { // short
       if (!selfManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice <= takeProfit) {
         takeProfitTriggered = true;
+      } else if (selfManaged) {
+        const trailingStep = getSelfManagedTrailingStep(marketMovePercent);
+        if (trailingStep !== null) {
+          const targetSlPrice = pos.entryPrice * (1 - (trailingStep / 100));
+          if (targetSlPrice < pos.stopLoss) {
+            const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
+            if (slResp.ok) {
+              newSl = targetSlPrice;
+              results.push(`SL_UPDATE (${mode}): ${symbol} self trailing -> ${targetSlPrice}`);
+            }
+          }
+        } else if (marketMovePercent >= 0.5) {
+          const targetSlPrice = pos.entryPrice * (1 - entryComm) / (1 + comm);
+          if (targetSlPrice < pos.stopLoss) {
+            const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
+            if (slResp.ok) {
+              newSl = targetSlPrice;
+              results.push(`SL_UPDATE (${mode}): ${symbol} -> breakeven+fees`);
+            }
+          }
+        }
       } else if (!selfManaged && marketMovePercent >= 1) {
         const crossedStep = Math.floor(marketMovePercent / 0.5) * 0.5;
         const crossedPrice = pos.entryPrice * (1 - crossedStep / 100);

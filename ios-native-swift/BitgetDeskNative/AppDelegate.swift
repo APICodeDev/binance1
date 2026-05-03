@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         BackgroundSyncService.shared.registerBackgroundTasks()
         application.setMinimumBackgroundFetchInterval(UIApplication.backgroundFetchIntervalMinimum)
         BackgroundSyncService.shared.scheduleAppRefresh()
+        BackgroundSyncService.shared.scheduleProcessingRefresh()
         return true
     }
 
@@ -32,7 +33,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        completionHandler([])
+        completionHandler([.banner, .badge, .sound, .list])
     }
 
     func application(

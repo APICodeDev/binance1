@@ -2,6 +2,8 @@ import { prisma } from '@/lib/db';
 
 type PositionWithId = {
   id: number;
+  positionType: string;
+  entryPrice: number;
   takeProfit?: number | null;
 };
 
@@ -15,14 +17,39 @@ type TakeProfitUpgradeMeta = {
   takeProfitPendingAt: string | null;
   takeProfitPendingCode: string | null;
   takeProfitPendingAttempts: number;
+  requestedTakeProfitPercent: number | null;
+  requestedTakeProfitInputSource: string | null;
+  takeProfitTargetPercent: number | null;
 };
 
+const POSITION_OPEN_ACTION = 'position.open';
 const TAKE_PROFIT_UPGRADE_ACTION = 'position.tp_upgraded_from_signal';
 const TAKE_PROFIT_PENDING_ACTION = 'position.open.tp_pending';
 
 const parseOptionalNumber = (value: unknown) => {
   const parsed = Number.parseFloat(String(value ?? ''));
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const parseOptionalString = (value: unknown) => {
+  const raw = String(value ?? '').trim();
+  return raw ? raw : null;
+};
+
+const computeDirectionalTakeProfitPercent = (
+  entryPrice: number,
+  takeProfitPrice: number | null,
+  positionType: string
+) => {
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0 || !Number.isFinite(takeProfitPrice) || !takeProfitPrice || takeProfitPrice <= 0) {
+    return null;
+  }
+
+  if (positionType === 'sell') {
+    return ((entryPrice - takeProfitPrice) / entryPrice) * 100;
+  }
+
+  return ((takeProfitPrice - entryPrice) / entryPrice) * 100;
 };
 
 export async function attachTakeProfitUpgradeMeta<T extends PositionWithId>(positions: T[]): Promise<Array<T & TakeProfitUpgradeMeta>> {
@@ -38,13 +65,16 @@ export async function attachTakeProfitUpgradeMeta<T extends PositionWithId>(posi
       takeProfitPendingAt: null,
       takeProfitPendingCode: null,
       takeProfitPendingAttempts: 0,
+      requestedTakeProfitPercent: null,
+      requestedTakeProfitInputSource: null,
+      takeProfitTargetPercent: null,
     }));
   }
 
   const ids = positions.map((position) => String(position.id));
   const logs = await prisma.auditLog.findMany({
     where: {
-      action: { in: [TAKE_PROFIT_UPGRADE_ACTION, TAKE_PROFIT_PENDING_ACTION] },
+      action: { in: [POSITION_OPEN_ACTION, TAKE_PROFIT_UPGRADE_ACTION, TAKE_PROFIT_PENDING_ACTION] },
       targetType: 'position',
       targetId: { in: ids },
     },
@@ -77,18 +107,28 @@ export async function attachTakeProfitUpgradeMeta<T extends PositionWithId>(posi
       takeProfitPendingAt: null,
       takeProfitPendingCode: null,
       takeProfitPendingAttempts: 0,
+      requestedTakeProfitPercent: null,
+      requestedTakeProfitInputSource: null,
+      takeProfitTargetPercent: null,
     };
 
-    if (log.action === TAKE_PROFIT_UPGRADE_ACTION) {
-      const previousTakeProfit = parseOptionalNumber(metadata.previousTakeProfit);
-      const appliedTakeProfit = parseOptionalNumber(metadata.appliedTakeProfit);
+    if (log.action === POSITION_OPEN_ACTION || log.action === TAKE_PROFIT_UPGRADE_ACTION) {
+      const requestedTakeProfitPercent = parseOptionalNumber(metadata.requestedTakeProfitPercent);
+      const requestedTakeProfitInputSource = parseOptionalString(metadata.requestedTakeProfitInputSource);
+      const appliedTakeProfit = parseOptionalNumber(metadata.appliedTakeProfit) ??
+        parseOptionalNumber(metadata.appliedTakeProfitPrice) ??
+        parseOptionalNumber(metadata.resolvedRequestedTakeProfitPrice);
+
       summaryByPositionId.set(positionId, {
         ...next,
-        takeProfitExpanded: true,
-        takeProfitExpandedAt: log.createdAt.toISOString(),
-        takeProfitExpandedFrom: previousTakeProfit,
-        takeProfitExpandedTo: appliedTakeProfit,
-        takeProfitExpansionCount: (next.takeProfitExpansionCount || 0) + 1,
+        requestedTakeProfitPercent,
+        requestedTakeProfitInputSource,
+        takeProfitTargetPercent: requestedTakeProfitPercent,
+        takeProfitExpanded: log.action === TAKE_PROFIT_UPGRADE_ACTION ? true : next.takeProfitExpanded,
+        takeProfitExpandedAt: log.action === TAKE_PROFIT_UPGRADE_ACTION ? log.createdAt.toISOString() : next.takeProfitExpandedAt,
+        takeProfitExpandedFrom: log.action === TAKE_PROFIT_UPGRADE_ACTION ? parseOptionalNumber(metadata.previousTakeProfit) : next.takeProfitExpandedFrom,
+        takeProfitExpandedTo: log.action === TAKE_PROFIT_UPGRADE_ACTION ? appliedTakeProfit : next.takeProfitExpandedTo,
+        takeProfitExpansionCount: log.action === TAKE_PROFIT_UPGRADE_ACTION ? (next.takeProfitExpansionCount || 0) + 1 : next.takeProfitExpansionCount,
       });
       continue;
     }
@@ -112,10 +152,17 @@ export async function attachTakeProfitUpgradeMeta<T extends PositionWithId>(posi
       meta?.takeProfitExpandedAt &&
       new Date(meta.takeProfitExpandedAt).getTime() >= new Date(meta.takeProfitPendingAt).getTime()
     );
+    const fallbackTakeProfitPercent = computeDirectionalTakeProfitPercent(
+      position.entryPrice,
+      typeof position.takeProfit === 'number' ? position.takeProfit : null,
+      position.positionType
+    );
+    const requestedTakeProfitPercent = meta?.requestedTakeProfitPercent ?? null;
+    const takeProfitTargetPercent = requestedTakeProfitPercent ?? fallbackTakeProfitPercent;
 
     return {
       ...position,
-      takeProfitExpanded: Boolean(meta),
+      takeProfitExpanded: meta?.takeProfitExpanded || false,
       takeProfitExpandedAt: meta?.takeProfitExpandedAt || null,
       takeProfitExpandedFrom: meta?.takeProfitExpandedFrom ?? null,
       takeProfitExpandedTo: meta?.takeProfitExpandedTo ?? (typeof position.takeProfit === 'number' ? position.takeProfit : null),
@@ -124,6 +171,9 @@ export async function attachTakeProfitUpgradeMeta<T extends PositionWithId>(posi
       takeProfitPendingAt: pendingResolvedByUpgrade ? null : (meta?.takeProfitPendingAt || null),
       takeProfitPendingCode: pendingResolvedByUpgrade ? null : (meta?.takeProfitPendingCode || null),
       takeProfitPendingAttempts: pendingResolvedByUpgrade ? 0 : (meta?.takeProfitPendingAttempts || 0),
+      requestedTakeProfitPercent,
+      requestedTakeProfitInputSource: meta?.requestedTakeProfitInputSource || null,
+      takeProfitTargetPercent,
     };
   });
 }

@@ -6,6 +6,7 @@ struct PositionCardView: View {
 
     var body: some View {
         let isBuy = position.positionType == "buy"
+        let managementMode = (position.managementMode ?? "auto").lowercased() == "self" ? "SELF" : "AUTO"
         let stopDelta = position.entryPrice == 0 ? 0 : ((position.stopLoss - position.entryPrice) / position.entryPrice) * 100
         let legacyDistance = abs(abs(isBuy ? -stopDelta : stopDelta) - 1.2) < 0.05
         let fillDeltaPercent = signedFillDeltaPercent
@@ -16,7 +17,7 @@ struct PositionCardView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(position.symbol)
                         .font(.title3.bold())
-                    Text("\(position.positionType.uppercased()) • \(position.origin ?? "Manual")")
+                    Text("\(position.positionType.uppercased()) - \(cardMetaLine(managementMode: managementMode))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -105,5 +106,41 @@ struct PositionCardView: View {
 
         let rawPercent = ((position.entryPrice - requestedEntryPrice) / requestedEntryPrice) * 100
         return position.positionType == "sell" ? rawPercent : -rawPercent
+    }
+
+    private var resolvedTakeProfitTargetPercent: Double? {
+        if let takeProfitTargetPercent = position.takeProfitTargetPercent, takeProfitTargetPercent > 0 {
+            return takeProfitTargetPercent
+        }
+
+        guard let takeProfit = position.takeProfit, takeProfit > 0, position.entryPrice > 0 else {
+            return nil
+        }
+
+        if position.positionType == "sell" {
+            return ((position.entryPrice - takeProfit) / position.entryPrice) * 100
+        }
+
+        return ((takeProfit - position.entryPrice) / position.entryPrice) * 100
+    }
+
+    private func cardMetaLine(managementMode: String) -> String {
+        var parts: [String] = []
+
+        if let origin = position.origin?.trimmingCharacters(in: .whitespacesAndNewlines), !origin.isEmpty {
+            parts.append(origin)
+        }
+
+        if let timeframe = position.timeframe?.trimmingCharacters(in: .whitespacesAndNewlines), !timeframe.isEmpty {
+            parts.append(timeframe)
+        }
+
+        parts.append(managementMode)
+
+        if managementMode == "SELF", let takeProfitTargetPercent = resolvedTakeProfitTargetPercent, takeProfitTargetPercent > 0 {
+            parts.append(String(format: "TP %.2f%%", takeProfitTargetPercent))
+        }
+
+        return parts.joined(separator: " - ")
     }
 }

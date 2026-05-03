@@ -70,6 +70,7 @@ interface Position {
   id: number;
   symbol: string;
   positionType: 'buy' | 'sell';
+  managementMode?: 'auto' | 'self';
   amount: number;
   quantity: number;
   entryPrice: number;
@@ -97,6 +98,9 @@ interface Position {
   takeProfitPendingAt?: string | null;
   takeProfitPendingCode?: string | null;
   takeProfitPendingAttempts?: number;
+  requestedTakeProfitPercent?: number | null;
+  requestedTakeProfitInputSource?: string | null;
+  takeProfitTargetPercent?: number | null;
 }
 
 interface AuthUser {
@@ -2785,6 +2789,7 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
 
 function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position) => void }) {
   const isBuy = pos.positionType === 'buy';
+  const managementMode = pos.managementMode === 'self' ? 'self' : 'auto';
   const comm = pos.commission ?? 0.0006;
   const LEGACY_STOP_PERCENT = 1.2;
   const entryCost = pos.entryPrice * pos.quantity * comm;
@@ -2835,6 +2840,10 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
           : ''
       }`
     : '';
+  const positionMeta = [pos.origin, pos.timeframe, managementMode.toUpperCase()];
+  if (managementMode === 'self' && typeof pos.takeProfitTargetPercent === 'number' && pos.takeProfitTargetPercent > 0) {
+    positionMeta.push(`TP ${pos.takeProfitTargetPercent.toFixed(2)}%`);
+  }
 
   return (
     <motion.div 
@@ -2900,7 +2909,7 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
           </div>
           <span className="text-[10px] text-slate-500 font-bold tracking-widest uppercase flex gap-2">
             ID: CMD-{pos.id.toString().padStart(4, '0')}
-            {(pos.origin || pos.timeframe) && ` | ${[pos.origin, pos.timeframe].filter(Boolean).join(' - ')}`}
+            {positionMeta.length > 0 && ` | ${positionMeta.join(' - ')}`}
           </span>
         </div>
         <span className={cn(isBuy ? "badge-buy" : "badge-sell", "flex items-center gap-1.5")}>

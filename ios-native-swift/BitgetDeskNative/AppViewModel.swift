@@ -195,7 +195,7 @@ final class AppViewModel: ObservableObject {
     @Published var backgroundStatusSummary = "Background sync pending."
 
     private let api = APIClient.shared
-    private let supportsRemotePush = false
+    private let supportsRemotePush = true
     private var refreshTask: Task<Void, Never>?
     private var refreshTick = 0
     private var notificationObservers: [NSObjectProtocol] = []
@@ -442,6 +442,8 @@ final class AppViewModel: ObservableObject {
                 pushPermissionRequested = true
                 if !granted {
                     errorMessage = "Notifications are disabled for this app."
+                } else if supportsRemotePush {
+                    UIApplication.shared.registerForRemoteNotifications()
                 }
             } catch {
                 errorMessage = "Push permission: \(error.localizedDescription)"
@@ -452,6 +454,8 @@ final class AppViewModel: ObservableObject {
         let allowedStatuses: Set<UNAuthorizationStatus> = [.authorized, .provisional, .ephemeral]
         if !allowedStatuses.contains(settings.authorizationStatus) {
             errorMessage = "Notifications are disabled in iOS Settings for this app."
+        } else if supportsRemotePush {
+            UIApplication.shared.registerForRemoteNotifications()
         }
     }
 
@@ -729,6 +733,7 @@ final class AppViewModel: ObservableObject {
             refreshTask?.cancel()
             refreshTask = nil
             BackgroundSyncService.shared.scheduleAppRefresh(after: 60)
+            BackgroundSyncService.shared.scheduleProcessingRefresh(after: 5 * 60)
         case .inactive:
             break
         @unknown default:
