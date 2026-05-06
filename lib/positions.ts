@@ -80,6 +80,14 @@ function extractCloseOrderId(closeResp: any) {
   ).trim() || null;
 }
 
+function snapshotHasOpenPosition(snapshot: Awaited<ReturnType<typeof bitgetGetSinglePosition>>, symbol: string) {
+  const normalizedSymbol = symbol.toUpperCase();
+  return snapshot.positions.some((rp: any) =>
+    String(rp?.symbol || '').toUpperCase() === normalizedSymbol &&
+    Number.parseFloat(String(rp?.positionAmt || '0')) !== 0
+  );
+}
+
 export function calculateCloseMetrics(params: {
   positionType: string;
   entryPrice: number;
@@ -240,19 +248,10 @@ export async function closeTrackedPosition(pos: CloseablePosition): Promise<Clos
 
     await bitgetCancelAllOrders(symbol, tradingMode);
 
-    if (!bitgetOrderSuccess(closeResp)) {
-      if (attempt < CLOSE_RETRY_DELAYS_MS.length) {
-        await sleep(CLOSE_RETRY_DELAYS_MS[attempt]);
-        continue;
-      }
-
-      return { ok: false, status: 500, message: 'Bitget close failed', details: closeResp };
-    }
-
     let attemptConfirmedStillOpen = false;
     let attemptVerifyErrors: string[] = [];
 
-    for (const verifyDelayMs of [250, 600, 1200]) {
+    for (const verifyDelayMs of [150, 450, 900, 1400]) {
       if (verifyDelayMs > 0) {
         await sleep(verifyDelayMs);
       }
@@ -263,7 +262,7 @@ export async function closeTrackedPosition(pos: CloseablePosition): Promise<Clos
         continue;
       }
 
-      const stillOpen = verifySnapshot.positions.some((rp: any) => rp.symbol && parseFloat(rp.positionAmt) !== 0);
+      const stillOpen = snapshotHasOpenPosition(verifySnapshot, symbol);
       if (!stillOpen) {
         verifiedClosed = true;
         break;
@@ -289,8 +288,10 @@ export async function closeTrackedPosition(pos: CloseablePosition): Promise<Clos
     if (lastConfirmedStillOpen) {
       return {
         ok: false,
-        status: 409,
-        message: `Position still open on Bitget after ${CLOSE_RETRY_DELAYS_MS.length + 1} close attempts`,
+        status: bitgetOrderSuccess(closeResp) ? 409 : 500,
+        message: bitgetOrderSuccess(closeResp)
+          ? `Position still open on Bitget after ${CLOSE_RETRY_DELAYS_MS.length + 1} close attempts`
+          : 'Bitget close failed and the position is still open on exchange',
         details: closeResp,
       };
     }

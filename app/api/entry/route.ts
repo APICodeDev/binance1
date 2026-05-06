@@ -56,8 +56,16 @@ const createClientOid = (symbol: string) =>
   `bgd-${symbol.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 const summarizeBitgetResponse = (resp: any) => {
-  if (!resp || typeof resp !== 'object') {
+  if (resp === undefined || resp === null) {
     return 'without response payload';
+  }
+
+  if (typeof resp !== 'object') {
+    return String(resp);
+  }
+
+  if (Array.isArray(resp)) {
+    return JSON.stringify(resp);
   }
 
   const code = resp.code ? `code=${resp.code}` : null;
@@ -283,7 +291,9 @@ async function closePositionFromEntrySignal(
 
   const closeResult = await closeTrackedPosition(position);
   if (!closeResult.ok) {
-    const errDetail = `No se pudo cerrar ${symbol} por senal externa: ${closeResult.message}`;
+    const detailSummary = closeResult.details ? summarizeBitgetResponse(closeResult.details) : null;
+    const errDetail = `No se pudo cerrar ${symbol} por senal externa: ${closeResult.message}` +
+      (detailSummary ? `. ${detailSummary}` : '');
     await saveLastEntryError(errDetail, symbol, 'close');
     return NextResponse.json({ error: true, message: closeResult.message, details: closeResult.details }, { status: closeResult.status });
   }
@@ -721,7 +731,9 @@ async function executeEntry(
 
       const closeResult = await closeTrackedPosition(existing);
       if (!closeResult.ok) {
-        const errDetail = `Error al cerrar posicion previa de ${symbol} en ${tradingMode} para cambio de direccion del mismo origin. ${closeResult.message}`;
+        const detailSummary = closeResult.details ? summarizeBitgetResponse(closeResult.details) : null;
+        const errDetail = `Error al cerrar posicion previa de ${symbol} en ${tradingMode} para cambio de direccion del mismo origin. ${closeResult.message}` +
+          (detailSummary ? `. ${detailSummary}` : '');
         await saveLastEntryError(errDetail, symbol, type);
         return NextResponse.json({ error: true, message: errDetail, details: closeResult.details }, { status: closeResult.status });
       }

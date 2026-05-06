@@ -268,13 +268,25 @@ type BitgetPositionSnapshot = {
   errors: string[];
 };
 
-const mapBitgetPosition = (p: any) => ({
+const normalizeBitgetPositionsPayload = (payload: any): any[] => {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  if (payload && typeof payload === 'object') {
+    return [payload];
+  }
+
+  return [];
+};
+
+const mapBitgetPosition = (p: any): BitgetPositionSnapshot['positions'][number] => ({
   symbol: p.symbol,
   positionAmt: p.total ?? p.openDelegateSize ?? p.available ?? p.locked ?? '0',
   entryPrice: p.averageOpenPrice ?? p.openPriceAvg ?? p.markPrice ?? '0',
   unRealizedProfit: p.unrealizedPL,
   leverage: p.leverage,
-  positionSide: p.holdSide === 'long' ? 'LONG' : (p.holdSide === 'short' ? 'SHORT' : 'BOTH')
+  positionSide: p.holdSide === 'long' ? 'LONG' : (p.holdSide === 'short' ? 'SHORT' : 'BOTH'),
 });
 
 export const bitgetClosePosition = async (
@@ -356,7 +368,7 @@ export const bitgetGetSinglePosition = async (
 
   return {
     ok: true,
-    positions: Array.isArray(resp?.data) ? resp.data.map((p: any) => mapBitgetPosition(p)) : [],
+    positions: normalizeBitgetPositionsPayload(resp?.data).map((p: any) => mapBitgetPosition(p)),
     errors: [],
   };
 };
