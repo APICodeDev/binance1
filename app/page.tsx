@@ -70,7 +70,7 @@ interface Position {
   id: number;
   symbol: string;
   positionType: 'buy' | 'sell';
-  managementMode?: 'auto' | 'self';
+  managementMode?: 'auto' | 'self' | 'strat';
   amount: number;
   quantity: number;
   entryPrice: number;
@@ -575,6 +575,32 @@ function formatClosedDuration(createdAt: string, closedAt?: string) {
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
   return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function normalizeManagementMode(value?: string | null): 'auto' | 'self' | 'strat' {
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (raw === 'self') {
+    return 'self';
+  }
+
+  if (raw === 'strat' || raw === 'strategy') {
+    return 'strat';
+  }
+
+  return 'auto';
+}
+
+function formatManagementModeLabel(value?: string | null) {
+  const normalized = normalizeManagementMode(value);
+  if (normalized === 'self') {
+    return 'Self';
+  }
+
+  if (normalized === 'strat') {
+    return 'Strat';
+  }
+
+  return 'Auto';
 }
 
 export default function Dashboard() {
@@ -1430,6 +1456,10 @@ export default function Dashboard() {
   };
 
   const totalSecuredProfit = openPositions.reduce((acc, pos) => {
+    if (normalizeManagementMode(pos.managementMode) === 'strat') {
+      return acc;
+    }
+
     const isBuy = pos.positionType === 'buy';
     const comm = pos.commission ?? 0.0006;
     const isSafe = (isBuy && pos.stopLoss > pos.entryPrice) || (!isBuy && pos.stopLoss < pos.entryPrice);
@@ -2410,6 +2440,10 @@ export default function Dashboard() {
                         </p>
                       </div>
                       <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-600">Mode</p>
+                        <p className="font-black text-slate-300">{formatManagementModeLabel(pos.managementMode)}</p>
+                      </div>
+                      <div>
                         <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-600">Net</p>
                         <p className={cn("font-black", pos.profitLossFiat >= 0 ? "text-emerald-400" : "text-rose-400")}>
                           {pos.profitLossFiat > 0 ? '+' : ''}{pos.profitLossFiat.toFixed(2)} {tradingMode === 'live' ? 'USDC' : 'USDT'}
@@ -2440,6 +2474,7 @@ export default function Dashboard() {
                   <tr className="text-[10px] text-slate-500 uppercase tracking-widest font-black border-b border-slate-800/50">
                     <th className="px-6 py-4">Symbol</th>
                     <th className="px-6 py-4">Type</th>
+                    <th className="px-6 py-4">Mode</th>
                     <th className="px-6 py-4">Entry</th>
                     <th className="px-6 py-4">PnL %</th>
                     <th className="px-6 py-4">PnL {tradingMode === 'live' ? 'USDC' : 'USDT'}</th>
@@ -2458,6 +2493,7 @@ Duration: ${durationStr}
 Amount: ${pos.amount} ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}
 Symbol: ${pos.symbol}
 Type: ${pos.positionType.toUpperCase()}
+Mode: ${formatManagementModeLabel(pos.managementMode)}
 Quantity: ${pos.quantity}
 Entry Price: ${formatPrice(pos.entryPrice, pos.pricePrecision)}
 Stop Target: ${formatPrice(pos.stopLoss, pos.pricePrecision)}
@@ -2477,6 +2513,9 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
                         <span className={cn(pos.positionType === 'buy' ? 'text-emerald-400' : 'text-rose-400', "font-bold text-xs uppercase")}>
                           {pos.positionType}
                         </span>
+                      </td>
+                      <td className="px-6 py-4 text-xs font-black text-slate-300">
+                        {formatManagementModeLabel(pos.managementMode)}
                       </td>
                       <td className="px-6 py-4 font-mono text-xs text-slate-400">{formatPrice(pos.entryPrice, pos.pricePrecision)}</td>
                       <td className={cn("px-6 py-4 font-black", pos.profitLossPercent >= 0 ? "text-emerald-400" : "text-rose-400")}>
@@ -2498,7 +2537,7 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
                   )})}
                   {recentClosedPositions.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="px-6 py-12 text-center text-slate-600 italic text-sm">No missions completed yet in {tradingMode}.</td>
+                      <td colSpan={9} className="px-6 py-12 text-center text-slate-600 italic text-sm">No missions completed yet in {tradingMode}.</td>
                     </tr>
                   )}
                 </tbody>
@@ -2789,7 +2828,9 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
 
 function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position) => void }) {
   const isBuy = pos.positionType === 'buy';
-  const managementMode = pos.managementMode === 'self' ? 'self' : 'auto';
+  const managementMode = normalizeManagementMode(pos.managementMode);
+  const managementModeLabel = formatManagementModeLabel(pos.managementMode);
+  const stratManaged = managementMode === 'strat';
   const comm = pos.commission ?? 0.0006;
   const LEGACY_STOP_PERCENT = 1.2;
   const entryCost = pos.entryPrice * pos.quantity * comm;
@@ -2808,9 +2849,9 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
   const isLegacyStop = Math.abs(Math.abs(riskDistancePercent) - LEGACY_STOP_PERCENT) < 0.05;
   const stopAdjustedByApp = !isLegacyStop;
   
-  const isSafe = pnlSafe > 0;
-  const isBreakeven = Math.abs(pnlSafe) < 0.05;
-  const slAtEntry = Math.abs(pos.stopLoss - pos.entryPrice) < Math.max(0.0000001, pos.entryPrice * 0.0001);
+  const isSafe = !stratManaged && pnlSafe > 0;
+  const isBreakeven = !stratManaged && Math.abs(pnlSafe) < 0.05;
+  const slAtEntry = !stratManaged && Math.abs(pos.stopLoss - pos.entryPrice) < Math.max(0.0000001, pos.entryPrice * 0.0001);
 
   const exchangeUrl = `https://www.bitget.com/en/futures/usdt/${pos.symbol}`;
   const tradingViewUrl = `https://www.tradingview.com/chart/?symbol=BITGET%3A${encodeURIComponent(`${pos.symbol}.P`)}`;
@@ -2840,7 +2881,7 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
           : ''
       }`
     : '';
-  const positionMeta = [pos.origin, pos.timeframe, managementMode.toUpperCase()];
+  const positionMeta = [pos.origin, pos.timeframe, managementModeLabel];
   if (managementMode === 'self' && typeof pos.takeProfitTargetPercent === 'number' && pos.takeProfitTargetPercent > 0) {
     positionMeta.push(`TP ${pos.takeProfitTargetPercent.toFixed(2)}%`);
   }
@@ -2917,6 +2958,12 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
         </span>
       </div>
 
+      {stratManaged && (
+        <div className="rounded-2xl border border-amber-400/20 bg-amber-500/10 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-amber-300">
+          Strat mode: SL legacy fijo, sin trailing y sin TP automatico.
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
         <div className="space-y-1">
           <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider">Entry Level</p>
@@ -2939,9 +2986,9 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
             {stopDistancePercent > 0 ? '+' : ''}{stopDistancePercent.toFixed(2)}% vs entry
           </p>
           <p className={cn("text-[10px] font-black uppercase tracking-[0.18em]", stopAdjustedByApp ? "text-cyan-300" : "text-slate-600")}>
-            {stopAdjustedByApp ? 'Adapted By App' : 'Legacy 1.2% Default'}
+            {stratManaged ? 'Legacy 1.2% Fixed For Strat' : (stopAdjustedByApp ? 'Adapted By App' : 'Legacy 1.2% Default')}
           </p>
-          {typeof pos.takeProfit === 'number' && pos.takeProfit > 0 && (
+          {!stratManaged && typeof pos.takeProfit === 'number' && pos.takeProfit > 0 && (
             <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-300">
               TP {formatPrice(pos.takeProfit, pos.pricePrecision)}
             </p>

@@ -14,15 +14,24 @@ import {
 } from '@/lib/bitget';
 
 export type TradingMode = 'demo' | 'live';
-export type PositionManagementMode = 'auto' | 'self';
+export type PositionManagementMode = 'auto' | 'self' | 'strat';
 
 const SELF_MODE_ALIASES = new Set(['self', 'sefl', 'selft']);
+const STRAT_MODE_ALIASES = new Set(['strat', 'strategy']);
 const CLOSE_RETRY_DELAYS_MS = [400, 900, 1600];
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function normalizePositionManagementMode(value: unknown): PositionManagementMode {
   const raw = String(value ?? '').trim().toLowerCase();
-  return SELF_MODE_ALIASES.has(raw) ? 'self' : 'auto';
+  if (SELF_MODE_ALIASES.has(raw)) {
+    return 'self';
+  }
+
+  if (STRAT_MODE_ALIASES.has(raw)) {
+    return 'strat';
+  }
+
+  return 'auto';
 }
 
 export function isSelfManagedPosition(value: unknown) {

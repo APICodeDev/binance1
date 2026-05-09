@@ -362,6 +362,14 @@ async function maybeUpgradeTakeProfitFromSameDirectionSignal(params: {
     ? takeProfitResolution.normalizedRequestedTakeProfit
     : null;
   const currentTakeProfit = Number.isFinite(existing.takeProfit) ? Number(existing.takeProfit) : null;
+  const existingManagementMode = normalizePositionManagementMode(existing.managementMode);
+
+  if (existingManagementMode === 'strat') {
+    return NextResponse.json({
+      success: true,
+      message: `Ignorada (${tradingMode}): Ya existe una posicion STRAT abierta en direccion ${type} para ${symbol} y no se le ajusta TP desde nuevas senales.`,
+    });
+  }
 
   if (candidateTakeProfit === null) {
     return NextResponse.json({
@@ -509,6 +517,7 @@ async function executeEntry(
     let amount = parseFloat(data.amount) || 0;
     const type = String(data.type || '').toLowerCase();
     const managementMode = normalizePositionManagementMode(data.mode) as PositionManagementMode;
+    const stratManaged = managementMode === 'strat';
     const origin = normalizeSignalOrigin(data.origin);
     const timeframe = data.timeframe ? String(data.timeframe) : null;
     const incomingQuantity = parseFloat(data.quantity || data.contracts) || 0;
@@ -986,17 +995,21 @@ async function executeEntry(
       );
     const normalizedRequestedTakeProfit = takeProfitResolution.normalizedRequestedTakeProfit;
     const isRequestedTakeProfitValid = takeProfitResolution.isRequestedTakeProfitValid;
-    const stopPrice = managementMode === 'self'
-      ? normalizedRequestedStop
-      : (apiStopMode === 'legacy' ? legacyStopPrice : (isRequestedStopValid ? normalizedRequestedStop : legacyStopPrice));
-    const takeProfitPrice = isRequestedTakeProfitValid ? normalizedRequestedTakeProfit : null;
+    const stopPrice = stratManaged
+      ? legacyStopPrice
+      : managementMode === 'self'
+        ? normalizedRequestedStop
+        : (apiStopMode === 'legacy' ? legacyStopPrice : (isRequestedStopValid ? normalizedRequestedStop : legacyStopPrice));
+    const takeProfitPrice = stratManaged
+      ? null
+      : (isRequestedTakeProfitValid ? normalizedRequestedTakeProfit : null);
     const slSide = positionContext.closeSide;
     const holdSide = positionContext.holdSide;
     const rollbackCloseSide = slSide;
-    const shouldRejectInvalidStop = (managementMode === 'self' && stopInputProvided) || hasPayloadValue(rawRequestedStopPercent);
-    const shouldRejectInvalidTakeProfit = (managementMode === 'self' && takeProfitInputProvided) || hasPayloadValue(rawRequestedTakeProfitPercent);
+    const shouldRejectInvalidStop = !stratManaged && ((managementMode === 'self' && stopInputProvided) || hasPayloadValue(rawRequestedStopPercent));
+    const shouldRejectInvalidTakeProfit = !stratManaged && ((managementMode === 'self' && takeProfitInputProvided) || hasPayloadValue(rawRequestedTakeProfitPercent));
 
-    if ((managementMode === 'self' && !isRequestedStopValid) || (shouldRejectInvalidStop && stopInputProvided && !isRequestedStopValid)) {
+    if ((!stratManaged && managementMode === 'self' && !isRequestedStopValid) || (shouldRejectInvalidStop && stopInputProvided && !isRequestedStopValid)) {
       await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
       const errDetail = `Stop invalido para ${symbol}. ` +
         `JSON stop=${JSON.stringify(rawRequestedStopPrice)}, stopPercent=${JSON.stringify(rawRequestedStopPercent)}, ` +
@@ -1020,7 +1033,7 @@ async function executeEntry(
     }
 
     const shouldPlaceInitialStop = stopPrice !== null;
-    const shouldPlaceInitialTakeProfit = takeProfitPrice !== null;
+    const shouldPlaceInitialTakeProfit = !stratManaged && takeProfitPrice !== null;
     let slResponse: any = null;
     let tpResponse: any = null;
     let initialStopAttempts = 0;
@@ -1142,10 +1155,11 @@ async function executeEntry(
         requestedStopPercent,
         requestedStopInputSource: stopInputSource,
         apiStopMode,
+        stratManaged,
         computedStopPriceFromPercent,
         resolvedRequestedStopPrice,
         normalizedRequestedStop,
-        requestedStopAccepted: isRequestedStopValid,
+        requestedStopAccepted: stratManaged ? false : isRequestedStopValid,
         legacyStopPrice,
         appliedStopPrice: stopPrice,
         initialStopOrderPlaced: shouldPlaceInitialStop,
@@ -1155,7 +1169,7 @@ async function executeEntry(
         computedTakeProfitPriceFromPercent,
         resolvedRequestedTakeProfitPrice,
         normalizedRequestedTakeProfit,
-        requestedTakeProfitAccepted: isRequestedTakeProfitValid,
+        requestedTakeProfitAccepted: stratManaged ? false : isRequestedTakeProfitValid,
         appliedTakeProfitPrice: persistedTakeProfitPrice,
         initialTakeProfitOrderPlaced: shouldPlaceInitialTakeProfit && !initialTakeProfitPending && bitgetOrderSuccess(tpResponse),
         initialTakeProfitPending,
@@ -1227,13 +1241,15 @@ async function executeEntry(
         realEntryFee,
       },
       stop: {
-        mode: managementMode === 'self'
+        mode: stratManaged
+          ? 'legacy'
+          : managementMode === 'self'
           ? stopInputSource
           : (apiStopMode === 'legacy' ? 'legacy' : (isRequestedStopValid ? stopInputSource : 'legacy')),
         requested: requestedStopPrice,
         requestedPercent: requestedStopPercent,
         resolved: resolvedRequestedStopPrice,
-        accepted: isRequestedStopValid,
+        accepted: stratManaged ? false : isRequestedStopValid,
         applied: stopPrice,
         fallback: legacyStopPrice,
         orderPlaced: shouldPlaceInitialStop,
@@ -1242,7 +1258,7 @@ async function executeEntry(
         requested: requestedTakeProfitPrice,
         requestedPercent: requestedTakeProfitPercent,
         resolved: resolvedRequestedTakeProfitPrice,
-        accepted: isRequestedTakeProfitValid,
+        accepted: stratManaged ? false : isRequestedTakeProfitValid,
         applied: persistedTakeProfitPrice,
         orderPlaced: shouldPlaceInitialTakeProfit && !initialTakeProfitPending && bitgetOrderSuccess(tpResponse),
         pending: initialTakeProfitPending,

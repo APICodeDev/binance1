@@ -32,6 +32,32 @@ struct Position: Codable, Identifiable {
     let requestedTakeProfitPercent: Double?
     let requestedTakeProfitInputSource: String?
     let takeProfitTargetPercent: Double?
+
+    var normalizedManagementMode: String {
+        let raw = (managementMode ?? "auto").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if raw == "self" {
+            return "self"
+        }
+        if raw == "strat" || raw == "strategy" {
+            return "strat"
+        }
+        return "auto"
+    }
+
+    var managementModeLabel: String {
+        switch normalizedManagementMode {
+        case "self":
+            return "Self"
+        case "strat":
+            return "Strat"
+        default:
+            return "Auto"
+        }
+    }
+
+    var isStrategyManaged: Bool {
+        normalizedManagementMode == "strat"
+    }
 }
 
 struct SettingsPayload: Codable {

@@ -100,14 +100,22 @@ struct DashboardView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(position.symbol)
                                 .font(.headline)
-                            Text("\(position.positionType.uppercased()) • \(AppFormatters.dateTime(position.closedAt))")
+                            Text("\(position.positionType.uppercased()) - \(position.managementModeLabel) - \(AppFormatters.dateTime(position.closedAt))")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Text("\(position.profitLossFiat >= 0 ? "+" : "")\(AppFormatters.compact(position.profitLossFiat)) \(position.tradingMode == "live" ? "USDC" : "USDT")")
-                            .font(.subheadline.bold())
-                            .foregroundStyle(position.profitLossFiat >= 0 ? .green : .red)
+                        VStack(alignment: .trailing, spacing: 6) {
+                            Text(position.managementModeLabel)
+                                .font(.caption2.bold())
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.white.opacity(0.08))
+                                .clipShape(Capsule())
+                            Text("\(position.profitLossFiat >= 0 ? "+" : "")\(AppFormatters.compact(position.profitLossFiat)) \(position.tradingMode == "live" ? "USDC" : "USDT")")
+                                .font(.subheadline.bold())
+                                .foregroundStyle(position.profitLossFiat >= 0 ? .green : .red)
+                        }
                     }
                     .padding()
                     .background(Color.white.opacity(0.05))

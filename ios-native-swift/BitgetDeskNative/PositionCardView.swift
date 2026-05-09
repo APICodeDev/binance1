@@ -6,7 +6,8 @@ struct PositionCardView: View {
 
     var body: some View {
         let isBuy = position.positionType == "buy"
-        let managementMode = (position.managementMode ?? "auto").lowercased() == "self" ? "SELF" : "AUTO"
+        let managementMode = position.managementModeLabel
+        let isStrategyManaged = position.isStrategyManaged
         let stopDelta = position.entryPrice == 0 ? 0 : ((position.stopLoss - position.entryPrice) / position.entryPrice) * 100
         let legacyDistance = abs(abs(isBuy ? -stopDelta : stopDelta) - 1.2) < 0.05
         let fillDeltaPercent = signedFillDeltaPercent
@@ -28,6 +29,17 @@ struct PositionCardView: View {
                     .padding(.vertical, 6)
                     .background(position.tradingMode == "live" ? Color.red.opacity(0.2) : Color.green.opacity(0.2))
                     .clipShape(Capsule())
+            }
+
+            if isStrategyManaged {
+                Text("Strat: SL legacy fijo, sin trailing y sin TP automatico.")
+                    .font(.caption.bold())
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
 
             HStack {
@@ -57,10 +69,10 @@ struct PositionCardView: View {
                     Text("\(stopDelta >= 0 ? "+" : "")\(String(format: "%.2f", stopDelta))% vs entry")
                         .font(.caption.bold())
                         .foregroundStyle(legacyDistance ? Color.secondary : Color.cyan)
-                    Text(legacyDistance ? "Legacy 1.2% Default" : "Adapted By App")
+                    Text(isStrategyManaged ? "Legacy 1.2% Fixed For Strat" : (legacyDistance ? "Legacy 1.2% Default" : "Adapted By App"))
                         .font(.caption2.bold())
-                        .foregroundStyle(legacyDistance ? Color.secondary : Color.cyan)
-                    if let takeProfit = position.takeProfit, takeProfit > 0 {
+                        .foregroundStyle(isStrategyManaged ? Color.orange : (legacyDistance ? Color.secondary : Color.cyan))
+                    if !isStrategyManaged, let takeProfit = position.takeProfit, takeProfit > 0 {
                         Text("TP \(AppFormatters.price(takeProfit, precision: position.pricePrecision))")
                             .font(.caption.bold())
                             .foregroundStyle(.yellow)
@@ -137,7 +149,7 @@ struct PositionCardView: View {
 
         parts.append(managementMode)
 
-        if managementMode == "SELF", let takeProfitTargetPercent = resolvedTakeProfitTargetPercent, takeProfitTargetPercent > 0 {
+        if managementMode == "Self", let takeProfitTargetPercent = resolvedTakeProfitTargetPercent, takeProfitTargetPercent > 0 {
             parts.append(String(format: "TP %.2f%%", takeProfitTargetPercent))
         }
 

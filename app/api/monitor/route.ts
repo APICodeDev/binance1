@@ -5,7 +5,7 @@ import { writeAuditLog } from '@/lib/audit';
 import { fail, ok } from '@/lib/apiResponse';
 import { requireAuth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { calculateCloseMetrics, isSelfManagedPosition, resolveBitgetCloseExecution } from '@/lib/positions';
+import { calculateCloseMetrics, normalizePositionManagementMode, resolveBitgetCloseExecution } from '@/lib/positions';
 import { attachTakeProfitUpgradeMeta } from '@/lib/positionSignals';
 import { notifyAllActiveDevices } from '@/lib/pushNotifications';
 import {
@@ -198,7 +198,10 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
 
   for (const pos of positions) {
     const mode = ((pos as any).tradingMode || 'demo') as 'demo' | 'live';
-    const selfManaged = isSelfManagedPosition((pos as any).managementMode);
+    const managementMode = normalizePositionManagementMode((pos as any).managementMode);
+    const selfManaged = managementMode === 'self';
+    const stratManaged = managementMode === 'strat';
+    const autoManaged = managementMode === 'auto';
     const realMap = mode === 'live' ? liveMap : demoMap;
     const snapshot = mode === 'live' ? realLive : realDemo;
     const symbol = pos.symbol.toUpperCase();
@@ -314,7 +317,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     const hasTakeProfit = Number.isFinite(takeProfit) && takeProfit > 0;
 
     if (
-      !selfManaged &&
+      autoManaged &&
       exhaustionGuardEnabled &&
       maxProfitPercent >= EXHAUSTION_MIN_MFE_PERCENT &&
       profitPercent > 0 &&
@@ -328,7 +331,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
         `actual ${profitPercent.toFixed(2)}% | estancada ${Math.floor(stagnationMs / 60000)}m`
       );
     } else if (
-      !selfManaged &&
+      autoManaged &&
       exhaustionGuardEnabled &&
       maxProfitPercent >= EXHAUSTION_FLAT_MIN_MFE_PERCENT &&
       profitPercent >= EXHAUSTION_FLAT_MIN_PROFIT_PERCENT &&
@@ -361,7 +364,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     }
 
     if (!exhaustionTriggered && pos.positionType === 'buy') {
-      if (!selfManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice >= takeProfit) {
+      if (autoManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice >= takeProfit) {
         takeProfitTriggered = true;
       } else if (selfManaged) {
         const trailingStep = getSelfManagedTrailingStep(marketMovePercent);
@@ -384,7 +387,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
             }
           }
         }
-      } else if (!selfManaged && marketMovePercent >= 1) {
+      } else if (autoManaged && marketMovePercent >= 1) {
         const crossedStep = Math.floor(marketMovePercent / 0.5) * 0.5;
         const crossedPrice = pos.entryPrice * (1 + crossedStep / 100);
         const targetSlPrice = crossedPrice * (1 - 0.5 / 100);
@@ -395,7 +398,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
             results.push(`SL_UPDATE (${mode}): ${symbol} trailing -> ${targetSlPrice}`);
           }
         }
-      } else if (marketMovePercent >= 0.5) {
+      } else if (autoManaged && marketMovePercent >= 0.5) {
         const targetSlPrice = pos.entryPrice * (1 + entryComm) / (1 - comm);
         if (targetSlPrice > pos.stopLoss) {
           const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
@@ -406,7 +409,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
         }
       }
     } else if (!exhaustionTriggered) { // short
-      if (!selfManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice <= takeProfit) {
+      if (autoManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice <= takeProfit) {
         takeProfitTriggered = true;
       } else if (selfManaged) {
         const trailingStep = getSelfManagedTrailingStep(marketMovePercent);
@@ -429,7 +432,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
             }
           }
         }
-      } else if (!selfManaged && marketMovePercent >= 1) {
+      } else if (autoManaged && marketMovePercent >= 1) {
         const crossedStep = Math.floor(marketMovePercent / 0.5) * 0.5;
         const crossedPrice = pos.entryPrice * (1 - crossedStep / 100);
         const targetSlPrice = crossedPrice * (1 + 0.5 / 100);
@@ -440,7 +443,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
             results.push(`SL_UPDATE (${mode}): ${symbol} trailing -> ${targetSlPrice}`);
           }
         }
-      } else if (marketMovePercent >= 0.5) {
+      } else if (autoManaged && marketMovePercent >= 0.5) {
         const targetSlPrice = pos.entryPrice * (1 - entryComm) / (1 + comm);
         if (targetSlPrice < pos.stopLoss) {
           const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
@@ -533,7 +536,11 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
           maxProfitAt,
         },
       });
-      results.push(`OK (${mode}): #${pos.id} ${symbol} | Price: ${currentPrice} | PnL: ${profitPercent.toFixed(2)}%`);
+      results.push(
+        stratManaged
+          ? `OK_STRAT (${mode}): #${pos.id} ${symbol} | Price: ${currentPrice} | PnL: ${profitPercent.toFixed(2)}% | SL fijo sin trailing`
+          : `OK (${mode}): #${pos.id} ${symbol} | Price: ${currentPrice} | PnL: ${profitPercent.toFixed(2)}%`
+      );
     }
   }
 
