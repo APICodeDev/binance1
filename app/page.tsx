@@ -604,7 +604,7 @@ function formatManagementModeLabel(value?: string | null) {
 }
 
 export default function Dashboard() {
-  const [currentView, setCurrentView] = useState<'dashboard' | 'admin' | 'stats'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'bookmap' | 'admin' | 'stats'>('dashboard');
   const [showMenu, setShowMenu] = useState(false);
   const [openPositions, setOpenPositions] = useState<Position[]>([]);
   const [closedPositions, setClosedPositions] = useState<Position[]>([]);
@@ -1059,7 +1059,7 @@ export default function Dashboard() {
   }, [authUser, bookmapSymbol, fetchBookmap, fetchHeatmapPaper]);
 
   useEffect(() => {
-    if (!authUser || !isOnline || !isDocumentVisible || currentView !== 'dashboard' || !bookmapSymbol) {
+    if (!authUser || !isOnline || !isDocumentVisible || currentView !== 'bookmap' || !bookmapSymbol) {
       return;
     }
 
@@ -1613,11 +1613,20 @@ export default function Dashboard() {
               <Menu size={18} />
             </button>
             <div className="text-[11px] font-black uppercase tracking-[0.25em] text-slate-500">
-              {currentView === 'dashboard' ? 'Main Dashboard' : currentView === 'stats' ? 'Statistics' : 'Admin Center'}
+              {currentView === 'dashboard'
+                ? 'Main Dashboard'
+                : currentView === 'bookmap'
+                  ? 'Bookmap Lab'
+                  : currentView === 'stats'
+                    ? 'Statistics'
+                    : 'Admin Center'}
             </div>
           </div>
           {showMenu && (
-            <div className="grid w-full grid-cols-1 gap-2 rounded-2xl border border-slate-800 bg-slate-900/95 px-2 py-2 shadow-xl shadow-slate-950/30 sm:w-auto sm:grid-cols-3 sm:items-center">
+            <div className={cn(
+              "grid w-full grid-cols-1 gap-2 rounded-2xl border border-slate-800 bg-slate-900/95 px-2 py-2 shadow-xl shadow-slate-950/30 sm:w-auto sm:items-center",
+              authUser.role === 'admin' ? "sm:grid-cols-4" : "sm:grid-cols-3"
+            )}>
               <button
                 type="button"
                 onClick={() => {
@@ -1630,6 +1639,19 @@ export default function Dashboard() {
                 )}
                 >
                   Dashboard
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentView('bookmap');
+                    setShowMenu(false);
+                  }}
+                  className={cn(
+                    "rounded-xl px-4 py-3 text-[11px] font-black uppercase tracking-[0.2em] transition-colors",
+                    currentView === 'bookmap' ? "bg-cyan-300 text-slate-950" : "text-slate-300 hover:text-white"
+                  )}
+                >
+                  Bookmap Lab
                 </button>
                 <button
                   type="button"
@@ -1801,100 +1823,107 @@ export default function Dashboard() {
               </p>
             </div>
 
-            <div className="bg-slate-900 border border-slate-800 px-4 py-3 rounded-2xl flex items-center gap-3">
-              <Zap size={18} className={cn("shrink-0", leverageEnabled ? "text-amber-400" : "text-slate-500")} />
-              <div className="flex min-w-0 flex-1 flex-col">
-                <div className="flex items-center gap-2">
-                  <span className="text-[9px] uppercase font-black text-slate-500 tracking-widest">Leverage</span>
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={() => setShowLeverageHelp((current) => !current)}
-                      onBlur={() => setTimeout(() => setShowLeverageHelp(false), 120)}
-                      className="flex h-5 w-5 items-center justify-center rounded-full border border-slate-700 bg-slate-950/70 text-slate-400 transition-colors hover:border-amber-400 hover:text-amber-300"
-                      aria-label="Leverage help"
-                    >
-                      <CircleHelp size={12} />
-                    </button>
-                    <div
-                      className={cn(
-                        "absolute left-0 top-7 z-20 w-64 rounded-2xl border border-slate-700 bg-slate-950/95 p-4 text-left shadow-2xl shadow-slate-950/60 transition-all",
-                        showLeverageHelp ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
-                      )}
-                    >
-                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-300">How leverage works here</p>
-                      <p className="mt-2 text-xs leading-5 text-slate-300">
-                        Entry Amount is the exposure you want to open. Leverage changes the margin Bitget uses for that exposure.
-                      </p>
-                      <p className="mt-2 text-xs leading-5 text-slate-400">
-                        Example: if you want a 500 USDT position and your account has 100 USDT, use Entry Amount 500 and Leverage x5.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-                <div className="mt-1 flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={toggleLeverage}
-                    className={cn(
-                      "rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] transition-colors",
-                      leverageEnabled
-                        ? "border-amber-400 bg-amber-400 text-slate-950"
-                        : "border-slate-700 bg-slate-950/40 text-slate-400"
-                    )}
-                  >
-                    {leverageEnabled ? 'On' : 'Off'}
-                  </button>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-black text-slate-500">x</span>
-                    <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      value={leverageValue}
-                      onChange={(e) => saveLeverageValue(e.target.value)}
-                      className="w-20 bg-transparent border-none text-sm font-black text-amber-400 outline-none p-0 m-0"
-                    />
-                  </div>
-                </div>
-                <span className="mt-1 text-[9px] font-bold uppercase tracking-widest text-slate-600">
-                  Amount remains exposure. Leverage changes margin used.
-                </span>
-              </div>
-            </div>
-
-            <div className="bg-slate-900 border border-slate-800 px-4 py-3 rounded-2xl flex items-center gap-3">
-              <ShieldCheck size={18} className="shrink-0 text-cyan-300" />
-              <div className="flex min-w-0 flex-1 flex-col">
-                <span className="text-[9px] uppercase font-black text-slate-500 tracking-widest">API Initial Stop</span>
-                <div className="mt-1 flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={toggleApiStopMode}
-                    className={cn(
-                      "rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] transition-colors",
-                      apiStopMode === 'signal'
-                        ? "border-cyan-300 bg-cyan-300 text-slate-950"
-                        : "border-slate-700 bg-slate-950/40 text-slate-300"
-                    )}
-                  >
-                    {apiStopMode === 'signal' ? 'Signal Stop First' : 'Legacy Stop Only'}
-                  </button>
-                </div>
-                <span className="mt-1 text-[9px] font-bold uppercase tracking-widest text-slate-600">
-                  {apiStopMode === 'signal'
-                    ? 'Si el JSON trae Stop Loss valido se respeta como SL inicial. Si no llega, el sistema cae al 1.2% legacy.'
-                    : 'Ignora el Stop Loss recibido por JSON y usa siempre el stop legacy del 1.2%.'}
-                </span>
-              </div>
-            </div>
-
           </div>
         </header>
 
         {authUser.role === 'admin' && currentView === 'admin' && (
           <section className="rounded-[2rem] border border-slate-800 bg-slate-900/70 p-5 md:p-6 shadow-xl shadow-slate-950/20">
             <div className="flex flex-col gap-5">
+              <div className="grid gap-4 xl:grid-cols-2">
+                <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-4">
+                  <div className="flex items-start gap-3">
+                    <Zap size={18} className={cn("mt-1 shrink-0", leverageEnabled ? "text-amber-400" : "text-slate-500")} />
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <div className="flex items-center gap-2">
+                        <p className="text-[10px] font-black uppercase tracking-[0.3em] text-amber-400">Trade Sizing</p>
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() => setShowLeverageHelp((current) => !current)}
+                            onBlur={() => setTimeout(() => setShowLeverageHelp(false), 120)}
+                            className="flex h-5 w-5 items-center justify-center rounded-full border border-slate-700 bg-slate-950/70 text-slate-400 transition-colors hover:border-amber-400 hover:text-amber-300"
+                            aria-label="Leverage help"
+                          >
+                            <CircleHelp size={12} />
+                          </button>
+                          <div
+                            className={cn(
+                              "absolute left-0 top-7 z-20 w-64 rounded-2xl border border-slate-700 bg-slate-950/95 p-4 text-left shadow-2xl shadow-slate-950/60 transition-all",
+                              showLeverageHelp ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
+                            )}
+                          >
+                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-300">How leverage works here</p>
+                            <p className="mt-2 text-xs leading-5 text-slate-300">
+                              Entry Amount is the exposure you want to open. Leverage changes the margin Bitget uses for that exposure.
+                            </p>
+                            <p className="mt-2 text-xs leading-5 text-slate-400">
+                              Example: if you want a 500 USDT position and your account has 100 USDT, use Entry Amount 500 and Leverage x5.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                      <h2 className="mt-1 text-xl font-black uppercase tracking-tight text-white">Leverage</h2>
+                      <p className="mt-2 text-xs text-slate-500">Amount remains exposure. Leverage only changes the margin Bitget uses for that exposure.</p>
+                      <div className="mt-4 flex flex-wrap items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={toggleLeverage}
+                          className={cn(
+                            "rounded-xl border px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] transition-colors",
+                            leverageEnabled
+                              ? "border-amber-400 bg-amber-400 text-slate-950"
+                              : "border-slate-700 bg-slate-950/40 text-slate-400"
+                          )}
+                        >
+                          {leverageEnabled ? 'Leverage On' : 'Leverage Off'}
+                        </button>
+                        <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3">
+                          <span className="text-sm font-black text-slate-500">x</span>
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            value={leverageValue}
+                            onChange={(e) => saveLeverageValue(e.target.value)}
+                            className="w-20 bg-transparent border-none text-sm font-black text-amber-400 outline-none p-0 m-0"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-4">
+                  <div className="flex items-start gap-3">
+                    <ShieldCheck size={18} className="mt-1 shrink-0 text-cyan-300" />
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <p className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-400">Trade Protection</p>
+                      <h2 className="mt-1 text-xl font-black uppercase tracking-tight text-white">API Initial Stop</h2>
+                      <p className="mt-2 text-xs text-slate-500">Decide whether the first SL should respect a valid JSON stop or always fall back to the legacy 1.2% stop.</p>
+                      <div className="mt-4 flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={toggleApiStopMode}
+                          className={cn(
+                            "rounded-xl border px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] transition-colors",
+                            apiStopMode === 'signal'
+                              ? "border-cyan-300 bg-cyan-300 text-slate-950"
+                              : "border-slate-700 bg-slate-950/40 text-slate-300"
+                          )}
+                        >
+                          {apiStopMode === 'signal' ? 'Signal Stop First' : 'Legacy Stop Only'}
+                        </button>
+                      </div>
+                      <p className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-xs font-bold text-slate-300">
+                        {apiStopMode === 'signal'
+                          ? 'Si el JSON trae Stop Loss valido se respeta como SL inicial. Si no llega, el sistema cae al 1.2% legacy.'
+                          : 'Ignora el Stop Loss recibido por JSON y usa siempre el stop legacy del 1.2%.'}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-4">
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <div>
@@ -2369,22 +2398,6 @@ export default function Dashboard() {
             </div>
           </section>
 
-          <BookmapPanel
-            symbol={bookmapSymbol}
-            onSymbolChange={setBookmapSymbol}
-            data={bookmapData}
-            loading={bookmapLoading}
-            message={bookmapMessage}
-            expanded={bookmapExpanded}
-            onToggleExpanded={() => setBookmapExpanded((current) => !current)}
-            onExecutePreSignal={executeHeatmapPreSignal}
-            executingPreSignal={executingHeatmapSignal}
-            onTrackPaperSignal={trackHeatmapPreSignalOnPaper}
-            creatingPaperSignal={creatingHeatmapPaper}
-            paperData={heatmapPaperData}
-            paperMessage={heatmapPaperMessage}
-          />
-
           {/* History */}
           <section className="bg-slate-900/30 border border-slate-800/50 rounded-3xl overflow-hidden shadow-2xl">
             <div className="p-6 border-b border-slate-800 flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center bg-slate-900/50">
@@ -2547,6 +2560,32 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
             )}
           </section>
         </main>
+        ) : currentView === 'bookmap' ? (
+          <main className="space-y-8">
+            <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-[2rem] border border-slate-800 bg-slate-900/40 p-6 shadow-xl shadow-slate-950/20">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-300">Bookmap Lab</p>
+                <h2 className="mt-2 text-2xl font-black uppercase tracking-tight text-white">Liquidity And Heatmap Workspace</h2>
+                <p className="mt-2 text-sm text-slate-400">Dedicated space for orderflow, pre-signals and Heatmap paper tracking without mixing it with the main dashboard.</p>
+              </div>
+            </section>
+
+            <BookmapPanel
+              symbol={bookmapSymbol}
+              onSymbolChange={setBookmapSymbol}
+              data={bookmapData}
+              loading={bookmapLoading}
+              message={bookmapMessage}
+              expanded={bookmapExpanded}
+              onToggleExpanded={() => setBookmapExpanded((current) => !current)}
+              onExecutePreSignal={executeHeatmapPreSignal}
+              executingPreSignal={executingHeatmapSignal}
+              onTrackPaperSignal={trackHeatmapPreSignalOnPaper}
+              creatingPaperSignal={creatingHeatmapPaper}
+              paperData={heatmapPaperData}
+              paperMessage={heatmapPaperMessage}
+            />
+          </main>
         ) : currentView === 'stats' ? (
           <main className="space-y-8">
             <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-[2rem] border border-slate-800 bg-slate-900/40 p-6 shadow-xl shadow-slate-950/20">
