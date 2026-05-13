@@ -17,13 +17,14 @@ export type TradingMode = 'demo' | 'live';
 export type PositionManagementMode = 'auto' | 'self' | 'strat';
 
 const SELF_MODE_ALIASES = new Set(['self', 'sefl', 'selft']);
+const FIXED_PRICE_MODE_ALIASES = new Set(['fixed']);
 const STRAT_MODE_ALIASES = new Set(['strat', 'strategy']);
 const CLOSE_RETRY_DELAYS_MS = [400, 900, 1600];
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function normalizePositionManagementMode(value: unknown): PositionManagementMode {
   const raw = String(value ?? '').trim().toLowerCase();
-  if (SELF_MODE_ALIASES.has(raw)) {
+  if (SELF_MODE_ALIASES.has(raw) || FIXED_PRICE_MODE_ALIASES.has(raw)) {
     return 'self';
   }
 
@@ -32,6 +33,11 @@ export function normalizePositionManagementMode(value: unknown): PositionManagem
   }
 
   return 'auto';
+}
+
+export function isFixedPriceManagementMode(value: unknown) {
+  const raw = String(value ?? '').trim().toLowerCase();
+  return FIXED_PRICE_MODE_ALIASES.has(raw);
 }
 
 export function isSelfManagedPosition(value: unknown) {

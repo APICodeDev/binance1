@@ -35,7 +35,7 @@ struct Position: Codable, Identifiable {
 
     var normalizedManagementMode: String {
         let raw = (managementMode ?? "auto").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if raw == "self" {
+        if raw == "self" || raw == "fixed" {
             return "self"
         }
         if raw == "strat" || raw == "strategy" {

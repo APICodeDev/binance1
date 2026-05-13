@@ -8,6 +8,7 @@ import { prisma } from '@/lib/db';
 import { notifyAllActiveDevices } from '@/lib/pushNotifications';
 import {
   closeTrackedPosition,
+  isFixedPriceManagementMode,
   normalizePositionManagementMode,
   type PositionManagementMode,
   type TradingMode,
@@ -516,6 +517,7 @@ async function executeEntry(
     const symbol = bitgetNormalizeSymbol(data.symbol || '');
     let amount = parseFloat(data.amount) || 0;
     const type = String(data.type || '').toLowerCase();
+    const fixedPriceMode = isFixedPriceManagementMode(data.mode);
     const managementMode = normalizePositionManagementMode(data.mode) as PositionManagementMode;
     const stratManaged = managementMode === 'strat';
     const origin = normalizeSignalOrigin(data.origin);
@@ -532,7 +534,8 @@ async function executeEntry(
       data.stop_loss ??
       data.slPrice ??
       data.sl_price ??
-      data.slprice;
+      data.slprice ??
+      (fixedPriceMode ? data.stoploss : undefined);
     const rawRequestedTakeProfitPrice =
       data.takeProfit ??
       data.take_profit ??
@@ -544,9 +547,9 @@ async function executeEntry(
       data.tpprice ??
       data.spPrice ??
       data.sp_price ??
-      data.sp;
+      data.sp ??
+      (fixedPriceMode ? data.takeprofit : undefined);
     const rawRequestedStopPercent =
-      data.stoploss ??
       data.stopLossPercent ??
       data.stop_loss_percent ??
       data.stoploss_percent ??
@@ -558,7 +561,6 @@ async function executeEntry(
       data.sl_percent ??
       data.slpercent;
     const rawRequestedTakeProfitPercent =
-      data.takeprofit ??
       data.takeProfitPercent ??
       data.take_profit_percent ??
       data.takeprofit_percent ??

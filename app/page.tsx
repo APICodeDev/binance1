@@ -579,7 +579,7 @@ function formatClosedDuration(createdAt: string, closedAt?: string) {
 
 function normalizeManagementMode(value?: string | null): 'auto' | 'self' | 'strat' {
   const raw = String(value ?? '').trim().toLowerCase();
-  if (raw === 'self') {
+  if (raw === 'self' || raw === 'fixed') {
     return 'self';
   }
 
