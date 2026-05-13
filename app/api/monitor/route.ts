@@ -5,7 +5,7 @@ import { writeAuditLog } from '@/lib/audit';
 import { fail, ok } from '@/lib/apiResponse';
 import { requireAuth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { calculateCloseMetrics, normalizePositionManagementMode, resolveBitgetCloseExecution } from '@/lib/positions';
+import { calculateCloseMetrics, isFixedPriceManagementMode, normalizePositionManagementMode, resolveBitgetCloseExecution } from '@/lib/positions';
 import { attachTakeProfitUpgradeMeta } from '@/lib/positionSignals';
 import { notifyAllActiveDevices } from '@/lib/pushNotifications';
 import {
@@ -199,6 +199,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
   for (const pos of positions) {
     const mode = ((pos as any).tradingMode || 'demo') as 'demo' | 'live';
     const managementMode = normalizePositionManagementMode((pos as any).managementMode);
+    const fixedManaged = isFixedPriceManagementMode((pos as any).managementMode);
     const selfManaged = managementMode === 'self';
     const stratManaged = managementMode === 'strat';
     const autoManaged = managementMode === 'auto';
@@ -310,6 +311,8 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     const givebackPercent = Math.max(0, maxProfitPercent - profitPercent);
 
     let newSl = pos.stopLoss;
+    const previousStopLoss = pos.stopLoss;
+    let stopLossTriggered = false;
     let takeProfitTriggered = false;
     let exhaustionTriggered = false;
     let exhaustionReason: 'retracement' | 'flat_timeout' | null = null;
@@ -408,6 +411,14 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
           }
         }
       }
+
+      if (fixedManaged) {
+        if (currentPrice <= newSl) {
+          stopLossTriggered = true;
+        } else if (hasTakeProfit && currentPrice >= takeProfit) {
+          takeProfitTriggered = true;
+        }
+      }
     } else if (!exhaustionTriggered) { // short
       if (autoManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice <= takeProfit) {
         takeProfitTriggered = true;
@@ -453,21 +464,35 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
           }
         }
       }
+
+      if (fixedManaged) {
+        if (currentPrice >= newSl) {
+          stopLossTriggered = true;
+        } else if (hasTakeProfit && currentPrice <= takeProfit) {
+          takeProfitTriggered = true;
+        }
+      }
     }
 
-    if (takeProfitTriggered || exhaustionTriggered) {
+    if (stopLossTriggered || takeProfitTriggered || exhaustionTriggered) {
       const closeSide = positionContext.closeSide;
       await bitgetCancelAllOrders(symbol, mode);
       const closeResp = await bitgetClosePosition(symbol, closeSide, pos.quantity, mode, positionContext.closeTradeSide);
 
       if (bitgetOrderSuccess(closeResp)) {
+        const stopWasMovedByTrailing = Math.abs(newSl - previousStopLoss) > Math.max(1e-8, Math.abs(previousStopLoss) * 0.000001);
+        const closeReason = exhaustionTriggered
+          ? 'exhaustion'
+          : stopLossTriggered
+            ? (stopWasMovedByTrailing ? 'trailing_stop' : 'stop_loss')
+            : 'take_profit';
         const exchangeClose = await resolveBitgetCloseExecution({
           position: pos as any,
           tradingMode: mode,
           targetTime: new Date(),
           fallbackExitPrice: currentPrice,
           knownCloseResp: closeResp,
-          fallbackReason: exhaustionTriggered ? 'exhaustion' : 'take_profit',
+          fallbackReason: closeReason,
         });
         const exitPrice = exchangeClose?.exitPrice || currentPrice;
         const closeMetrics = calculateCloseMetrics({
@@ -488,7 +513,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
             maxProfitPercent,
             maxProfitAt,
             exitPrice,
-            exitReason: exchangeClose?.exitReason || (exhaustionTriggered ? 'exhaustion' : 'take_profit'),
+            exitReason: exchangeClose?.exitReason || closeReason,
             exitOrderId: exchangeClose?.exitOrderId || null,
             exitSource: exchangeClose?.exitSource || null,
           } as any,
@@ -496,17 +521,23 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
         pushEvents.push({
           title: exhaustionTriggered
             ? `${symbol} cerrada por agotamiento`
+            : stopLossTriggered
+              ? `${symbol} stop ejecutado`
             : takeProfitTriggered
               ? `${symbol} take profit ejecutado`
               : `${symbol} cerrada`,
           body: exhaustionTriggered
             ? `La posicion #${pos.id} en ${mode.toUpperCase()} se cerro automaticamente por agotamiento.`
+            : stopLossTriggered
+              ? `La posicion #${pos.id} en ${mode.toUpperCase()} se cerro automaticamente por ${closeReason === 'trailing_stop' ? 'trailing stop' : 'stop loss'}.`
             : takeProfitTriggered
               ? `La posicion #${pos.id} en ${mode.toUpperCase()} se cerro automaticamente por take profit.`
               : `La posicion #${pos.id} en ${mode.toUpperCase()} se cerro automaticamente.`,
           data: {
             kind: exhaustionTriggered
               ? 'position_closed_exhaustion'
+              : stopLossTriggered
+                ? (closeReason === 'trailing_stop' ? 'position_closed_trailing_stop' : 'position_closed_stop_loss')
               : takeProfitTriggered
                 ? 'position_closed_take_profit'
                 : 'position_closed',
@@ -520,6 +551,8 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
         results.push(
           exhaustionTriggered
             ? `EXHAUSTION_CERRADA (${mode}): Position #${pos.id} (${symbol}) cerrada por ${exhaustionReason === 'flat_timeout' ? 'lateralidad prolongada' : 'agotamiento con retroceso'}.`
+            : stopLossTriggered
+              ? `SL_CERRADA (${mode}): Position #${pos.id} (${symbol}) cerrada por ${closeReason === 'trailing_stop' ? 'trailing stop' : 'stop loss'}.`
             : takeProfitTriggered
               ? `TP_CERRADA (${mode}): Position #${pos.id} (${symbol}) closed por take profit.`
               : `CERRADA (${mode}): Position #${pos.id} (${symbol}) closed.`

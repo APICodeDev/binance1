@@ -70,7 +70,7 @@ interface Position {
   id: number;
   symbol: string;
   positionType: 'buy' | 'sell';
-  managementMode?: 'auto' | 'self' | 'strat';
+  managementMode?: 'auto' | 'self' | 'strat' | 'fixed';
   amount: number;
   quantity: number;
   entryPrice: number;

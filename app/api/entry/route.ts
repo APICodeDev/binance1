@@ -238,6 +238,7 @@ async function closePositionFromEntrySignal(
   const symbol = bitgetNormalizeSymbol(data.symbol || '');
   const modeProvided = data.mode !== undefined && data.mode !== null && String(data.mode).trim() !== '';
   const managementMode = normalizePositionManagementMode(data.mode);
+  const storedManagementMode = isFixedPriceManagementMode(data.mode) ? 'fixed' : managementMode;
   const signalOrigin = normalizeSignalOrigin(data.origin);
 
   if (!symbol) {
@@ -252,7 +253,7 @@ async function closePositionFromEntrySignal(
   };
 
   if (modeProvided) {
-    where.managementMode = managementMode;
+    where.managementMode = storedManagementMode;
   }
 
   const position = await prisma.position.findFirst({
@@ -276,7 +277,7 @@ async function closePositionFromEntrySignal(
       metadata: {
         symbol,
         tradingMode,
-        managementMode,
+        managementMode: storedManagementMode,
         positionOrigin: position.origin || null,
         signalOrigin,
         trigger: auth ? auth.authType : 'webhook',
@@ -307,7 +308,7 @@ async function closePositionFromEntrySignal(
       metadata: {
         symbol: closeResult.symbol,
         tradingMode: closeResult.tradingMode,
-        managementMode,
+        managementMode: storedManagementMode,
         origin: signalOrigin,
         trigger: auth ? auth.authType : 'webhook',
       },
@@ -519,6 +520,7 @@ async function executeEntry(
     const type = String(data.type || '').toLowerCase();
     const fixedPriceMode = isFixedPriceManagementMode(data.mode);
     const managementMode = normalizePositionManagementMode(data.mode) as PositionManagementMode;
+    const storedManagementMode = fixedPriceMode ? 'fixed' : managementMode;
     const stratManaged = managementMode === 'strat';
     const origin = normalizeSignalOrigin(data.origin);
     const timeframe = data.timeframe ? String(data.timeframe) : null;
@@ -677,6 +679,7 @@ async function executeEntry(
               existingPositionType: existing.positionType,
               incomingPositionType: type,
               managementMode: existing.managementMode,
+              incomingManagementMode: storedManagementMode,
               positionOrigin: existing.origin || null,
               signalOrigin: origin,
               trigger: auth ? auth.authType : 'webhook',
@@ -727,6 +730,7 @@ async function executeEntry(
             existingPositionType: existing.positionType,
             incomingPositionType: type,
             managementMode: existing.managementMode,
+            incomingManagementMode: storedManagementMode,
             positionOrigin: existing.origin || null,
             signalOrigin: origin,
             trigger: auth ? auth.authType : 'webhook',
@@ -755,14 +759,15 @@ async function executeEntry(
         targetType: 'position',
         targetId: String(existing.id),
         metadata: {
-          symbol,
-          tradingMode,
-          existingPositionType: existing.positionType,
-          incomingPositionType: type,
-          managementMode: existing.managementMode,
-          positionOrigin: existing.origin || null,
-          signalOrigin: origin,
-          trigger: auth ? auth.authType : 'webhook',
+            symbol,
+            tradingMode,
+            existingPositionType: existing.positionType,
+            incomingPositionType: type,
+            managementMode: existing.managementMode,
+            incomingManagementMode: storedManagementMode,
+            positionOrigin: existing.origin || null,
+            signalOrigin: origin,
+            trigger: auth ? auth.authType : 'webhook',
         },
         req,
       });
@@ -1100,7 +1105,7 @@ async function executeEntry(
       data: {
         symbol,
         positionType: type,
-        managementMode,
+        managementMode: storedManagementMode,
         amount,
         quantity: filledSize,
         entryPrice,
@@ -1124,7 +1129,7 @@ async function executeEntry(
       metadata: {
         symbol,
         tradingMode,
-        managementMode,
+        managementMode: storedManagementMode,
         type,
         amount,
         quantity: filledSize,
@@ -1232,6 +1237,7 @@ async function executeEntry(
         ? `Position opened in ${tradingMode} for ${symbol} with TP pending on Bitget`
         : `Position opened in ${tradingMode} for ${symbol}`,
       managementMode,
+      storedManagementMode,
       positionMode: effectivePositionMode,
       executionMode,
       entryPrice,
