@@ -102,6 +102,18 @@ const parseOptionalPercent = (...values: unknown[]) => {
   return null;
 };
 
+const parseOptionalSignedNumber = (...values: unknown[]) => {
+  for (const value of values) {
+    const raw = String(value ?? '').trim().replace(',', '.');
+    const parsed = Number.parseFloat(raw);
+    if (Number.isFinite(parsed) && parsed !== 0) {
+      return parsed;
+    }
+  }
+
+  return null;
+};
+
 const hasPayloadValue = (value: unknown) =>
   value !== undefined && value !== null && String(value).trim() !== '';
 
@@ -582,6 +594,9 @@ async function executeEntry(
     const requestedTakeProfitPrice = parseOptionalPrice(
       rawRequestedTakeProfitPrice,
     );
+    const requestedStopOffset = fixedPriceMode && requestedStopPrice === null
+      ? parseOptionalSignedNumber(rawRequestedStopPrice)
+      : null;
     const requestedStopPercent = parseOptionalPercent(
       rawRequestedStopPercent,
     );
@@ -977,6 +992,11 @@ async function executeEntry(
           ? entryPrice * (1 - (requestedStopPercent / 100))
           : entryPrice * (1 + (requestedStopPercent / 100)))
       : null;
+    const computedStopPriceFromOffset = fixedPriceMode && requestedStopPrice === null && requestedStopOffset !== null
+      ? (type === 'buy'
+          ? entryPrice + requestedStopOffset
+          : entryPrice - requestedStopOffset)
+      : null;
     const takeProfitResolution = resolveRequestedTakeProfit({
       entryPrice,
       positionType: type as 'buy' | 'sell',
@@ -987,9 +1007,15 @@ async function executeEntry(
     const computedTakeProfitPriceFromPercent = takeProfitResolution.computedTakeProfitPriceFromPercent;
     const resolvedRequestedStopPrice = requestedStopPrice !== null
       ? requestedStopPrice
-      : computedStopPriceFromPercent;
+      : (computedStopPriceFromOffset !== null ? computedStopPriceFromOffset : computedStopPriceFromPercent);
     const resolvedRequestedTakeProfitPrice = takeProfitResolution.resolvedRequestedTakeProfitPrice;
-    const stopInputSource = requestedStopPrice !== null ? 'price' : requestedStopPercent !== null ? 'percent' : 'legacy';
+    const stopInputSource = requestedStopPrice !== null
+      ? 'price'
+      : computedStopPriceFromOffset !== null
+        ? 'price-offset'
+        : requestedStopPercent !== null
+          ? 'percent'
+          : 'legacy';
     const takeProfitInputSource = takeProfitResolution.takeProfitInputSource;
     const legacyStopPrice = normalizeExitPrice(rawLegacyStopPrice, stopNormalizeDirection);
     const normalizedRequestedStop = resolvedRequestedStopPrice !== null
@@ -1021,7 +1047,7 @@ async function executeEntry(
       const errDetail = `Stop invalido para ${symbol}. ` +
         `JSON stop=${JSON.stringify(rawRequestedStopPrice)}, stopPercent=${JSON.stringify(rawRequestedStopPercent)}, ` +
         `takeProfit=${JSON.stringify(rawRequestedTakeProfitPrice)}, takeProfitPercent=${JSON.stringify(rawRequestedTakeProfitPercent)}, ` +
-        `parsedStop=${requestedStopPrice}, parsedStopPercent=${requestedStopPercent}, resolvedStop=${resolvedRequestedStopPrice}, ` +
+        `parsedStop=${requestedStopPrice}, parsedStopOffset=${requestedStopOffset}, parsedStopPercent=${requestedStopPercent}, resolvedStop=${resolvedRequestedStopPrice}, ` +
         `normalizedStop=${normalizedRequestedStop}, entry=${entryPrice}. ` +
         `Rollback ejecutado.`;
       await saveLastEntryError(errDetail, symbol, type);
@@ -1160,10 +1186,12 @@ async function executeEntry(
         requestedEntryPrice,
         requestedStopPrice,
         requestedStopPercent,
+        requestedStopOffset,
         requestedStopInputSource: stopInputSource,
         apiStopMode,
         stratManaged,
         computedStopPriceFromPercent,
+        computedStopPriceFromOffset,
         resolvedRequestedStopPrice,
         normalizedRequestedStop,
         requestedStopAccepted: stratManaged ? false : isRequestedStopValid,
@@ -1256,6 +1284,7 @@ async function executeEntry(
           : (apiStopMode === 'legacy' ? 'legacy' : (isRequestedStopValid ? stopInputSource : 'legacy')),
         requested: requestedStopPrice,
         requestedPercent: requestedStopPercent,
+        requestedOffset: requestedStopOffset,
         resolved: resolvedRequestedStopPrice,
         accepted: stratManaged ? false : isRequestedStopValid,
         applied: stopPrice,
