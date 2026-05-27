@@ -7,6 +7,7 @@ import { requireAuth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { calculateCloseMetrics, isFixedPriceManagementMode, normalizePositionManagementMode, resolveBitgetCloseExecution } from '@/lib/positions';
 import { attachTakeProfitUpgradeMeta } from '@/lib/positionSignals';
+import { notifyPositiveClose } from '@/lib/ntfy';
 import { notifyAllActiveDevices } from '@/lib/pushNotifications';
 import {
   bitgetBuildPositionContext,
@@ -37,6 +38,7 @@ const DASHBOARD_SETTING_KEYS = [
   'bot_enabled',
   'custom_amount',
   'last_entry_error',
+  'last_webhook_status',
   'trading_mode',
   'leverage_enabled',
   'leverage_value',
@@ -93,6 +95,7 @@ async function buildDashboardSnapshot(mode: DashboardMode) {
       bot_enabled: settingsMap.bot_enabled || '1',
       custom_amount: settingsMap.custom_amount || '',
       last_entry_error: settingsMap.last_entry_error || '',
+      last_webhook_status: settingsMap.last_webhook_status || '',
       trading_mode: settingsMap.trading_mode || 'demo',
       leverage_enabled: settingsMap.leverage_enabled || '0',
       leverage_value: settingsMap.leverage_value || '1',
@@ -261,6 +264,14 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
           exitOrderId: exchangeClose?.exitOrderId || null,
           exitSource: exchangeClose?.exitSource || null,
         } as any,
+      });
+      await notifyPositiveClose({
+        symbol,
+        tradingMode: mode,
+        profitFiat: closeMetrics.profitFiat,
+        profitPercent: closeMetrics.profitPercent,
+      }).catch((error) => {
+        console.error('Failed to send positive close ntfy notification', error);
       });
       results.push(`SINC_CERRADA (${mode}): Position #${pos.id} (${symbol}) cerrada en Bitget.`);
       pushEvents.push({
@@ -517,6 +528,14 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
             exitOrderId: exchangeClose?.exitOrderId || null,
             exitSource: exchangeClose?.exitSource || null,
           } as any,
+        });
+        await notifyPositiveClose({
+          symbol,
+          tradingMode: mode,
+          profitFiat: closeMetrics.profitFiat,
+          profitPercent: closeMetrics.profitPercent,
+        }).catch((error) => {
+          console.error('Failed to send positive close ntfy notification', error);
         });
         pushEvents.push({
           title: exhaustionTriggered

@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db';
+import { notifyPositiveClose } from '@/lib/ntfy';
 import {
   bitgetBuildPositionContext,
   bitgetCancelAllOrders,
@@ -366,6 +367,15 @@ export async function closeTrackedPosition(pos: CloseablePosition): Promise<Clos
       exitOrderId: execution.exitOrderId,
       exitSource: execution.exitSource,
     } as any,
+  });
+
+  await notifyPositiveClose({
+    symbol,
+    tradingMode,
+    profitFiat: metrics.profitFiat,
+    profitPercent: metrics.profitPercent,
+  }).catch((error) => {
+    console.error('Failed to send positive close ntfy notification', error);
   });
 
   return {
