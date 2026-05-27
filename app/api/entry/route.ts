@@ -607,6 +607,7 @@ async function executeEntry(
       data.stop_price ??
       data.stopLoss ??
       data.stop_loss ??
+      data.stoploss ??
       data.slPrice ??
       data.sl_price ??
       data.slprice ??
@@ -614,6 +615,7 @@ async function executeEntry(
     const rawRequestedTakeProfitPrice =
       data.takeProfit ??
       data.take_profit ??
+      data.takeprofit ??
       data.targetPrice ??
       data.target_price ??
       data.targetprice ??
