@@ -51,6 +51,7 @@ const DEFAULT_MAKER_RETRY_DELAYS_MS = [500];
 const DEFAULT_MAX_SPREAD_PERCENT = 0.6;
 const DEFAULT_MAX_TAKER_COST_PERCENT = 1.0;
 const DEFAULT_PROTECTION_RETRY_DELAYS_MS = [500, 1000, 1500];
+const WEBHOOK_STATUS_SETTING_KEY = 'last_webhook_status';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const createClientOid = (symbol: string) =>
@@ -122,6 +123,14 @@ const normalizeSignalOrigin = (value: unknown) => {
   return raw ? raw : null;
 };
 
+const truncateRawBody = (value: string, limit = 1500) => {
+  if (value.length <= limit) {
+    return value;
+  }
+
+  return `${value.slice(0, limit)}...`;
+};
+
 const isSameOrigin = (left: unknown, right: unknown) =>
   normalizeSignalOrigin(left) === normalizeSignalOrigin(right);
 
@@ -138,6 +147,58 @@ const getProtectionRetryDelays = () => {
 
   return parsed.length > 0 ? parsed : DEFAULT_PROTECTION_RETRY_DELAYS_MS;
 };
+
+async function saveLatestWebhookStatus(status: Record<string, unknown>) {
+  const payload = JSON.stringify({
+    timestamp: new Date().toISOString(),
+    ...status,
+  });
+
+  try {
+    await prisma.setting.upsert({
+      where: { key: WEBHOOK_STATUS_SETTING_KEY },
+      update: { value: payload },
+      create: { key: WEBHOOK_STATUS_SETTING_KEY, value: payload },
+    });
+  } catch (error) {
+    console.error('Could not save last_webhook_status:', error);
+  }
+}
+
+async function extractJsonResponse(response: Response) {
+  try {
+    return await response.clone().json();
+  } catch {
+    return null;
+  }
+}
+
+function classifyWebhookOutcome(payload: any, status: number) {
+  const message = String(payload?.message || payload?.detail || '');
+  const normalized = message.toLowerCase();
+
+  if (payload?.error || status >= 400) {
+    return {
+      processingStatus: 'rejected',
+      operationTriggered: false,
+      reason: message || `Request rejected with status ${status}`,
+    };
+  }
+
+  if (normalized.includes('ignorada') || normalized.includes('bot disabled')) {
+    return {
+      processingStatus: 'ignored',
+      operationTriggered: false,
+      reason: message || 'Signal ignored',
+    };
+  }
+
+  return {
+    processingStatus: 'executed',
+    operationTriggered: true,
+    reason: message || 'Signal executed',
+  };
+}
 
 async function hasBitgetOpenPosition(symbol: string, tradingMode: TradingMode) {
   const snapshot = await bitgetGetSinglePosition(symbol, tradingMode);
@@ -1313,40 +1374,169 @@ async function executeEntry(
 
 export async function POST(req: NextRequest) {
   const auth = await getAuthContext(req);
+  const rawBody = await req.text();
+  const isExternalWebhook = !auth?.user;
 
   let data: any;
   try {
-    data = JSON.parse(await req.text());
+    data = JSON.parse(rawBody);
   } catch {
+    if (isExternalWebhook) {
+      await writeAuditLog({
+        action: 'webhook.invalid_json',
+        userId: null,
+        targetType: 'entry',
+        metadata: {
+          jsonValid: false,
+          reason: 'Invalid JSON syntax from webhook.',
+          contentType: req.headers.get('content-type'),
+          rawBody: truncateRawBody(rawBody),
+        },
+        req,
+      });
+
+      await saveLatestWebhookStatus({
+        source: 'tradingview',
+        contentType: req.headers.get('content-type'),
+        jsonReceived: true,
+        jsonValid: false,
+        processingStatus: 'rejected',
+        operationTriggered: false,
+        reason: 'Invalid JSON syntax from webhook.',
+        rawBody: truncateRawBody(rawBody),
+        responseStatus: 200,
+      });
+
+      return NextResponse.json({
+        success: true,
+        accepted: false,
+        message: 'Webhook received with invalid JSON syntax',
+      });
+    }
+
     return NextResponse.json({ error: true, message: 'Invalid JSON syntax from webhook.' }, { status: 400 });
   }
 
-  const isExternalWebhook = !auth?.user;
-
   if (isExternalWebhook) {
+    const symbol = bitgetNormalizeSymbol(data?.symbol || '');
+    const type = String(data?.type || '').toLowerCase() || null;
+    const origin = normalizeSignalOrigin(data?.origin);
+    const timeframe = data?.timeframe ? String(data.timeframe) : null;
+
+    await writeAuditLog({
+      action: 'webhook.received',
+      userId: null,
+      targetType: 'entry',
+      targetId: symbol || undefined,
+      metadata: {
+        source: 'tradingview',
+        jsonValid: true,
+        symbol: symbol || null,
+        type,
+        origin,
+        timeframe,
+        contentType: req.headers.get('content-type'),
+        rawBody: truncateRawBody(rawBody),
+      },
+      req,
+    });
+
+    await saveLatestWebhookStatus({
+      source: 'tradingview',
+      contentType: req.headers.get('content-type'),
+      jsonReceived: true,
+      jsonValid: true,
+      processingStatus: 'processing',
+      operationTriggered: false,
+      symbol: symbol || null,
+      type,
+      origin,
+      timeframe,
+      rawBody: truncateRawBody(rawBody),
+      responseStatus: 200,
+      reason: 'Webhook recibido y enviado a procesamiento interno.',
+    });
+
     waitUntil(
-      executeEntry(data, req, auth).catch(async (error: any) => {
-        try {
-          const symbol = bitgetNormalizeSymbol(data?.symbol || 'N/A');
-          const type = String(data?.type || 'N/A');
+      executeEntry(data, req, auth)
+        .then(async (response) => {
+          const payload = await extractJsonResponse(response);
+          const outcome = classifyWebhookOutcome(payload, response.status);
+
           await writeAuditLog({
-            action: 'entry.async_failed',
-            userId: auth?.user?.id,
+            action: 'webhook.processed',
+            userId: null,
             targetType: 'entry',
-            targetId: symbol,
+            targetId: symbol || undefined,
             metadata: {
               symbol,
               type,
-              detail: error?.message || 'unknown error',
-              requestBody: data,
+              origin,
+              timeframe,
+              jsonValid: true,
+              responseStatus: response.status,
+              processingStatus: outcome.processingStatus,
+              operationTriggered: outcome.operationTriggered,
+              reason: outcome.reason,
+              responsePayload: payload,
             },
             req,
           });
-          await saveLastEntryError(`Excepcion async entry: ${error?.message || 'unknown error'}`, symbol, type);
-        } catch {
-          return;
-        }
-      })
+
+          await saveLatestWebhookStatus({
+            source: 'tradingview',
+            contentType: req.headers.get('content-type'),
+            jsonReceived: true,
+            jsonValid: true,
+            processingStatus: outcome.processingStatus,
+            operationTriggered: outcome.operationTriggered,
+            symbol: symbol || null,
+            type,
+            origin,
+            timeframe,
+            rawBody: truncateRawBody(rawBody),
+            responseStatus: response.status,
+            reason: outcome.reason,
+            responsePayload: payload,
+          });
+        })
+        .catch(async (error: any) => {
+          try {
+            await writeAuditLog({
+              action: 'entry.async_failed',
+              userId: auth?.user?.id,
+              targetType: 'entry',
+              targetId: symbol || undefined,
+              metadata: {
+                symbol: symbol || null,
+                type,
+                origin,
+                timeframe,
+                detail: error?.message || 'unknown error',
+                requestBody: data,
+              },
+              req,
+            });
+            await saveLatestWebhookStatus({
+              source: 'tradingview',
+              contentType: req.headers.get('content-type'),
+              jsonReceived: true,
+              jsonValid: true,
+              processingStatus: 'failed',
+              operationTriggered: false,
+              symbol: symbol || null,
+              type,
+              origin,
+              timeframe,
+              rawBody: truncateRawBody(rawBody),
+              responseStatus: 200,
+              reason: error?.message || 'unknown error',
+            });
+            await saveLastEntryError(`Excepcion async entry: ${error?.message || 'unknown error'}`, symbol || 'N/A', type || 'N/A');
+          } catch {
+            return;
+          }
+        })
     );
 
     return NextResponse.json({

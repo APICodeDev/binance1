@@ -247,6 +247,7 @@ interface DashboardSettingsSnapshot {
   bot_enabled: string;
   custom_amount: string;
   last_entry_error: string;
+  last_webhook_status: string;
   trading_mode: 'demo' | 'live';
   leverage_enabled: string;
   leverage_value: string;
@@ -263,6 +264,21 @@ interface DashboardSnapshotPayload {
   totalPnl: number;
   mode: 'demo' | 'live';
   settings: DashboardSettingsSnapshot;
+}
+
+interface WebhookStatusSnapshot {
+  timestamp: string;
+  source?: string | null;
+  jsonReceived?: boolean;
+  jsonValid?: boolean;
+  processingStatus?: string | null;
+  operationTriggered?: boolean;
+  symbol?: string | null;
+  type?: string | null;
+  origin?: string | null;
+  timeframe?: string | null;
+  reason?: string | null;
+  rawBody?: string | null;
 }
 
 interface MonitorResponsePayload {
@@ -638,6 +654,7 @@ export default function Dashboard() {
   const [showSplash, setShowSplash] = useState(true);
   const [showEjectModal, setShowEjectModal] = useState<Position | null>(null);
   const [lastEntryError, setLastEntryError] = useState<{timestamp: string; symbol: string; type: string; detail: string} | null>(null);
+  const [lastWebhookStatus, setLastWebhookStatus] = useState<WebhookStatusSnapshot | null>(null);
   const [hiddenEntryErrorKey, setHiddenEntryErrorKey] = useState<string | null>(null);
   const [errorPopup, setErrorPopup] = useState<string | null>(null);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
@@ -935,6 +952,16 @@ export default function Dashboard() {
       setHiddenEntryErrorKey(null);
     }
 
+    if (settings.last_webhook_status) {
+      try {
+        setLastWebhookStatus(JSON.parse(settings.last_webhook_status));
+      } catch {
+        setLastWebhookStatus(null);
+      }
+    } else {
+      setLastWebhookStatus(null);
+    }
+
     setLastSyncAt(new Date().toISOString());
   }, []);
 
@@ -956,6 +983,7 @@ export default function Dashboard() {
           bot_enabled: settings.bot_enabled || '1',
           custom_amount: settings.custom_amount || '',
           last_entry_error: settings.last_entry_error || '',
+          last_webhook_status: settings.last_webhook_status || '',
           trading_mode: settings.trading_mode === 'live' ? 'live' : 'demo',
           leverage_enabled: settings.leverage_enabled || '0',
           leverage_value: settings.leverage_value || '1',
@@ -2318,6 +2346,43 @@ export default function Dashboard() {
                   </p>
                 </div>
               </button>
+            )}
+
+            {lastWebhookStatus && (
+              <div className="mb-4 rounded-xl border border-cyan-900/50 bg-cyan-950/20 px-4 py-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="mb-1 text-[11px] font-bold uppercase tracking-wider text-cyan-400">Ultimo webhook TradingView</p>
+                    <p className="text-xs leading-relaxed text-slate-200">
+                      {lastWebhookStatus.jsonValid === false
+                        ? 'JSON recibido pero mal formado.'
+                        : lastWebhookStatus.operationTriggered
+                        ? 'JSON recibido, valido y procesado con operacion.'
+                        : 'JSON recibido, validado y sin disparo de operacion.'}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-400 break-all">
+                      {lastWebhookStatus.reason || 'Sin detalle adicional'}
+                    </p>
+                  </div>
+                  <p className="text-[10px] text-cyan-300/80">
+                    {lastWebhookStatus.timestamp ? new Date(lastWebhookStatus.timestamp).toLocaleString() : ''}
+                  </p>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2 text-[10px] uppercase tracking-[0.18em] text-slate-400">
+                  <span>estado: {lastWebhookStatus.processingStatus || 'unknown'}</span>
+                  <span>json: {lastWebhookStatus.jsonValid ? 'ok' : 'invalid'}</span>
+                  <span>operacion: {lastWebhookStatus.operationTriggered ? 'si' : 'no'}</span>
+                  {lastWebhookStatus.symbol && <span>symbol: {lastWebhookStatus.symbol}</span>}
+                  {lastWebhookStatus.type && <span>tipo: {lastWebhookStatus.type}</span>}
+                  {lastWebhookStatus.origin && <span>origen: {lastWebhookStatus.origin}</span>}
+                  {lastWebhookStatus.timeframe && <span>tf: {lastWebhookStatus.timeframe}</span>}
+                </div>
+                {lastWebhookStatus.rawBody && (
+                  <pre className="mt-3 overflow-x-auto rounded-lg border border-slate-800 bg-slate-950/50 p-3 text-[11px] leading-relaxed text-slate-300 whitespace-pre-wrap">
+                    {lastWebhookStatus.rawBody}
+                  </pre>
+                )}
+              </div>
             )}
 
             <div className="flex flex-col gap-3 mb-6 sm:flex-row sm:items-center sm:justify-between">

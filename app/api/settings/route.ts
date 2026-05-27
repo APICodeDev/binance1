@@ -15,6 +15,7 @@ export async function GET(req: NextRequest) {
   const botEnabled = await prisma.setting.findUnique({ where: { key: 'bot_enabled' } });
   const customAmount = await prisma.setting.findUnique({ where: { key: 'custom_amount' } });
   const lastEntryError = await prisma.setting.findUnique({ where: { key: 'last_entry_error' } });
+  const lastWebhookStatus = await prisma.setting.findUnique({ where: { key: 'last_webhook_status' } });
   const tradingMode = await prisma.setting.findUnique({ where: { key: 'trading_mode' } });
   const leverageEnabled = await prisma.setting.findUnique({ where: { key: 'leverage_enabled' } });
   const leverageValue = await prisma.setting.findUnique({ where: { key: 'leverage_value' } });
@@ -28,6 +29,7 @@ export async function GET(req: NextRequest) {
     bot_enabled: botEnabled?.value || '1',
     custom_amount: customAmount?.value || '',
     last_entry_error: lastEntryError?.value || '',
+    last_webhook_status: lastWebhookStatus?.value || '',
     trading_mode: tradingMode?.value || 'demo',
     leverage_enabled: leverageEnabled?.value || '0',
     leverage_value: leverageValue?.value || '1',
