@@ -1090,12 +1090,12 @@ async function executeEntry(
     const normalizedRequestedTakeProfit = takeProfitResolution.normalizedRequestedTakeProfit;
     const isRequestedTakeProfitValid = takeProfitResolution.isRequestedTakeProfitValid;
     const stopPrice = stratManaged
-      ? legacyStopPrice
+      ? (isRequestedStopValid ? normalizedRequestedStop : legacyStopPrice)
       : managementMode === 'self'
         ? normalizedRequestedStop
         : (apiStopMode === 'legacy' ? legacyStopPrice : (isRequestedStopValid ? normalizedRequestedStop : legacyStopPrice));
     const takeProfitPrice = stratManaged
-      ? null
+      ? (isRequestedTakeProfitValid ? normalizedRequestedTakeProfit : null)
       : (isRequestedTakeProfitValid ? normalizedRequestedTakeProfit : null);
     const slSide = positionContext.closeSide;
     const holdSide = positionContext.holdSide;
@@ -1127,7 +1127,7 @@ async function executeEntry(
     }
 
     const shouldPlaceInitialStop = stopPrice !== null;
-    const shouldPlaceInitialTakeProfit = !stratManaged && takeProfitPrice !== null;
+    const shouldPlaceInitialTakeProfit = takeProfitPrice !== null;
     let slResponse: any = null;
     let tpResponse: any = null;
     let initialStopAttempts = 0;
@@ -1255,7 +1255,7 @@ async function executeEntry(
         computedStopPriceFromOffset,
         resolvedRequestedStopPrice,
         normalizedRequestedStop,
-        requestedStopAccepted: stratManaged ? false : isRequestedStopValid,
+        requestedStopAccepted: isRequestedStopValid,
         legacyStopPrice,
         appliedStopPrice: stopPrice,
         initialStopOrderPlaced: shouldPlaceInitialStop,
@@ -1265,7 +1265,7 @@ async function executeEntry(
         computedTakeProfitPriceFromPercent,
         resolvedRequestedTakeProfitPrice,
         normalizedRequestedTakeProfit,
-        requestedTakeProfitAccepted: stratManaged ? false : isRequestedTakeProfitValid,
+        requestedTakeProfitAccepted: isRequestedTakeProfitValid,
         appliedTakeProfitPrice: persistedTakeProfitPrice,
         initialTakeProfitOrderPlaced: shouldPlaceInitialTakeProfit && !initialTakeProfitPending && bitgetOrderSuccess(tpResponse),
         initialTakeProfitPending,
@@ -1339,7 +1339,7 @@ async function executeEntry(
       },
       stop: {
         mode: stratManaged
-          ? 'legacy'
+          ? (isRequestedStopValid ? stopInputSource : 'legacy')
           : managementMode === 'self'
           ? stopInputSource
           : (apiStopMode === 'legacy' ? 'legacy' : (isRequestedStopValid ? stopInputSource : 'legacy')),
@@ -1347,7 +1347,7 @@ async function executeEntry(
         requestedPercent: requestedStopPercent,
         requestedOffset: requestedStopOffset,
         resolved: resolvedRequestedStopPrice,
-        accepted: stratManaged ? false : isRequestedStopValid,
+        accepted: isRequestedStopValid,
         applied: stopPrice,
         fallback: legacyStopPrice,
         orderPlaced: shouldPlaceInitialStop,
@@ -1356,7 +1356,7 @@ async function executeEntry(
         requested: requestedTakeProfitPrice,
         requestedPercent: requestedTakeProfitPercent,
         resolved: resolvedRequestedTakeProfitPrice,
-        accepted: stratManaged ? false : isRequestedTakeProfitValid,
+        accepted: isRequestedTakeProfitValid,
         applied: persistedTakeProfitPrice,
         orderPlaced: shouldPlaceInitialTakeProfit && !initialTakeProfitPending && bitgetOrderSuccess(tpResponse),
         pending: initialTakeProfitPending,

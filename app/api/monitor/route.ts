@@ -423,7 +423,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
         }
       }
 
-      if (fixedManaged) {
+      if (fixedManaged || stratManaged) {
         if (currentPrice <= newSl) {
           stopLossTriggered = true;
         } else if (hasTakeProfit && currentPrice >= takeProfit) {
@@ -476,7 +476,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
         }
       }
 
-      if (fixedManaged) {
+      if (fixedManaged || stratManaged) {
         if (currentPrice >= newSl) {
           stopLossTriggered = true;
         } else if (hasTakeProfit && currentPrice <= takeProfit) {
