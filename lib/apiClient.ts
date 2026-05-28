@@ -143,6 +143,11 @@ export const apiClient = {
       method: 'POST',
       body: JSON.stringify({ id }),
     }),
+  updateStratPositionControls: (id: number, payload: { stratBreakEvenEnabled?: boolean; stratTrailingEnabled?: boolean }) =>
+    request<any>('/api/positions/strat-controls', {
+      method: 'POST',
+      body: JSON.stringify({ id, ...payload }),
+    }),
   emergencyClose: () =>
     request<any>('/api/emergency', {
       method: 'POST',

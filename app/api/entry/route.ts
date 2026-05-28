@@ -25,6 +25,7 @@ import {
   bitgetGetMergeDepth,
   bitgetGetOrderDetail,
   bitgetGetOrderFills,
+  bitgetGetPendingStopOrders,
   bitgetGetPendingTpslOrders,
   bitgetGetPositionMode,
   bitgetGetPrice,
@@ -56,6 +57,7 @@ const WEBHOOK_STATUS_SETTING_KEY = 'last_webhook_status';
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const createClientOid = (symbol: string) =>
   `bgd-${symbol.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const PROTECTION_VERIFICATION_DELAYS_MS = [250, 700, 1300];
 
 const summarizeBitgetResponse = (resp: any) => {
   if (resp === undefined || resp === null) {
@@ -207,6 +209,59 @@ async function hasBitgetOpenPosition(symbol: string, tradingMode: TradingMode) {
   }
 
   return snapshot.positions.some((position: any) => position.symbol && parseFloat(position.positionAmt) !== 0);
+}
+
+function isPriceMatch(actual: number, expected: number, precision = 4) {
+  const tick = Math.pow(10, -Math.max(0, precision));
+  return Math.abs(actual - expected) <= Math.max(tick * 1.5, 1e-8);
+}
+
+function isQuantityMatch(actual: number, expected: number) {
+  return Math.abs(actual - expected) <= Math.max(0.000001, Math.abs(expected) * 0.02);
+}
+
+async function verifyProtectionOrder(params: {
+  kind: 'stop' | 'takeProfit';
+  symbol: string;
+  tradingMode: TradingMode;
+  expectedTriggerPrice: number;
+  expectedSize: number;
+  pricePrecision: number;
+}) {
+  const { kind, symbol, tradingMode, expectedTriggerPrice, expectedSize, pricePrecision } = params;
+  const matcher = (order: any) => {
+    const triggerPrice = Number.parseFloat(String(order?.triggerPrice || order?.planTriggerPrice || '0'));
+    const size = Number.parseFloat(String(order?.size || order?.sz || '0'));
+    const planType = String(order?.planType || '').toLowerCase();
+    const planMatches = kind === 'stop'
+      ? planType === 'normal_plan'
+      : planType.includes('profit');
+    return planMatches &&
+      Number.isFinite(triggerPrice) &&
+      isPriceMatch(triggerPrice, expectedTriggerPrice, pricePrecision) &&
+      (!Number.isFinite(size) || size <= 0 || isQuantityMatch(size, expectedSize));
+  };
+
+  for (const delayMs of PROTECTION_VERIFICATION_DELAYS_MS) {
+    if (delayMs > 0) {
+      await sleep(delayMs);
+    }
+
+    const pending = kind === 'stop'
+      ? await bitgetGetPendingStopOrders(symbol, tradingMode)
+      : await bitgetGetPendingTpslOrders(symbol, tradingMode);
+
+    if (!pending.ok) {
+      continue;
+    }
+
+    const matchedOrder = pending.orders.find(matcher);
+    if (matchedOrder) {
+      return { ok: true, order: matchedOrder };
+    }
+  }
+
+  return { ok: false };
 }
 
 async function placeProtectionOrderWithRetries(params: {
@@ -1157,6 +1212,25 @@ async function executeEntry(
       return NextResponse.json({ error: true, message: errDetail, detail: slResponse }, { status: 500 });
     }
 
+    if (stratManaged && shouldPlaceInitialStop) {
+      const verifiedStop = await verifyProtectionOrder({
+        kind: 'stop',
+        symbol,
+        tradingMode,
+        expectedTriggerPrice: stopPrice!,
+        expectedSize: filledSize,
+        pricePrecision,
+      });
+
+      if (!verifiedStop.ok) {
+        await bitgetCancelAllOrders(symbol, tradingMode);
+        await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
+        const errDetail = `SL no quedo verificado en Bitget (${tradingMode}) para ${symbol} en el precio ${stopPrice}. Rollback ejecutado.`;
+        await saveLastEntryError(errDetail, symbol, type);
+        return NextResponse.json({ error: true, message: errDetail, detail: slResponse }, { status: 500 });
+      }
+    }
+
     if (shouldPlaceInitialTakeProfit) {
       const takeProfitPlacement = await placeProtectionOrderWithRetries({
         kind: 'takeProfit',
@@ -1184,6 +1258,25 @@ async function executeEntry(
         `${summarizeBitgetResponse(tpResponse)}. Intentos=${initialTakeProfitAttempts || 1}. Rollback ejecutado.`;
       await saveLastEntryError(errDetail, symbol, type);
       return NextResponse.json({ error: true, message: errDetail, detail: tpResponse }, { status: 500 });
+    }
+
+    if (stratManaged && shouldPlaceInitialTakeProfit) {
+      const verifiedTakeProfit = await verifyProtectionOrder({
+        kind: 'takeProfit',
+        symbol,
+        tradingMode,
+        expectedTriggerPrice: takeProfitPrice!,
+        expectedSize: filledSize,
+        pricePrecision,
+      });
+
+      if (!verifiedTakeProfit.ok) {
+        await bitgetCancelAllOrders(symbol, tradingMode);
+        await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
+        const errDetail = `TP no quedo verificado en Bitget (${tradingMode}) para ${symbol} en el precio ${takeProfitPrice}. Rollback ejecutado.`;
+        await saveLastEntryError(errDetail, symbol, type);
+        return NextResponse.json({ error: true, message: errDetail, detail: tpResponse }, { status: 500 });
+      }
     }
 
     if (initialTakeProfitPending) {

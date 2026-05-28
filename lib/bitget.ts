@@ -13,6 +13,8 @@ const BASE_URL = 'https://api.bitget.com';
 const WS_SERVICE_URL = (process.env.BITGET_WS_SERVICE_URL || 'http://127.0.0.1:8787').replace(/\/$/, '');
 const DEFAULT_TAKER_FEE = 0.0006;
 const DEFAULT_MAKER_FEE = 0.0002;
+const PROTECTION_VERIFY_DELAYS_MS = [200, 500, 1000];
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const parseFeeRate = (value?: string) => {
   const parsed = Number.parseFloat(String(value || '').trim());
@@ -766,6 +768,109 @@ export const bitgetGetPendingStopOrders = async (symbol: string, tradingMode: 'd
     orders: Array.isArray(resp?.data?.entrustedList) ? resp.data.entrustedList : [],
     error: null,
   };
+};
+
+const bitgetPriceMatches = (left: number, right: number) => {
+  return Math.abs(left - right) <= Math.max(1e-8, Math.abs(right) * 0.000001);
+};
+
+const bitgetSizeMatches = (left: number, right: number) => {
+  return Math.abs(left - right) <= Math.max(0.000001, Math.abs(right) * 0.02);
+};
+
+export const bitgetVerifyPendingStopOrder = async (
+  symbol: string,
+  expectedTriggerPrice: number,
+  expectedSize: number,
+  tradingMode: 'demo' | 'live' = 'demo'
+) => {
+  const pending = await bitgetGetPendingStopOrders(symbol, tradingMode);
+  if (!pending.ok) {
+    return { ok: false, verified: false, message: pending.error || 'Unable to fetch pending stop orders', order: null };
+  }
+
+  const matched = pending.orders.find((order: any) => {
+    if (String(order?.planType || '').toLowerCase() !== 'normal_plan') {
+      return false;
+    }
+
+    const triggerPrice = Number.parseFloat(String(order?.triggerPrice || order?.planTriggerPrice || '0'));
+    const size = Number.parseFloat(String(order?.size || order?.sz || '0'));
+    return Number.isFinite(triggerPrice) &&
+      bitgetPriceMatches(triggerPrice, expectedTriggerPrice) &&
+      (!Number.isFinite(size) || size <= 0 || bitgetSizeMatches(size, expectedSize));
+  }) || null;
+
+  return {
+    ok: true,
+    verified: Boolean(matched),
+    message: matched ? 'verified' : 'matching stop order not found',
+    order: matched,
+  };
+};
+
+export const bitgetEnsureVerifiedStopOrder = async (params: {
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  stopPrice: number;
+  quantity: number;
+  tradingMode: 'demo' | 'live';
+  tradeSide?: 'open' | 'close';
+}) => {
+  const { symbol, side, stopPrice, quantity, tradingMode, tradeSide } = params;
+  const pending = await bitgetGetPendingStopOrders(symbol, tradingMode);
+  if (!pending.ok) {
+    return { ok: false, message: pending.error || 'Unable to fetch pending stop orders before sync' };
+  }
+
+  const stopOrders = pending.orders.filter((order: any) => String(order?.planType || '').toLowerCase() === 'normal_plan');
+  const primary = stopOrders[0];
+  const extras = stopOrders.slice(1).map((order: any) => order.orderId).filter(Boolean);
+
+  if (extras.length > 0) {
+    await bitgetCancelPlanOrdersByIds(symbol, extras, tradingMode);
+  }
+
+  let action: 'unchanged' | 'modified' | 'placed' = 'placed';
+
+  if (primary?.orderId) {
+    const currentTriggerPrice = Number.parseFloat(String(primary.triggerPrice || primary.planTriggerPrice || '0'));
+    const currentSize = Number.parseFloat(String(primary.size || primary.sz || '0'));
+    if (Number.isFinite(currentTriggerPrice) &&
+      bitgetPriceMatches(currentTriggerPrice, stopPrice) &&
+      (!Number.isFinite(currentSize) || currentSize <= 0 || bitgetSizeMatches(currentSize, quantity))) {
+      action = 'unchanged';
+    } else {
+      const modifyResp = await bitgetModifyStopOrder(symbol, primary.orderId, stopPrice, tradingMode);
+      if (!bitgetOrderSuccess(modifyResp)) {
+        await bitgetCancelAlgoOrders(symbol, tradingMode);
+        const placeResp = await bitgetPlaceStopMarket(symbol, side, stopPrice, quantity, tradingMode, tradeSide);
+        if (!bitgetOrderSuccess(placeResp)) {
+          return { ok: false, message: placeResp?.msg || placeResp?.message || JSON.stringify(placeResp) };
+        }
+        action = 'placed';
+      } else {
+        action = 'modified';
+      }
+    }
+  } else {
+    await bitgetCancelAlgoOrders(symbol, tradingMode);
+    const placeResp = await bitgetPlaceStopMarket(symbol, side, stopPrice, quantity, tradingMode, tradeSide);
+    if (!bitgetOrderSuccess(placeResp)) {
+      return { ok: false, message: placeResp?.msg || placeResp?.message || JSON.stringify(placeResp) };
+    }
+    action = 'placed';
+  }
+
+  for (const delayMs of PROTECTION_VERIFY_DELAYS_MS) {
+    await sleep(delayMs);
+    const verification = await bitgetVerifyPendingStopOrder(symbol, stopPrice, quantity, tradingMode);
+    if (verification.ok && verification.verified) {
+      return { ok: true, message: action, order: verification.order };
+    }
+  }
+
+  return { ok: false, message: `Stop order could not be verified at ${stopPrice}` };
 };
 
 export const bitgetGetPendingTpslOrders = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo') => {

@@ -101,6 +101,8 @@ interface Position {
   requestedTakeProfitPercent?: number | null;
   requestedTakeProfitInputSource?: string | null;
   takeProfitTargetPercent?: number | null;
+  stratBreakEvenEnabled?: boolean;
+  stratTrailingEnabled?: boolean;
 }
 
 interface AuthUser {
@@ -1410,6 +1412,22 @@ export default function Dashboard() {
     setShowEjectModal(pos);
   };
 
+  const updateStratControls = async (
+    pos: Position,
+    payload: { stratBreakEvenEnabled?: boolean; stratTrailingEnabled?: boolean }
+  ) => {
+    try {
+      const response = await apiClient.updateStratPositionControls(pos.id, payload);
+      if (response?.message) {
+        setTokenMessage(String(response.message));
+      }
+      await fetchData(true, tradingMode);
+    } catch (error) {
+      setErrorPopup(getApiErrorMessage(error, 'No se pudo actualizar la gestion strat.'));
+      throw error;
+    }
+  };
+
   const confirmManualEject = async () => {
     if (!showEjectModal) return;
     const { id } = showEjectModal;
@@ -2410,7 +2428,7 @@ export default function Dashboard() {
                   </motion.div>
                 ) : (
                   openPositions?.map((pos) => (
-                    <PositionCard key={pos.id} pos={pos} onEject={manualEject} />
+                    <PositionCard key={pos.id} pos={pos} onEject={manualEject} onUpdateStratControls={updateStratControls} />
                   ))
                 )}
               </AnimatePresence>
@@ -2930,11 +2948,22 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
   );
 }
 
-function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position) => void }) {
+function PositionCard({
+  pos,
+  onEject,
+  onUpdateStratControls,
+}: {
+  pos: Position,
+  onEject: (pos: Position) => void,
+  onUpdateStratControls: (pos: Position, payload: { stratBreakEvenEnabled?: boolean; stratTrailingEnabled?: boolean }) => Promise<void>,
+}) {
+  const [controlBusy, setControlBusy] = useState<'breakeven' | 'trailing' | null>(null);
   const isBuy = pos.positionType === 'buy';
   const managementMode = normalizeManagementMode(pos.managementMode);
   const managementModeLabel = formatManagementModeLabel(pos.managementMode);
   const stratManaged = managementMode === 'strat';
+  const stratBreakEvenEnabled = Boolean(pos.stratBreakEvenEnabled);
+  const stratTrailingEnabled = Boolean(pos.stratTrailingEnabled);
   const comm = pos.commission ?? 0.0006;
   const LEGACY_STOP_PERCENT = 1.2;
   const entryCost = pos.entryPrice * pos.quantity * comm;
@@ -3063,8 +3092,61 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
       </div>
 
       {stratManaged && (
-        <div className="rounded-2xl border border-amber-400/20 bg-amber-500/10 px-4 py-3 text-[11px] font-black uppercase tracking-[0.18em] text-amber-300">
-          Strat mode: SL legacy fijo, sin trailing y sin TP automatico.
+        <div className="space-y-3 rounded-2xl border border-amber-400/20 bg-amber-500/10 px-4 py-3">
+          <div className="text-[11px] font-black uppercase tracking-[0.18em] text-amber-300">
+            Strat mode: salida por SL o TP. Trailing SELF opcional por operacion.
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <button
+              type="button"
+              disabled={controlBusy !== null}
+              onClick={async () => {
+                setControlBusy('breakeven');
+                try {
+                  await onUpdateStratControls(pos, { stratBreakEvenEnabled: !stratBreakEvenEnabled });
+                } finally {
+                  setControlBusy(null);
+                }
+              }}
+              className={cn(
+                "flex-1 rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] transition-colors",
+                stratBreakEvenEnabled
+                  ? "border-emerald-400/40 bg-emerald-500/15 text-emerald-300"
+                  : "border-slate-700 bg-slate-950/50 text-slate-400 hover:border-emerald-400/30 hover:text-emerald-300",
+                controlBusy !== null && "cursor-wait opacity-60"
+              )}
+            >
+              {controlBusy === 'breakeven' ? 'Syncing...' : stratBreakEvenEnabled ? 'Breakeven On' : 'Breakeven Off'}
+            </button>
+            <button
+              type="button"
+              disabled={controlBusy !== null}
+              onClick={async () => {
+                setControlBusy('trailing');
+                try {
+                  await onUpdateStratControls(pos, { stratTrailingEnabled: !stratTrailingEnabled });
+                } finally {
+                  setControlBusy(null);
+                }
+              }}
+              className={cn(
+                "flex-1 rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] transition-colors",
+                stratTrailingEnabled
+                  ? "border-cyan-400/40 bg-cyan-500/15 text-cyan-300"
+                  : "border-slate-700 bg-slate-950/50 text-slate-400 hover:border-cyan-400/30 hover:text-cyan-300",
+                controlBusy !== null && "cursor-wait opacity-60"
+              )}
+            >
+              {controlBusy === 'trailing' ? 'Syncing...' : stratTrailingEnabled ? 'Trailing On' : 'Trailing Off'}
+            </button>
+          </div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400">
+            {stratTrailingEnabled
+              ? 'Trailing activo con logica SELF: breakeven+fees y trailing por escalones.'
+              : stratBreakEvenEnabled
+                ? 'Breakeven activo: movera el SL a entry+fees al llegar al umbral.'
+                : 'Sin breakeven ni trailing manuales en esta operacion.'}
+          </p>
         </div>
       )}
 
@@ -3090,9 +3172,15 @@ function PositionCard({ pos, onEject }: { pos: Position, onEject: (pos: Position
             {stopDistancePercent > 0 ? '+' : ''}{stopDistancePercent.toFixed(2)}% vs entry
           </p>
           <p className={cn("text-[10px] font-black uppercase tracking-[0.18em]", stopAdjustedByApp ? "text-cyan-300" : "text-slate-600")}>
-            {stratManaged ? 'Legacy 1.2% Fixed For Strat' : (stopAdjustedByApp ? 'Adapted By App' : 'Legacy 1.2% Default')}
+            {stratManaged
+              ? (stratTrailingEnabled
+                  ? 'Strat + SELF Trailing'
+                  : stratBreakEvenEnabled
+                    ? 'Strat + BreakEven'
+                    : 'Strat Fixed SL/TP')
+              : (stopAdjustedByApp ? 'Adapted By App' : 'Legacy 1.2% Default')}
           </p>
-          {!stratManaged && typeof pos.takeProfit === 'number' && pos.takeProfit > 0 && (
+          {typeof pos.takeProfit === 'number' && pos.takeProfit > 0 && (
             <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-300">
               TP {formatPrice(pos.takeProfit, pos.pricePrecision)}
             </p>

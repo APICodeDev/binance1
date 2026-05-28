@@ -17,6 +17,7 @@ import {
   bitgetGetSinglePosition,
   bitgetCancelAllOrders, 
   bitgetCancelAlgoOrders,
+  bitgetEnsureVerifiedStopOrder,
   bitgetGetPendingStopOrders,
   bitgetGetRecentCandleRange,
   bitgetModifyStopOrder,
@@ -157,38 +158,14 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     mode: 'demo' | 'live',
     tradeSide?: 'open' | 'close'
   ) => {
-    const pending = await bitgetGetPendingStopOrders(symbol, mode);
-    if (!pending.ok) {
-      return { ok: false, message: pending.error || 'Unable to fetch pending stop orders' };
-    }
-
-    const stopOrders = pending.orders.filter((order: any) => order.planType === 'normal_plan');
-    const primary = stopOrders[0];
-    const extras = stopOrders.slice(1).map((order: any) => order.orderId).filter(Boolean);
-
-    if (extras.length > 0) {
-      await bitgetCancelPlanOrdersByIds(symbol, extras, mode);
-    }
-
-    if (primary?.orderId) {
-      const currentTriggerPrice = Number.parseFloat(String(primary.triggerPrice || ''));
-      if (Number.isFinite(currentTriggerPrice) && Math.abs(currentTriggerPrice - stopPrice) < Math.max(1e-8, stopPrice * 0.000001)) {
-        return { ok: true, message: 'unchanged' };
-      }
-
-      const modifyResp = await bitgetModifyStopOrder(symbol, primary.orderId, stopPrice, mode);
-      if (bitgetOrderSuccess(modifyResp)) {
-        return { ok: true, message: 'modified' };
-      }
-    }
-
-    await bitgetCancelAlgoOrders(symbol, mode);
-    const placeResp = await bitgetPlaceStopMarket(symbol, side, stopPrice, quantity, mode, tradeSide);
-    if (bitgetOrderSuccess(placeResp)) {
-      return { ok: true, message: 'placed' };
-    }
-
-    return { ok: false, message: placeResp?.msg || placeResp?.message || JSON.stringify(placeResp) };
+    return bitgetEnsureVerifiedStopOrder({
+      symbol,
+      side,
+      stopPrice,
+      quantity,
+      tradingMode: mode,
+      tradeSide,
+    });
   };
 
   const getSelfManagedTrailingStep = (marketMovePercent: number) => {
@@ -206,6 +183,11 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     const fixedManaged = isFixedPriceManagementMode((pos as any).managementMode);
     const selfManaged = managementMode === 'self';
     const stratManaged = managementMode === 'strat';
+    const stratBreakEvenEnabled = Boolean((pos as any).stratBreakEvenEnabled);
+    const stratTrailingEnabled = Boolean((pos as any).stratTrailingEnabled);
+    const stratSelfLogicEnabled = stratManaged && stratTrailingEnabled;
+    const stratBreakEvenOnlyEnabled = stratManaged && stratBreakEvenEnabled && !stratTrailingEnabled;
+    const effectiveSelfManaged = selfManaged || stratSelfLogicEnabled;
     const autoManaged = managementMode === 'auto';
     const realMap = mode === 'live' ? liveMap : demoMap;
     const snapshot = mode === 'live' ? realLive : realDemo;
@@ -367,7 +349,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       );
     }
 
-    if (!selfManaged) {
+    if (!effectiveSelfManaged) {
       const ensuredStopResp = await syncStopOrder(
         symbol,
         positionContext.closeSide,
@@ -387,7 +369,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     if (!exhaustionTriggered && pos.positionType === 'buy') {
       if (autoManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice >= takeProfit) {
         takeProfitTriggered = true;
-      } else if (selfManaged) {
+      } else if (effectiveSelfManaged) {
         const trailingStep = getSelfManagedTrailingStep(marketMovePercent);
         if (trailingStep !== null) {
           const targetSlPrice = pos.entryPrice * (1 + (trailingStep / 100));
@@ -406,6 +388,17 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
               newSl = targetSlPrice;
               results.push(`SL_UPDATE (${mode}): ${symbol} -> breakeven+fees`);
             }
+          }
+        }
+      } else if (stratBreakEvenOnlyEnabled && marketMovePercent >= 0.5) {
+        const targetSlPrice = pos.entryPrice * (1 + entryComm) / (1 - comm);
+        if (targetSlPrice > pos.stopLoss) {
+          const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
+          if (slResp.ok) {
+            newSl = targetSlPrice;
+            results.push(`SL_UPDATE (${mode}): ${symbol} strat breakeven -> ${targetSlPrice}`);
+          } else {
+            results.push(`SL_SYNC_WARNING (${mode}): ${symbol} strat breakeven -> ${slResp.message}`);
           }
         }
       } else if (autoManaged && marketMovePercent >= 1) {
@@ -442,7 +435,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     } else if (!exhaustionTriggered) { // short
       if (autoManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice <= takeProfit) {
         takeProfitTriggered = true;
-      } else if (selfManaged) {
+      } else if (effectiveSelfManaged) {
         const trailingStep = getSelfManagedTrailingStep(marketMovePercent);
         if (trailingStep !== null) {
           const targetSlPrice = pos.entryPrice * (1 - (trailingStep / 100));
@@ -461,6 +454,17 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
               newSl = targetSlPrice;
               results.push(`SL_UPDATE (${mode}): ${symbol} -> breakeven+fees`);
             }
+          }
+        }
+      } else if (stratBreakEvenOnlyEnabled && marketMovePercent >= 0.5) {
+        const targetSlPrice = pos.entryPrice * (1 - entryComm) / (1 + comm);
+        if (targetSlPrice < pos.stopLoss) {
+          const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
+          if (slResp.ok) {
+            newSl = targetSlPrice;
+            results.push(`SL_UPDATE (${mode}): ${symbol} strat breakeven -> ${targetSlPrice}`);
+          } else {
+            results.push(`SL_SYNC_WARNING (${mode}): ${symbol} strat breakeven -> ${slResp.message}`);
           }
         }
       } else if (autoManaged && marketMovePercent >= 1) {
@@ -601,7 +605,12 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       });
       results.push(
         stratManaged
-          ? `OK_STRAT (${mode}): #${pos.id} ${symbol} | Price: ${currentPrice} | PnL: ${profitPercent.toFixed(2)}% | SL fijo sin trailing`
+          ? `OK_STRAT (${mode}): #${pos.id} ${symbol} | Price: ${currentPrice} | PnL: ${profitPercent.toFixed(2)}% | ` +
+            (stratTrailingEnabled
+              ? 'Trailing SELF activo'
+              : stratBreakEvenEnabled
+                ? 'Breakeven activo'
+                : 'SL/TP fijos')
           : `OK (${mode}): #${pos.id} ${symbol} | Price: ${currentPrice} | PnL: ${profitPercent.toFixed(2)}%`
       );
     }
