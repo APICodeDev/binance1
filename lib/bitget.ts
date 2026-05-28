@@ -636,6 +636,50 @@ export const bitgetGetMergeDepth = async (symbol: string, tradingMode: 'demo' | 
   };
 };
 
+export const bitgetGetRecentCandleRange = async (
+  symbol: string,
+  tradingMode: 'demo' | 'live' = 'demo',
+  limit = 5
+) => {
+  const sym = symbol.toUpperCase();
+  const resp = await bitgetRequest('/api/v2/mix/market/history-candles', {
+    symbol: sym,
+    productType: getProductType(sym),
+    granularity: '1m',
+    limit: String(limit),
+  }, 'GET', false, tradingMode);
+
+  if (!resp || resp.code !== '00000' || !Array.isArray(resp.data)) {
+    return { ok: false, error: resp?.msg || resp?.message || 'history-candles failed' };
+  }
+
+  const candles = resp.data
+    .map((row: any[]) => ({
+      ts: Number.parseInt(String(row?.[0] || '0'), 10),
+      high: Number.parseFloat(String(row?.[2] || '0')),
+      low: Number.parseFloat(String(row?.[3] || '0')),
+    }))
+    .filter((candle: any) =>
+      Number.isFinite(candle.ts) &&
+      Number.isFinite(candle.high) &&
+      Number.isFinite(candle.low) &&
+      candle.high > 0 &&
+      candle.low > 0
+    );
+
+  if (candles.length === 0) {
+    return { ok: false, error: 'No candle data available' };
+  }
+
+  return {
+    ok: true,
+    high: Math.max(...candles.map((candle: any) => candle.high)),
+    low: Math.min(...candles.map((candle: any) => candle.low)),
+    candles,
+    error: null,
+  };
+};
+
 export const bitgetGetWsBestBidAsk = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo') => {
   const sym = symbol.toUpperCase();
 

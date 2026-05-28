@@ -18,6 +18,7 @@ import {
   bitgetCancelAllOrders, 
   bitgetCancelAlgoOrders,
   bitgetGetPendingStopOrders,
+  bitgetGetRecentCandleRange,
   bitgetModifyStopOrder,
   bitgetCancelPlanOrdersByIds,
   bitgetOrderSuccess, 
@@ -293,6 +294,12 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       results.push(`ERROR: Failed to fetch price for ${symbol} in ${mode}.`);
       continue;
     }
+    const positionAgeMs = Date.now() - new Date(pos.createdAt).getTime();
+    const recentRange = (fixedManaged || stratManaged) && positionAgeMs >= 2 * 60 * 1000
+      ? await bitgetGetRecentCandleRange(symbol, mode, 5).catch(() => ({ ok: false as const, error: 'Recent candle fetch failed' }))
+      : { ok: false as const, error: 'Recent candle fallback skipped' };
+    const recentHigh: number | null = recentRange.ok ? (recentRange.high ?? null) : null;
+    const recentLow: number | null = recentRange.ok ? (recentRange.low ?? null) : null;
 
     const comm = await bitgetGetCommissionRate(symbol, mode);
     const entryComm = (pos as any).commission ?? comm;
@@ -424,9 +431,11 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       }
 
       if (fixedManaged || stratManaged) {
-        if (currentPrice <= newSl) {
+        const stopTouched = currentPrice <= newSl || (recentLow !== null && recentLow <= newSl);
+        const takeProfitTouched = hasTakeProfit && (currentPrice >= takeProfit || (recentHigh !== null && recentHigh >= takeProfit));
+        if (stopTouched) {
           stopLossTriggered = true;
-        } else if (hasTakeProfit && currentPrice >= takeProfit) {
+        } else if (takeProfitTouched) {
           takeProfitTriggered = true;
         }
       }
@@ -477,9 +486,11 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       }
 
       if (fixedManaged || stratManaged) {
-        if (currentPrice >= newSl) {
+        const stopTouched = currentPrice >= newSl || (recentHigh !== null && recentHigh >= newSl);
+        const takeProfitTouched = hasTakeProfit && (currentPrice <= takeProfit || (recentLow !== null && recentLow <= takeProfit));
+        if (stopTouched) {
           stopLossTriggered = true;
-        } else if (hasTakeProfit && currentPrice <= takeProfit) {
+        } else if (takeProfitTouched) {
           takeProfitTriggered = true;
         }
       }
