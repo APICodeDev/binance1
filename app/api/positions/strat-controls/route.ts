@@ -8,6 +8,7 @@ import { prisma } from '@/lib/db';
 import { normalizePositionManagementMode } from '@/lib/positions';
 import {
   bitgetBuildPositionContext,
+  bitgetCancelVerifiedTakeProfitOrders,
   bitgetEnsureVerifiedStopOrder,
   bitgetGetCommissionRate,
   bitgetGetPositionMode,
@@ -58,9 +59,23 @@ export async function POST(req: NextRequest) {
 
   const tradingMode = ((position as any).tradingMode || 'demo') as 'demo' | 'live';
   const symbol = position.symbol.toUpperCase();
+  const trailingJustEnabled = nextTrailingEnabled && !Boolean((position as any).stratTrailingEnabled);
 
   let updatedStopLoss = position.stopLoss;
+  let updatedTakeProfit = position.takeProfit;
   let immediateSyncMessage: string | null = null;
+
+  if (trailingJustEnabled) {
+    const tpCancelResult = await bitgetCancelVerifiedTakeProfitOrders(symbol, tradingMode);
+    if (!tpCancelResult.ok) {
+      return fail(500, `Unable to remove take profit on Bitget for ${symbol}`, tpCancelResult.message);
+    }
+
+    updatedTakeProfit = null;
+    immediateSyncMessage = tpCancelResult.message === 'already-empty'
+      ? 'Trailing enabled. No active TP remained in Bitget.'
+      : 'Trailing enabled. TP removed from Bitget.';
+  }
 
   if (nextBreakEvenEnabled || nextTrailingEnabled) {
     const [currentPrice, exitCommission, positionMode] = await Promise.all([
@@ -114,7 +129,9 @@ export async function POST(req: NextRequest) {
         }
 
         updatedStopLoss = candidateStop;
-        immediateSyncMessage = syncResult.message;
+        immediateSyncMessage = trailingJustEnabled
+          ? `${immediateSyncMessage || 'Trailing enabled'} Stop synchronized: ${syncResult.message}.`
+          : syncResult.message;
       }
     }
   }
@@ -125,6 +142,7 @@ export async function POST(req: NextRequest) {
       stratBreakEvenEnabled: nextBreakEvenEnabled,
       stratTrailingEnabled: nextTrailingEnabled,
       stopLoss: updatedStopLoss,
+      takeProfit: updatedTakeProfit,
     } as any,
   });
 
@@ -140,7 +158,10 @@ export async function POST(req: NextRequest) {
       stratTrailingEnabled: nextTrailingEnabled,
       previousStopLoss: position.stopLoss,
       updatedStopLoss,
+      previousTakeProfit: position.takeProfit,
+      updatedTakeProfit,
       immediateSyncMessage,
+      trailingJustEnabled,
     },
     req,
   });

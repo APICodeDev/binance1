@@ -892,6 +892,52 @@ export const bitgetGetPendingTpslOrders = async (symbol: string, tradingMode: 'd
   };
 };
 
+export const bitgetCancelVerifiedTakeProfitOrders = async (
+  symbol: string,
+  tradingMode: 'demo' | 'live' = 'demo'
+) => {
+  const loadPending = async () => {
+    const pending = await bitgetGetPendingTpslOrders(symbol, tradingMode);
+    if (!pending.ok) {
+      return { ok: false as const, message: pending.error || 'Unable to fetch pending TP orders', orders: [] as any[] };
+    }
+
+    const orders = pending.orders.filter((order: any) => {
+      const planType = String(order?.planType || '').toLowerCase();
+      return planType.includes('profit');
+    });
+
+    return { ok: true as const, message: 'loaded', orders };
+  };
+
+  const initial = await loadPending();
+  if (!initial.ok) {
+    return { ok: false, message: initial.message };
+  }
+
+  const orderIds = initial.orders.map((order: any) => order.orderId).filter(Boolean);
+  if (orderIds.length > 0) {
+    const cancelResp = await bitgetCancelPlanOrdersByIds(symbol, orderIds, tradingMode);
+    if (!bitgetOrderSuccess(cancelResp)) {
+      return { ok: false, message: cancelResp?.msg || cancelResp?.message || JSON.stringify(cancelResp) };
+    }
+  }
+
+  for (const delayMs of PROTECTION_VERIFY_DELAYS_MS) {
+    await sleep(delayMs);
+    const verification = await loadPending();
+    if (!verification.ok) {
+      continue;
+    }
+
+    if (verification.orders.length === 0) {
+      return { ok: true, message: orderIds.length > 0 ? 'cancelled' : 'already-empty' };
+    }
+  }
+
+  return { ok: false, message: 'Take profit orders could not be fully removed from Bitget' };
+};
+
 export const bitgetModifyStopOrder = async (
   symbol: string,
   orderId: string,

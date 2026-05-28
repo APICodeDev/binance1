@@ -3142,7 +3142,7 @@ function PositionCard({
           </div>
           <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400">
             {stratTrailingEnabled
-              ? 'Trailing activo con logica SELF: breakeven+fees y trailing por escalones.'
+              ? 'Trailing activo con logica SELF: breakeven+fees, trailing por escalones y TP anulado.'
               : stratBreakEvenEnabled
                 ? 'Breakeven activo: movera el SL a entry+fees al llegar al umbral.'
                 : 'Sin breakeven ni trailing manuales en esta operacion.'}
