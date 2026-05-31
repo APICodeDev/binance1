@@ -13,7 +13,7 @@ const BASE_URL = 'https://api.bitget.com';
 const WS_SERVICE_URL = (process.env.BITGET_WS_SERVICE_URL || 'http://127.0.0.1:8787').replace(/\/$/, '');
 const DEFAULT_TAKER_FEE = 0.0006;
 const DEFAULT_MAKER_FEE = 0.0002;
-const PROTECTION_VERIFY_DELAYS_MS = [200, 500, 1000];
+const PROTECTION_VERIFY_DELAYS_MS = [300, 600, 1200, 1500, 2000];
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const parseFeeRate = (value?: string) => {
@@ -60,9 +60,9 @@ const getConfiguredMakerFee = (symbol: string, tradingMode: 'demo' | 'live') => 
 };
 
 const bitgetRequest = async (
-  endpoint: string, 
-  params: Record<string, any> = {}, 
-  method: 'GET' | 'POST' | 'DELETE' = 'GET', 
+  endpoint: string,
+  params: Record<string, any> = {},
+  method: 'GET' | 'POST' | 'DELETE' = 'GET',
   signed = false,
   tradingMode: 'demo' | 'live' = 'demo'
 ) => {
@@ -71,10 +71,10 @@ const bitgetRequest = async (
   const passphrase = tradingMode === 'live' ? BITGET_PASSPHRASE : BITGET_DEMO_PASSPHRASE;
 
   const timestamp = Date.now().toString();
-  
+
   let requestPath = endpoint;
   let bodyStr = '';
-  
+
   if (method === 'GET' && Object.keys(params).length > 0) {
     const query = new URLSearchParams(params).toString();
     requestPath = `${endpoint}?${query}`;
@@ -83,7 +83,7 @@ const bitgetRequest = async (
   }
 
   const prehash = timestamp + method + requestPath + bodyStr;
-  
+
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
@@ -125,7 +125,7 @@ const getProductType = (symbol: string) => {
 
 const getMarginCoin = (symbol: string) => {
   if (symbol.endsWith('USDC')) return 'USDC';
-  if (symbol.endsWith('USD')) return symbol.replace('USD','');
+  if (symbol.endsWith('USD')) return symbol.replace('USD', '');
   return 'USDT';
 };
 
@@ -326,7 +326,7 @@ export const bitgetGetPositions = async (tradingMode: 'demo' | 'live' = 'demo'):
     bitgetRequest('/api/v2/mix/position/all-position', { productType: 'usdt-futures', marginCoin: 'USDT' }, 'GET', true, tradingMode),
     bitgetRequest('/api/v2/mix/position/all-position', { productType: 'usdc-futures', marginCoin: 'USDC' }, 'GET', true, tradingMode)
   ]);
-  
+
   let allPositions: any[] = [];
   const errors: string[] = [];
   for (const resp of responses) {
@@ -440,7 +440,7 @@ export const bitgetPlaceStopMarket = async (
 ) => {
   const sym = symbol.toUpperCase();
   const precision = await bitgetGetPricePrecision(sym, tradingMode);
-  
+
   const params: any = {
     symbol: sym,
     productType: getProductType(sym),
@@ -844,6 +844,7 @@ export const bitgetEnsureVerifiedStopOrder = async (params: {
       const modifyResp = await bitgetModifyStopOrder(symbol, primary.orderId, stopPrice, tradingMode);
       if (!bitgetOrderSuccess(modifyResp)) {
         await bitgetCancelAlgoOrders(symbol, tradingMode);
+        await bitgetCancelLossOrders(symbol, tradingMode);
         const placeResp = await bitgetPlaceStopMarket(symbol, side, stopPrice, quantity, tradingMode, tradeSide);
         if (!bitgetOrderSuccess(placeResp)) {
           return { ok: false, message: placeResp?.msg || placeResp?.message || JSON.stringify(placeResp) };
@@ -855,6 +856,7 @@ export const bitgetEnsureVerifiedStopOrder = async (params: {
     }
   } else {
     await bitgetCancelAlgoOrders(symbol, tradingMode);
+    await bitgetCancelLossOrders(symbol, tradingMode);
     const placeResp = await bitgetPlaceStopMarket(symbol, side, stopPrice, quantity, tradingMode, tradeSide);
     if (!bitgetOrderSuccess(placeResp)) {
       return { ok: false, message: placeResp?.msg || placeResp?.message || JSON.stringify(placeResp) };
@@ -1008,6 +1010,16 @@ export const bitgetCancelAlgoOrders = async (symbol: string, tradingMode: 'demo'
   }, 'POST', true, tradingMode);
 };
 
+export const bitgetCancelLossOrders = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo') => {
+  const sym = symbol.toUpperCase();
+  return bitgetRequest('/api/v2/mix/order/cancel-all-plan-order', {
+    symbol: sym,
+    productType: getProductType(sym),
+    marginCoin: getMarginCoin(sym),
+    planType: 'loss_plan'
+  }, 'POST', true, tradingMode);
+};
+
 export const bitgetCancelAlgoOrder = async (symbol: string, algoId: number | string, tradingMode: 'demo' | 'live' = 'demo') => {
   const sym = symbol.toUpperCase();
   // Wait, Bitget cancel plan order by id
@@ -1022,8 +1034,8 @@ export const bitgetCancelAlgoOrder = async (symbol: string, algoId: number | str
 export const bitgetCancelAllOrders = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo') => {
   const sym = symbol.toUpperCase();
   const method = 'POST'; // cancel uses post in bitget V2
-  
-  const r1 = await bitgetRequest('/api/v2/mix/order/cancel-all-orders', { 
+
+  const r1 = await bitgetRequest('/api/v2/mix/order/cancel-all-orders', {
     symbol: sym,
     productType: getProductType(sym),
     marginCoin: getMarginCoin(sym),
@@ -1099,12 +1111,12 @@ export const bitgetNormalizeSymbol = (symbol: string): string => {
 
 export const formatQuantity = (quantity: number, exchangeInfo: any): string => {
   if (!exchangeInfo) return quantity.toFixed(3);
-  
+
   const minSize = parseFloat(exchangeInfo.minTradeNum || '0.001');
-  
+
   // Actually Bitget size is typically in coins or contracts depending on the pair.
   const dp = parseInt(exchangeInfo.volumePlace || '3', 10);
-  
+
   let q = quantity;
   if (q < minSize) q = minSize;
 
