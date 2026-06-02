@@ -841,22 +841,21 @@ export const bitgetEnsureVerifiedStopOrder = async (params: {
       (!Number.isFinite(currentSize) || currentSize <= 0 || bitgetSizeMatches(currentSize, quantity))) {
       action = 'unchanged';
     } else {
-      const modifyResp = await bitgetModifyStopOrder(symbol, primary.orderId, stopPrice, tradingMode);
-      if (!bitgetOrderSuccess(modifyResp)) {
-        await bitgetCancelAlgoOrders(symbol, tradingMode);
-        await bitgetCancelLossOrders(symbol, tradingMode);
-        const placeResp = await bitgetPlaceStopMarket(symbol, side, stopPrice, quantity, tradingMode, tradeSide);
-        if (!bitgetOrderSuccess(placeResp)) {
-          return { ok: false, message: placeResp?.msg || placeResp?.message || JSON.stringify(placeResp) };
-        }
-        action = 'placed';
-      } else {
-        action = 'modified';
+      // For strat mode: cancel existing and place new (like Self mode)
+      // This avoids Bitget conflicts when modifying stop orders
+      await bitgetCancelAlgoOrders(symbol, tradingMode);
+      await bitgetCancelLossOrders(symbol, tradingMode);
+      await sleep(300); // Give Bitget time to process cancellation
+      const placeResp = await bitgetPlaceStopMarket(symbol, side, stopPrice, quantity, tradingMode, tradeSide);
+      if (!bitgetOrderSuccess(placeResp)) {
+        return { ok: false, message: placeResp?.msg || placeResp?.message || JSON.stringify(placeResp) };
       }
+      action = 'placed';
     }
   } else {
     await bitgetCancelAlgoOrders(symbol, tradingMode);
     await bitgetCancelLossOrders(symbol, tradingMode);
+    await sleep(300); // Give Bitget time to process cancellation
     const placeResp = await bitgetPlaceStopMarket(symbol, side, stopPrice, quantity, tradingMode, tradeSide);
     if (!bitgetOrderSuccess(placeResp)) {
       return { ok: false, message: placeResp?.msg || placeResp?.message || JSON.stringify(placeResp) };
