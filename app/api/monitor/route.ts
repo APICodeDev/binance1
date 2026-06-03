@@ -11,19 +11,19 @@ import { notifyPositiveClose } from '@/lib/ntfy';
 import { notifyAllActiveDevices } from '@/lib/pushNotifications';
 import {
   bitgetBuildPositionContext,
-  bitgetGetPrice, 
+  bitgetGetPrice,
   bitgetGetPositionMode,
-  bitgetGetPositions, 
+  bitgetGetPositions,
   bitgetGetSinglePosition,
-  bitgetCancelAllOrders, 
+  bitgetCancelAllOrders,
   bitgetCancelAlgoOrders,
   bitgetEnsureVerifiedStopOrder,
   bitgetGetPendingStopOrders,
   bitgetGetRecentCandleRange,
   bitgetModifyStopOrder,
   bitgetCancelPlanOrdersByIds,
-  bitgetOrderSuccess, 
-  bitgetClosePosition, 
+  bitgetOrderSuccess,
+  bitgetClosePosition,
   bitgetPlaceStopMarket,
   bitgetGetCommissionRate
 } from '@/lib/bitget';
@@ -291,7 +291,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     const profitFiat = pos.positionType === 'buy'
       ? ((currentPrice - pos.entryPrice) * pos.quantity) - entryCost - exitCost
       : ((pos.entryPrice - currentPrice) * pos.quantity) - entryCost - exitCost;
-    
+
     const profitPercent = pos.positionType === 'buy'
       ? ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100
       : ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100;
@@ -582,24 +582,24 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
             ? `${symbol} cerrada por agotamiento`
             : stopLossTriggered
               ? `${symbol} stop ejecutado`
-            : takeProfitTriggered
-              ? `${symbol} take profit ejecutado`
-              : `${symbol} cerrada`,
+              : takeProfitTriggered
+                ? `${symbol} take profit ejecutado`
+                : `${symbol} cerrada`,
           body: exhaustionTriggered
             ? `La posicion #${pos.id} en ${mode.toUpperCase()} se cerro automaticamente por agotamiento.`
             : stopLossTriggered
               ? `La posicion #${pos.id} en ${mode.toUpperCase()} se cerro automaticamente por ${closeReason === 'trailing_stop' ? 'trailing stop' : 'stop loss'}.`
-            : takeProfitTriggered
-              ? `La posicion #${pos.id} en ${mode.toUpperCase()} se cerro automaticamente por take profit.`
-              : `La posicion #${pos.id} en ${mode.toUpperCase()} se cerro automaticamente.`,
+              : takeProfitTriggered
+                ? `La posicion #${pos.id} en ${mode.toUpperCase()} se cerro automaticamente por take profit.`
+                : `La posicion #${pos.id} en ${mode.toUpperCase()} se cerro automaticamente.`,
           data: {
             kind: exhaustionTriggered
               ? 'position_closed_exhaustion'
               : stopLossTriggered
                 ? (closeReason === 'trailing_stop' ? 'position_closed_trailing_stop' : 'position_closed_stop_loss')
-              : takeProfitTriggered
-                ? 'position_closed_take_profit'
-                : 'position_closed',
+                : takeProfitTriggered
+                  ? 'position_closed_take_profit'
+                  : 'position_closed',
             positionId: pos.id,
             symbol,
             tradingMode: mode,
@@ -612,9 +612,9 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
             ? `EXHAUSTION_CERRADA (${mode}): Position #${pos.id} (${symbol}) cerrada por ${exhaustionReason === 'flat_timeout' ? 'lateralidad prolongada' : 'agotamiento con retroceso'}.`
             : stopLossTriggered
               ? `SL_CERRADA (${mode}): Position #${pos.id} (${symbol}) cerrada por ${closeReason === 'trailing_stop' ? 'trailing stop' : 'stop loss'}.`
-            : takeProfitTriggered
-              ? `TP_CERRADA (${mode}): Position #${pos.id} (${symbol}) closed por take profit.`
-              : `CERRADA (${mode}): Position #${pos.id} (${symbol}) closed.`
+              : takeProfitTriggered
+                ? `TP_CERRADA (${mode}): Position #${pos.id} (${symbol}) closed por take profit.`
+                : `CERRADA (${mode}): Position #${pos.id} (${symbol}) closed.`
         );
       }
     } else {
@@ -631,11 +631,11 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       results.push(
         stratManaged
           ? `OK_STRAT (${mode}): #${pos.id} ${symbol} | Price: ${currentPrice} | PnL: ${profitPercent.toFixed(2)}% | ` +
-            (stratTrailingEnabled
-              ? 'Trailing SELF activo'
-              : stratBreakEvenEnabled
-                ? 'Breakeven activo'
-                : 'SL/TP fijos')
+          (stratTrailingEnabled
+            ? 'Trailing SELF activo'
+            : stratBreakEvenEnabled
+              ? 'Breakeven activo'
+              : 'SL/TP fijos')
           : `OK (${mode}): #${pos.id} ${symbol} | Price: ${currentPrice} | PnL: ${profitPercent.toFixed(2)}%`
       );
     }

@@ -412,7 +412,7 @@ export const bitgetNormalizePriceByContractDirectional = (
     ? Math.ceil(scaled) * tickSize
     : Math.floor(scaled) * tickSize;
   const result = parseFloat(normalized.toFixed(pricePlace));
-  
+
   // DEBUG: Log para verificar normalización
   if (exchangeInfo?.symbol === 'ADAUSDT' && Math.abs(price - 0.2172) < 0.0001) {
     console.log(`[BITGET DEBUG] ADAUSDT TP normalization:`, {
@@ -426,7 +426,7 @@ export const bitgetNormalizePriceByContractDirectional = (
       changed: result !== price
     });
   }
-  
+
   return result;
 };
 
@@ -1091,7 +1091,7 @@ export const bitgetGetExchangeInfo = async (symbol: string, tradingMode: 'demo' 
   const sym = symbol.toUpperCase();
   const res = await bitgetRequest('/api/v2/mix/market/contracts', { productType: getProductType(sym) }, 'GET', false, tradingMode);
   const exchangeInfo = res && res.data ? res.data.find((s: any) => s.symbol === sym) || null : null;
-  
+
   // DEBUG: Log para verificar pricePlace y priceEndStep
   if (exchangeInfo && sym === 'ADAUSDT') {
     console.log(`[BITGET DEBUG] ADAUSDT exchangeInfo:`, {
@@ -1102,7 +1102,7 @@ export const bitgetGetExchangeInfo = async (symbol: string, tradingMode: 'demo' 
       calculated: `${exchangeInfo.priceEndStep} / 10^${exchangeInfo.pricePlace} = ${exchangeInfo.priceEndStep / Math.pow(10, exchangeInfo.pricePlace)}`
     });
   }
-  
+
   return exchangeInfo;
 };
 
