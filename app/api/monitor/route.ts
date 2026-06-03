@@ -430,6 +430,15 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
           stopLossTriggered = true;
         } else if (takeProfitTouched) {
           takeProfitTriggered = true;
+          // Track if TP was hit by recentHigh (candle high) or currentPrice (now)
+          // Use recentHigh as fallback if it was the one that touched TP
+          if (recentHigh !== null && recentHigh >= takeProfit && currentPrice < takeProfit) {
+            // TP was hit by the candle high but price moved below it
+            // Store the highest point that touched TP for fallback
+            (pos as any)._tpTouchPrice = recentHigh;
+          } else {
+            (pos as any)._tpTouchPrice = currentPrice;
+          }
         }
       }
     } else if (!exhaustionTriggered) { // short
@@ -496,6 +505,15 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
           stopLossTriggered = true;
         } else if (takeProfitTouched) {
           takeProfitTriggered = true;
+          // Track if TP was hit by recentLow (candle low) or currentPrice (now)
+          // Use recentLow as fallback if it was the one that touched TP
+          if (recentLow !== null && recentLow <= takeProfit && currentPrice > takeProfit) {
+            // TP was hit by the candle low but price moved above it
+            // Store the lowest point that touched TP for fallback
+            (pos as any)._tpTouchPrice = recentLow;
+          } else {
+            (pos as any)._tpTouchPrice = currentPrice;
+          }
         }
       }
     }
@@ -512,11 +530,18 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
           : stopLossTriggered
             ? (stopWasMovedByTrailing ? 'trailing_stop' : 'stop_loss')
             : 'take_profit';
+        // Use TP price as fallback when closing by TP, SL price when closing by SL
+        // If TP was touched by recentHigh/recentLow (stored in _tpTouchPrice), use that instead
+        const fallbackExitPrice = takeProfitTriggered
+          ? ((pos as any)._tpTouchPrice || takeProfit)
+          : stopLossTriggered
+            ? newSl
+            : currentPrice;
         const exchangeClose = await resolveBitgetCloseExecution({
           position: pos as any,
           tradingMode: mode,
           targetTime: new Date(),
-          fallbackExitPrice: currentPrice,
+          fallbackExitPrice,
           knownCloseResp: closeResp,
           fallbackReason: closeReason,
         });
