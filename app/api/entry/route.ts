@@ -1185,6 +1185,7 @@ async function executeEntry(
 
     const shouldPlaceInitialStop = stopPrice !== null;
     const shouldPlaceInitialTakeProfit = takeProfitPrice !== null;
+    const shouldPlaceNativeTakeProfit = shouldPlaceInitialTakeProfit && !stratManaged;
     let slResponse: any = null;
     let tpResponse: any = null;
     let initialStopAttempts = 0;
@@ -1231,7 +1232,7 @@ async function executeEntry(
       }
     }
 
-    if (shouldPlaceInitialTakeProfit) {
+    if (shouldPlaceNativeTakeProfit) {
       const takeProfitPlacement = await placeProtectionOrderWithRetries({
         kind: 'takeProfit',
         symbol,
@@ -1251,7 +1252,7 @@ async function executeEntry(
       initialTakeProfitPending = takeProfitPlacement.exhaustedRetryable;
     }
 
-    if (shouldPlaceInitialTakeProfit && !bitgetOrderSuccess(tpResponse) && !initialTakeProfitPending) {
+    if (shouldPlaceNativeTakeProfit && !bitgetOrderSuccess(tpResponse) && !initialTakeProfitPending) {
       await bitgetCancelAllOrders(symbol, tradingMode);
       await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
       const errDetail = `TP rechazado por Bitget (${tradingMode}) para ${symbol}. ` +
@@ -1260,28 +1261,11 @@ async function executeEntry(
       return NextResponse.json({ error: true, message: errDetail, detail: tpResponse }, { status: 500 });
     }
 
-    if (stratManaged && shouldPlaceInitialTakeProfit) {
-      const verifiedTakeProfit = await verifyProtectionOrder({
-        kind: 'takeProfit',
-        symbol,
-        tradingMode,
-        expectedTriggerPrice: takeProfitPrice!,
-        expectedSize: filledSize,
-        pricePrecision,
-      });
-
-      if (!verifiedTakeProfit.ok) {
-        await bitgetCancelAllOrders(symbol, tradingMode);
-        await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
-        const errDetail = `TP no quedo verificado en Bitget (${tradingMode}) para ${symbol} en el precio ${takeProfitPrice}. Rollback ejecutado.`;
-        await saveLastEntryError(errDetail, symbol, type);
-        return NextResponse.json({ error: true, message: errDetail, detail: tpResponse }, { status: 500 });
-      }
-    }
-
     if (initialTakeProfitPending) {
       persistedTakeProfitPrice = takeProfitPrice;
     }
+
+    const takeProfitManagedOnExchange = shouldPlaceNativeTakeProfit && !initialTakeProfitPending && bitgetOrderSuccess(tpResponse);
 
     const createdPosition = await prisma.position.create({
       data: {
@@ -1362,7 +1346,8 @@ async function executeEntry(
         normalizedRequestedTakeProfit,
         requestedTakeProfitAccepted: isRequestedTakeProfitValid,
         appliedTakeProfitPrice: persistedTakeProfitPrice,
-        initialTakeProfitOrderPlaced: shouldPlaceInitialTakeProfit && !initialTakeProfitPending && bitgetOrderSuccess(tpResponse),
+        initialTakeProfitOrderPlaced: takeProfitManagedOnExchange,
+        initialTakeProfitExchangeManaged: takeProfitManagedOnExchange,
         initialTakeProfitPending,
         initialTakeProfitAttempts,
         initialStopAttempts,
@@ -1453,7 +1438,8 @@ async function executeEntry(
         resolved: resolvedRequestedTakeProfitPrice,
         accepted: isRequestedTakeProfitValid,
         applied: persistedTakeProfitPrice,
-        orderPlaced: shouldPlaceInitialTakeProfit && !initialTakeProfitPending && bitgetOrderSuccess(tpResponse),
+        orderPlaced: takeProfitManagedOnExchange,
+        exchangeManaged: takeProfitManagedOnExchange,
         pending: initialTakeProfitPending,
         attempts: initialTakeProfitAttempts,
       },
