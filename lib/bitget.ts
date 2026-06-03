@@ -909,6 +909,26 @@ export const bitgetGetPendingTpslOrders = async (symbol: string, tradingMode: 'd
   };
 };
 
+const bitgetIsTakeProfitOrder = (order: any) => {
+  const planType = String(order?.planType || '').toLowerCase();
+  const orderSource = String(order?.orderSource || '').toLowerCase();
+  return planType.includes('profit') || orderSource.includes('profit');
+};
+
+const bitgetCancelAllPlanOrdersByType = async (
+  symbol: string,
+  planType: 'normal_plan' | 'profit_plan' | 'loss_plan' | 'pos_profit' | 'pos_loss' | 'moving_plan',
+  tradingMode: 'demo' | 'live' = 'demo'
+) => {
+  const sym = symbol.toUpperCase();
+  return bitgetRequest('/api/v2/mix/order/cancel-all-plan-order', {
+    symbol: sym,
+    productType: getProductType(sym),
+    marginCoin: getMarginCoin(sym),
+    planType,
+  }, 'POST', true, tradingMode);
+};
+
 export const bitgetCancelVerifiedTakeProfitOrders = async (
   symbol: string,
   tradingMode: 'demo' | 'live' = 'demo'
@@ -919,10 +939,7 @@ export const bitgetCancelVerifiedTakeProfitOrders = async (
       return { ok: false as const, message: pending.error || 'Unable to fetch pending TP orders', orders: [] as any[] };
     }
 
-    const orders = pending.orders.filter((order: any) => {
-      const planType = String(order?.planType || '').toLowerCase();
-      return planType.includes('profit');
-    });
+    const orders = pending.orders.filter((order: any) => bitgetIsTakeProfitOrder(order));
 
     return { ok: true as const, message: 'loaded', orders };
   };
@@ -934,10 +951,11 @@ export const bitgetCancelVerifiedTakeProfitOrders = async (
 
   const orderIds = initial.orders.map((order: any) => order.orderId).filter(Boolean);
   if (orderIds.length > 0) {
-    const cancelResp = await bitgetCancelPlanOrdersByIds(symbol, orderIds, tradingMode);
-    if (!bitgetOrderSuccess(cancelResp)) {
-      return { ok: false, message: cancelResp?.msg || cancelResp?.message || JSON.stringify(cancelResp) };
-    }
+    await bitgetCancelPlanOrdersByIds(symbol, orderIds, tradingMode);
+    await Promise.allSettled([
+      bitgetCancelAllPlanOrdersByType(symbol, 'profit_plan', tradingMode),
+      bitgetCancelAllPlanOrdersByType(symbol, 'pos_profit', tradingMode),
+    ]);
   }
 
   for (const delayMs of PROTECTION_VERIFY_DELAYS_MS) {
