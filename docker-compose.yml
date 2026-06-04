@@ -1,5 +1,4 @@
 name: TraderBot
-version: '3.8'
 
 services:
   bitget-bot:
@@ -17,6 +16,12 @@ services:
       - bitget-marketdata
       - trade-engine
       - bookmap-service
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     restart: always
 
   bitget-marketdata:
@@ -28,6 +33,12 @@ services:
     environment:
       BITGET_WS_SERVICE_HOST: 0.0.0.0
       BITGET_WS_SERVICE_PORT: 8787
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     restart: always
 
   trade-engine:
@@ -42,6 +53,12 @@ services:
       BITGET_WS_SERVICE_URL: http://bitget-marketdata:8787
     depends_on:
       - bitget-marketdata
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8789/health').then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     restart: always
 
   bookmap-service:
