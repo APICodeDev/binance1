@@ -29,6 +29,8 @@ import {
 } from '@/lib/bitget';
 
 const MONITOR_INTERNAL_SECRET = process.env.MONITOR_INTERNAL_SECRET || '';
+const TRADE_ENGINE_URL = (process.env.TRADE_ENGINE_URL || '').trim();
+const MONITOR_ALLOW_LEGACY_EXECUTION = process.env.MONITOR_ALLOW_LEGACY_EXECUTION === '1';
 const EXHAUSTION_MIN_MFE_PERCENT = 1.0;
 const EXHAUSTION_MIN_STAGNATION_MS = 90 * 60 * 1000;
 const EXHAUSTION_MIN_RETRACEMENT_RATIO = 0.35;
@@ -112,6 +114,23 @@ async function buildDashboardSnapshot(mode: DashboardMode) {
 
 export async function runMonitor(req: NextRequest, actorUserId?: number) {
   const dashboardMode = getDashboardMode(req);
+
+  if (TRADE_ENGINE_URL && !MONITOR_ALLOW_LEGACY_EXECUTION) {
+    const snapshot = await buildDashboardSnapshot(dashboardMode);
+    await writeAuditLog({
+      action: 'monitor.snapshot_only',
+      userId: actorUserId,
+      targetType: 'monitor',
+      metadata: {
+        mode: dashboardMode,
+        reason: 'trade_engine_primary',
+      },
+      req,
+    });
+
+    return ok({ results: ['SNAPSHOT_ONLY: trade engine primary active'], snapshot }, 'Monitor snapshot loaded');
+  }
+
   const positions = await prisma.position.findMany({ where: { status: 'open' } });
   const [exhaustionGuardSetting, takeProfitAutoCloseSetting] = await Promise.all([
     prisma.setting.findUnique({

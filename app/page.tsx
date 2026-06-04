@@ -64,6 +64,7 @@ const LEVERAGE_ENABLED_STORAGE_KEY = 'dashboard:leverage-enabled';
 const LEVERAGE_VALUE_STORAGE_KEY = 'dashboard:leverage-value';
 const ACTIVE_MONITOR_POLL_MS = 3000;
 const IDLE_MONITOR_POLL_MS = 10000;
+const LIVE_RECONCILE_POLL_MS = 30000;
 
 // Typing for positions from API
 interface Position {
@@ -245,6 +246,26 @@ interface StatsPayload {
   timestamp: string;
 }
 
+interface SyncServiceHealth {
+  reachable: boolean;
+  status: number;
+  data?: Record<string, unknown> | null;
+}
+
+interface SyncStatusPayload {
+  openCount: number;
+  latestClosed?: {
+    closedAt?: string | null;
+    symbol?: string | null;
+    tradingMode?: 'demo' | 'live' | null;
+  } | null;
+  services: {
+    tradeEngine: SyncServiceHealth;
+    marketdata: SyncServiceHealth;
+  };
+  timestamp: string;
+}
+
 interface DashboardSettingsSnapshot {
   bot_enabled: string;
   custom_amount: string;
@@ -286,6 +307,51 @@ interface WebhookStatusSnapshot {
 interface MonitorResponsePayload {
   results?: string[];
   snapshot?: DashboardSnapshotPayload;
+}
+
+interface LiveSettingsReloadPayload {
+  exhaustionGuardEnabled: boolean;
+  takeProfitAutoCloseEnabled: boolean;
+  at: number;
+}
+
+interface LivePositionMarketUpdatePayload {
+  positionId: number;
+  symbol: string;
+  tradingMode: 'demo' | 'live';
+  price: number;
+  priceSource: 'mark_price' | 'last_price' | 'mid_price';
+  profitPercent: number;
+  profitFiat: number;
+  stopLoss: number;
+  takeProfit: number | null;
+  candidateStopLoss: number | null;
+  canImproveStop: boolean;
+  managementMode: 'auto' | 'self' | 'strat';
+  stratBreakEvenEnabled: boolean;
+  stratTrailingEnabled: boolean;
+  eventTimestamp: number;
+}
+
+interface LiveStopMovedPayload {
+  positionId: number;
+  symbol: string;
+  tradingMode: 'demo' | 'live';
+  previousStopLoss: number;
+  updatedStopLoss: number;
+  action: string;
+  at: number;
+}
+
+interface LivePositionClosedPayload {
+  positionId: number;
+  symbol: string;
+  tradingMode: 'demo' | 'live';
+  reason: string;
+  exitPrice: number;
+  profitPercent: number;
+  profitFiat: number;
+  at: number;
 }
 
 interface NewPositionForm {
@@ -683,9 +749,11 @@ export default function Dashboard() {
   const [isDocumentVisible, setIsDocumentVisible] = useState(true);
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [syncStatusLabel, setSyncStatusLabel] = useState<'live' | 'paused' | 'offline'>('live');
+  const [liveStreamConnected, setLiveStreamConnected] = useState(false);
   const [statsData, setStatsData] = useState<StatsPayload | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
   const [statsMessage, setStatsMessage] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<SyncStatusPayload | null>(null);
   const [bookmapSymbol, setBookmapSymbol] = useState('ETHUSDT');
   const [bookmapData, setBookmapData] = useState<BookmapSummary | null>(null);
   const [bookmapLoading, setBookmapLoading] = useState(false);
@@ -885,6 +953,15 @@ export default function Dashboard() {
     }
   }, [getApiErrorMessage]);
 
+  const fetchSyncStatus = useCallback(async () => {
+    try {
+      const payload = await apiClient.getSyncStatus();
+      setSyncStatus(payload.data || null);
+    } catch {
+      setSyncStatus(null);
+    }
+  }, []);
+
   const fetchBookmap = useCallback(async (symbol: string, isSilent = false) => {
     if (!isSilent) {
       setBookmapLoading(true);
@@ -967,6 +1044,45 @@ export default function Dashboard() {
     setLastSyncAt(new Date().toISOString());
   }, []);
 
+  const applyLiveSettingsReload = useCallback((payload: LiveSettingsReloadPayload) => {
+    setExhaustionGuardEnabled(payload.exhaustionGuardEnabled);
+    setTakeProfitAutoCloseEnabled(payload.takeProfitAutoCloseEnabled);
+    setLastSyncAt(new Date(payload.at).toISOString());
+  }, []);
+
+  const applyLivePositionMarketUpdate = useCallback((payload: LivePositionMarketUpdatePayload) => {
+    if (payload.tradingMode !== tradingMode) {
+      return;
+    }
+
+    setOpenPositions((current) => current.map((position) => {
+      if (position.id !== payload.positionId) {
+        return position;
+      }
+
+      return {
+        ...position,
+        profitLossPercent: payload.profitPercent,
+        profitLossFiat: payload.profitFiat,
+        stopLoss: payload.stopLoss,
+      };
+    }));
+    setLastSyncAt(new Date(payload.eventTimestamp || Date.now()).toISOString());
+  }, [tradingMode]);
+
+  const applyLiveStopMoved = useCallback((payload: LiveStopMovedPayload) => {
+    if (payload.tradingMode !== tradingMode) {
+      return;
+    }
+
+    setOpenPositions((current) => current.map((position) => (
+      position.id === payload.positionId
+        ? { ...position, stopLoss: payload.updatedStopLoss }
+        : position
+    )));
+    setLastSyncAt(new Date(payload.at).toISOString());
+  }, [tradingMode]);
+
   const fetchData = useCallback(async (isSilent = false, overrideMode?: 'demo' | 'live') => {
     if (!isSilent) setLoading(true);
     const modeToUse = overrideMode || tradingMode;
@@ -1007,35 +1123,6 @@ export default function Dashboard() {
     }
   }, [applyDashboardSnapshot, resetSessionState, tradingMode]);
 
-  const runMonitor = useCallback(async () => {
-    if (!isOnline || !isDocumentVisible) {
-      setSyncStatusLabel(isOnline ? 'paused' : 'offline');
-      return;
-    }
-
-    if (monitorInFlightRef.current) {
-      return;
-    }
-
-    monitorInFlightRef.current = true;
-    setSyncing(true);
-    setSyncStatusLabel('live');
-    try {
-      const payload = await apiClient.runMonitor(tradingMode);
-      const snapshot = (payload.data as MonitorResponsePayload | undefined)?.snapshot;
-      if (snapshot) {
-        applyDashboardSnapshot(snapshot);
-      } else {
-        await fetchData(true, tradingMode);
-      }
-    } catch (error) {
-      console.error('Monitor sync error:', error);
-    } finally {
-      monitorInFlightRef.current = false;
-      setSyncing(false);
-    }
-  }, [applyDashboardSnapshot, fetchData, isDocumentVisible, isOnline, tradingMode]);
-
   // Initial load and polling
   useEffect(() => {
     fetchAuth();
@@ -1050,18 +1137,27 @@ export default function Dashboard() {
     fetchApiTokens();
     fetchAuditLogs();
     fetchAccountOverview();
+    fetchSyncStatus();
     fetchStats();
 
     if (!isOnline || !isDocumentVisible) {
       return;
     }
 
-    const monitorPollMs = openPositions.length > 0 ? ACTIVE_MONITOR_POLL_MS : IDLE_MONITOR_POLL_MS;
     const interval = setInterval(() => {
-      runMonitor();
-    }, monitorPollMs);
+      if (monitorInFlightRef.current) {
+        return;
+      }
+
+      monitorInFlightRef.current = true;
+      setSyncing(true);
+      void fetchData(true, tradingMode).finally(() => {
+        monitorInFlightRef.current = false;
+        setSyncing(false);
+      });
+    }, liveStreamConnected ? LIVE_RECONCILE_POLL_MS : (openPositions.length > 0 ? ACTIVE_MONITOR_POLL_MS : IDLE_MONITOR_POLL_MS));
     return () => clearInterval(interval);
-  }, [authUser, fetchApiTokens, fetchAuditLogs, fetchAccountOverview, fetchData, fetchStats, isDocumentVisible, isOnline, openPositions.length, runMonitor]);
+  }, [authUser, fetchApiTokens, fetchAuditLogs, fetchAccountOverview, fetchData, fetchStats, fetchSyncStatus, isDocumentVisible, isOnline, liveStreamConnected, openPositions.length, tradingMode]);
 
   useEffect(() => {
     if (!authUser) {
@@ -1078,6 +1174,206 @@ export default function Dashboard() {
 
     fetchData(true);
   }, [authUser, fetchData, isDocumentVisible, isOnline]);
+
+  useEffect(() => {
+    if (!authUser || !isOnline || !isDocumentVisible) {
+      return;
+    }
+
+    void fetchSyncStatus();
+    const interval = setInterval(() => {
+      void fetchSyncStatus();
+    }, 15000);
+
+    return () => clearInterval(interval);
+  }, [authUser, fetchSyncStatus, isDocumentVisible, isOnline]);
+
+  useEffect(() => {
+    if (!authUser || !isOnline || !isDocumentVisible) {
+      setLiveStreamConnected(false);
+      return;
+    }
+
+    let cancelled = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let activeController: AbortController | null = null;
+
+    const parseSseChunk = (chunk: string) => {
+      const lines = chunk.split(/\r?\n/);
+      let event = 'message';
+      const dataLines: string[] = [];
+
+      for (const line of lines) {
+        if (line.startsWith('event:')) {
+          event = line.slice(6).trim() || 'message';
+        } else if (line.startsWith('data:')) {
+          dataLines.push(line.slice(5).trim());
+        }
+      }
+
+      if (dataLines.length === 0) {
+        return null;
+      }
+
+      return {
+        event,
+        data: dataLines.join('\n'),
+      };
+    };
+
+    const scheduleReconnect = () => {
+      if (cancelled) {
+        return;
+      }
+
+      setLiveStreamConnected(false);
+      if (isOnline && isDocumentVisible) {
+        setSyncStatusLabel('paused');
+      }
+      reconnectTimer = setTimeout(() => {
+        void connect();
+      }, 2000);
+    };
+
+    const connect = async () => {
+      if (cancelled) {
+        return;
+      }
+
+      activeController = new AbortController();
+      const token = apiClient.getStoredApiToken();
+      const headers: HeadersInit = {
+        Accept: 'text/event-stream',
+      };
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+
+      try {
+        const baseUrl = apiClient.getApiBaseUrl();
+        const response = await fetch(`${baseUrl}/api/live?mode=${encodeURIComponent(tradingMode)}`, {
+          method: 'GET',
+          headers,
+          cache: 'no-store',
+          credentials: 'include',
+          signal: activeController.signal,
+        });
+
+        if (!response.ok || !response.body) {
+          throw new Error(`Live stream unavailable (${response.status})`);
+        }
+
+        setLiveStreamConnected(true);
+        setSyncStatusLabel('live');
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (!cancelled) {
+          const { value, done } = await reader.read();
+          if (done) {
+            break;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+          const chunks = buffer.split('\n\n');
+          buffer = chunks.pop() || '';
+
+          for (const chunk of chunks) {
+            const parsed = parseSseChunk(chunk);
+            if (!parsed) {
+              continue;
+            }
+
+            let payload: any = null;
+            try {
+              payload = JSON.parse(parsed.data);
+            } catch {
+              continue;
+            }
+
+            if (parsed.event === 'ready') {
+              setLiveStreamConnected(true);
+              setSyncStatusLabel('live');
+              setLastSyncAt(new Date().toISOString());
+              continue;
+            }
+
+            if (parsed.event === 'settings_reloaded') {
+              applyLiveSettingsReload(payload as LiveSettingsReloadPayload);
+              continue;
+            }
+
+            if (parsed.event === 'position_market_update') {
+              applyLivePositionMarketUpdate(payload as LivePositionMarketUpdatePayload);
+              continue;
+            }
+
+            if (parsed.event === 'stop_moved') {
+              applyLiveStopMoved(payload as LiveStopMovedPayload);
+              continue;
+            }
+
+            if (parsed.event === 'position_closed') {
+              const closePayload = payload as LivePositionClosedPayload;
+              if (closePayload.tradingMode === tradingMode) {
+                setOpenPositions((current) => current.filter((position) => position.id !== closePayload.positionId));
+                void fetchData(true, tradingMode);
+              }
+              setLastSyncAt(new Date(closePayload.at).toISOString());
+              continue;
+            }
+
+            if (parsed.event === 'positions_reloaded') {
+              const modeCounts = payload?.modeCounts;
+              const nextModeCount = tradingMode === 'live'
+                ? Number(modeCounts?.live || 0)
+                : Number(modeCounts?.demo || 0);
+              if (Number.isFinite(nextModeCount) && nextModeCount !== openPositions.length) {
+                void fetchData(true, tradingMode);
+              }
+              setLastSyncAt(new Date(payload?.at || Date.now()).toISOString());
+              continue;
+            }
+
+            if (parsed.event === 'warning') {
+              setLastSyncAt(new Date(payload?.at || Date.now()).toISOString());
+            }
+          }
+        }
+
+        if (!cancelled) {
+          scheduleReconnect();
+        }
+      } catch (error) {
+        if (!cancelled) {
+          scheduleReconnect();
+        }
+      }
+    };
+
+    void connect();
+
+    return () => {
+      cancelled = true;
+      setLiveStreamConnected(false);
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+      }
+      activeController?.abort();
+    };
+  }, [
+    authUser,
+    applyLivePositionMarketUpdate,
+    applyLiveSettingsReload,
+    applyLiveStopMoved,
+    fetchData,
+    isDocumentVisible,
+    isOnline,
+    openPositions.length,
+    tradingMode,
+  ]);
 
   useEffect(() => {
     if (!authUser || !bookmapSymbol) {
@@ -2715,6 +3011,32 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
         )}
 
         <footer className="pt-4 pb-12 flex flex-col items-center gap-2">
+          {syncStatus && (
+            <div className="flex flex-wrap items-center justify-center gap-2 text-[10px] font-black uppercase tracking-[0.18em]">
+              <span className={cn(
+                "rounded-full border px-3 py-1",
+                syncStatus.services.tradeEngine.reachable
+                  ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+                  : "border-rose-400/30 bg-rose-400/10 text-rose-300"
+              )}>
+                Engine {syncStatus.services.tradeEngine.reachable ? 'Up' : 'Down'}
+              </span>
+              <span className={cn(
+                "rounded-full border px-3 py-1",
+                syncStatus.services.marketdata.reachable
+                  ? "border-cyan-400/30 bg-cyan-400/10 text-cyan-300"
+                  : "border-rose-400/30 bg-rose-400/10 text-rose-300"
+              )}>
+                Marketdata {syncStatus.services.marketdata.reachable ? 'Up' : 'Down'}
+              </span>
+              <span className="rounded-full border border-slate-700 bg-slate-950/60 px-3 py-1 text-slate-400">
+                Open {syncStatus.openCount}
+              </span>
+              <span className="rounded-full border border-slate-700 bg-slate-950/60 px-3 py-1 text-slate-400">
+                Watching {Number((syncStatus.services.tradeEngine.data as any)?.watchedSymbols || 0)}
+              </span>
+            </div>
+          )}
           <div className="text-[10px] uppercase flex items-center gap-2 font-black tracking-widest">
             <span className={cn(
               "inline-block w-2 h-2 rounded-full",
@@ -2723,12 +3045,21 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
             <span className={cn(
               syncStatusLabel === 'live' ? "text-emerald-400/80" : syncStatusLabel === 'paused' ? "text-amber-400/80" : "text-rose-400/80"
             )}>
-              {syncStatusLabel === 'live' ? 'Foreground sync active' : syncStatusLabel === 'paused' ? 'Sync paused in background' : 'Offline mode'}
+              {syncStatusLabel === 'live'
+                ? (liveStreamConnected ? 'Live engine stream active' : 'Foreground sync active')
+                : syncStatusLabel === 'paused'
+                  ? (liveStreamConnected ? 'Live stream reconnecting' : 'Sync paused in background')
+                  : 'Offline mode'}
             </span>
           </div>
           <div className="text-[10px] text-slate-500 uppercase flex items-center gap-2 opacity-60 font-black tracking-widest">
             <Clock size={12} /> Last heartbeat: {lastSyncAt ? new Date(lastSyncAt).toLocaleTimeString() : 'Pending first sync'}
           </div>
+          {syncStatus?.latestClosed?.symbol && (
+            <div className="text-[10px] text-slate-500 uppercase flex items-center gap-2 opacity-60 font-black tracking-widest">
+              <Flag size={12} /> Last close: {syncStatus.latestClosed.symbol} {syncStatus.latestClosed.tradingMode?.toUpperCase()} {syncStatus.latestClosed.closedAt ? new Date(syncStatus.latestClosed.closedAt).toLocaleTimeString() : ''}
+            </div>
+          )}
           <div className="text-[10px] text-slate-500/40 uppercase flex items-center gap-2 font-black tracking-[0.2em]">
             <Hammer size={12} /> Build Bitget Sync Rev: {buildInfo.timestamp}
           </div>

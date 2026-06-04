@@ -168,6 +168,7 @@ export const apiClient = {
     }),
   getAuditLogs: (take = 30) => request<{ data?: { logs: any[] } }>(`/api/audit?take=${take}`),
   getAccountOverview: () => request<{ data?: any }>('/api/account-overview'),
+  getSyncStatus: () => request<{ data?: any }>('/api/sync-status'),
   getStats: () => request<{ data?: any }>('/api/stats'),
   getBookmap: (symbol: string) => request<{ data?: any }>(`/api/bookmap?symbol=${encodeURIComponent(symbol)}`),
   getHeatmapPaper: () => request<{ data?: any }>('/api/heatmap-paper'),

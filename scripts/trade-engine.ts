@@ -310,6 +310,21 @@ const rebuildPositionIndexes = (positions: Position[]) => {
   }
 };
 
+const buildModeCounts = () => {
+  let demo = 0;
+  let live = 0;
+
+  for (const position of Array.from(openPositions.values())) {
+    if (((position as any).tradingMode || 'demo') === 'live') {
+      live += 1;
+    } else {
+      demo += 1;
+    }
+  }
+
+  return { demo, live };
+};
+
 const reloadOpenPositions = async () => {
   const positions = await prisma.position.findMany({
     where: { status: 'open' } as any,
@@ -325,6 +340,7 @@ const reloadOpenPositions = async () => {
   emitEngineEvent('positions_reloaded', {
     openPositions: openPositions.size,
     watchedSymbols: positionsByMarketKey.size,
+    modeCounts: buildModeCounts(),
     at: lastReloadAt,
   });
 };
