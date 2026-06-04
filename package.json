@@ -8,6 +8,7 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "marketdata:start": "npx tsx scripts/bitget-ws-service.ts",
+    "trade-engine:start": "npx tsx scripts/trade-engine.ts",
     "bookmap:start": "npx tsx scripts/bookmap-ws-service.ts",
     "analyze:performance": "npx tsx scripts/analyze-performance.ts",
     "lint": "next lint",

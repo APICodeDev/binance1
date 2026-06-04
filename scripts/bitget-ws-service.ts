@@ -1,31 +1,48 @@
-import http from 'http';
+import http, { ServerResponse } from 'http';
 import WebSocket from 'ws';
 
 type TradingMode = 'demo' | 'live';
 
-type OrderBookSnapshot = {
+type MarketSnapshot = {
   symbol: string;
   tradingMode: TradingMode;
-  bestBid: number;
-  bestAsk: number;
-  bidSize: number;
-  askSize: number;
+  bestBid: number | null;
+  bestAsk: number | null;
+  bidSize: number | null;
+  askSize: number | null;
+  lastPrice: number | null;
+  markPrice: number | null;
   timestamp: number;
   source: 'websocket';
+};
+
+type MarketEvent = {
+  channel: 'books1' | 'ticker';
+  snapshot: MarketSnapshot;
+};
+
+type Subscriber = {
+  id: number;
+  mode: TradingMode | null;
+  res: ServerResponse;
+  symbols: Set<string> | null;
 };
 
 const PORT = Number.parseInt(process.env.BITGET_WS_SERVICE_PORT || '8787', 10);
 const HOST = process.env.BITGET_WS_SERVICE_HOST || '127.0.0.1';
 const STALE_MS = Number.parseInt(process.env.BITGET_WS_STALE_MS || '5000', 10);
-const CHANNEL = process.env.BITGET_WS_CHANNEL || 'books1';
+const BOOKS_CHANNEL = process.env.BITGET_WS_CHANNEL || 'books1';
+const TICKER_CHANNEL = process.env.BITGET_WS_TICKER_CHANNEL || 'ticker';
 const PING_INTERVAL_MS = 25000;
 const PUBLIC_URLS: Record<TradingMode, string> = {
   demo: 'wss://wspap.bitget.com/v2/ws/public',
   live: 'wss://ws.bitget.com/v2/ws/public',
 };
 
-const snapshots = new Map<string, OrderBookSnapshot>();
+const snapshots = new Map<string, MarketSnapshot>();
 const subscriptions = new Map<string, { ws: WebSocket; tradingMode: TradingMode; symbols: Set<string> }>();
+const subscribers = new Map<number, Subscriber>();
+let nextSubscriberId = 1;
 
 const makeKey = (tradingMode: TradingMode, symbol: string) => `${tradingMode}:${symbol.toUpperCase()}`;
 
@@ -35,7 +52,7 @@ const getProductType = (symbol: string) => {
   return 'USDT-FUTURES';
 };
 
-const parseLevels = (value: unknown) => {
+const parseLevel = (value: unknown) => {
   if (!Array.isArray(value) || value.length === 0) {
     return null;
   }
@@ -50,28 +67,117 @@ const parseLevels = (value: unknown) => {
   return { price, size };
 };
 
-const upsertSnapshot = (tradingMode: TradingMode, symbol: string, bids: unknown[], asks: unknown[], ts?: unknown) => {
-  const bestBid = parseLevels(bids?.[0]);
-  const bestAsk = parseLevels(asks?.[0]);
+const parseOptionalNumber = (value: unknown) => {
+  const parsed = Number.parseFloat(String(value ?? ''));
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const writeSse = (res: ServerResponse, event: string, payload: unknown) => {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+};
+
+const getSnapshotPayload = (snapshot: MarketSnapshot, channel: 'books1' | 'ticker'): MarketEvent => ({
+  channel,
+  snapshot,
+});
+
+const broadcastEvent = (event: string, payload: MarketEvent) => {
+  for (const subscriber of Array.from(subscribers.values())) {
+    if (subscriber.mode && subscriber.mode !== payload.snapshot.tradingMode) {
+      continue;
+    }
+
+    if (subscriber.symbols && !subscriber.symbols.has(payload.snapshot.symbol)) {
+      continue;
+    }
+
+    writeSse(subscriber.res, event, payload);
+  }
+};
+
+const buildSubscribeArgs = (symbol: string) => ([
+  {
+    instType: getProductType(symbol),
+    channel: BOOKS_CHANNEL,
+    instId: symbol,
+  },
+  {
+    instType: getProductType(symbol),
+    channel: TICKER_CHANNEL,
+    instId: symbol,
+  },
+]);
+
+const updateSnapshot = (
+  tradingMode: TradingMode,
+  symbol: string,
+  patch: Partial<MarketSnapshot>,
+  channel: 'books1' | 'ticker'
+) => {
+  const key = makeKey(tradingMode, symbol);
+  const previous = snapshots.get(key);
+  const next: MarketSnapshot = {
+    symbol,
+    tradingMode,
+    bestBid: previous?.bestBid ?? null,
+    bestAsk: previous?.bestAsk ?? null,
+    bidSize: previous?.bidSize ?? null,
+    askSize: previous?.askSize ?? null,
+    lastPrice: previous?.lastPrice ?? null,
+    markPrice: previous?.markPrice ?? null,
+    timestamp: previous?.timestamp ?? Date.now(),
+    source: 'websocket',
+    ...patch,
+  };
+
+  if (next.lastPrice === null && next.bestBid !== null && next.bestAsk !== null) {
+    next.lastPrice = (next.bestBid + next.bestAsk) / 2;
+  }
+
+  snapshots.set(key, next);
+  broadcastEvent('market', getSnapshotPayload(next, channel));
+};
+
+const applyBooksUpdate = (tradingMode: TradingMode, symbol: string, payload: any) => {
+  const bestBid = parseLevel(payload?.bids?.[0]);
+  const bestAsk = parseLevel(payload?.asks?.[0]);
   if (!bestBid || !bestAsk) {
     return;
   }
 
-  snapshots.set(makeKey(tradingMode, symbol), {
-    symbol,
-    tradingMode,
+  updateSnapshot(tradingMode, symbol, {
     bestBid: bestBid.price,
     bestAsk: bestAsk.price,
     bidSize: bestBid.size,
     askSize: bestAsk.size,
-    timestamp: Number.parseInt(String(ts || Date.now()), 10) || Date.now(),
-    source: 'websocket',
-  });
+    lastPrice: (bestBid.price + bestAsk.price) / 2,
+    timestamp: Number.parseInt(String(payload?.ts || payload?.timestamp || Date.now()), 10) || Date.now(),
+  }, 'books1');
+};
+
+const applyTickerUpdate = (tradingMode: TradingMode, symbol: string, payload: any) => {
+  const lastPrice = parseOptionalNumber(payload?.lastPr ?? payload?.lastPrice);
+  const markPrice = parseOptionalNumber(payload?.markPrice);
+  const bidPrice = parseOptionalNumber(payload?.bidPr ?? payload?.bidPrice);
+  const askPrice = parseOptionalNumber(payload?.askPr ?? payload?.askPrice);
+  const bidSize = parseOptionalNumber(payload?.bidSz ?? payload?.bidSize);
+  const askSize = parseOptionalNumber(payload?.askSz ?? payload?.askSize);
+
+  updateSnapshot(tradingMode, symbol, {
+    bestBid: bidPrice,
+    bestAsk: askPrice,
+    bidSize,
+    askSize,
+    lastPrice,
+    markPrice,
+    timestamp: Number.parseInt(String(payload?.ts || payload?.timestamp || Date.now()), 10) || Date.now(),
+  }, 'ticker');
 };
 
 const ensureSocket = (tradingMode: TradingMode) => {
   const existing = subscriptions.get(tradingMode);
-  if (existing && existing.ws.readyState === WebSocket.OPEN) {
+  if (existing && (existing.ws.readyState === WebSocket.OPEN || existing.ws.readyState === WebSocket.CONNECTING)) {
     return existing;
   }
 
@@ -84,11 +190,7 @@ const ensureSocket = (tradingMode: TradingMode) => {
     if (socketState.symbols.size > 0) {
       ws.send(JSON.stringify({
         op: 'subscribe',
-        args: Array.from(socketState.symbols).map((symbol) => ({
-          instType: getProductType(symbol),
-          channel: CHANNEL,
-          instId: symbol,
-        })),
+        args: Array.from(socketState.symbols).flatMap((symbol) => buildSubscribeArgs(symbol)),
       }));
     }
   });
@@ -103,13 +205,21 @@ const ensureSocket = (tradingMode: TradingMode) => {
       const message = JSON.parse(raw);
       const arg = message?.arg;
       const data = Array.isArray(message?.data) ? message.data : [];
-      if (!arg?.instId || data.length === 0) {
+      if (!arg?.instId || !arg?.channel || data.length === 0) {
         return;
       }
 
       const symbol = String(arg.instId).toUpperCase();
-      const payload = data[0] || {};
-      upsertSnapshot(tradingMode, symbol, payload.bids || [], payload.asks || [], payload.ts || payload.timestamp);
+      const channel = String(arg.channel).toLowerCase();
+
+      if (channel === BOOKS_CHANNEL.toLowerCase()) {
+        applyBooksUpdate(tradingMode, symbol, data[0] || {});
+        return;
+      }
+
+      if (channel === TICKER_CHANNEL.toLowerCase()) {
+        applyTickerUpdate(tradingMode, symbol, data[0] || {});
+      }
     } catch {
       return;
     }
@@ -150,13 +260,36 @@ const subscribeSymbol = (symbol: string, tradingMode: TradingMode) => {
   if (socketState.ws.readyState === WebSocket.OPEN) {
     socketState.ws.send(JSON.stringify({
       op: 'subscribe',
-      args: [{
-        instType: getProductType(normalized),
-        channel: CHANNEL,
-        instId: normalized,
-      }],
+      args: buildSubscribeArgs(normalized),
     }));
   }
+};
+
+const removeSubscriber = (id: number) => {
+  const subscriber = subscribers.get(id);
+  if (!subscriber) {
+    return;
+  }
+
+  subscribers.delete(id);
+  try {
+    subscriber.res.end();
+  } catch {
+    return;
+  }
+};
+
+const parseSymbolsFilter = (raw: string | null) => {
+  if (!raw) {
+    return null;
+  }
+
+  const values = raw
+    .split(',')
+    .map((value) => value.trim().toUpperCase())
+    .filter(Boolean);
+
+  return values.length > 0 ? new Set(values) : null;
 };
 
 const server = http.createServer((req, res) => {
@@ -171,8 +304,10 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       ok: true,
-      channel: CHANNEL,
+      booksChannel: BOOKS_CHANNEL,
+      tickerChannel: TICKER_CHANNEL,
       snapshots: snapshots.size,
+      subscribers: subscribers.size,
       modes: Array.from(subscriptions.keys()),
       staleMs: STALE_MS,
     }));
@@ -213,6 +348,39 @@ const server = http.createServer((req, res) => {
       snapshot: snapshot || null,
       stale: snapshot ? !isFresh : true,
     }));
+    return;
+  }
+
+  if (url.pathname === '/events') {
+    const modeParam = url.searchParams.get('mode');
+    const mode = modeParam === 'live' || modeParam === 'demo' ? modeParam : null;
+    const symbols = parseSymbolsFilter(url.searchParams.get('symbols'));
+    const subscriberId = nextSubscriberId++;
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.write(': connected\n\n');
+
+    subscribers.set(subscriberId, {
+      id: subscriberId,
+      mode,
+      res,
+      symbols,
+    });
+
+    writeSse(res, 'ready', {
+      mode,
+      symbols: symbols ? Array.from(symbols) : null,
+      subscriberId,
+    });
+
+    req.on('close', () => {
+      removeSubscriber(subscriberId);
+    });
     return;
   }
 

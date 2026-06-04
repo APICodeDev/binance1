@@ -11,9 +11,11 @@ services:
       - .env
     environment:
       BITGET_WS_SERVICE_URL: http://bitget-marketdata:8787
+      TRADE_ENGINE_URL: http://trade-engine:8789
       BOOKMAP_WS_SERVICE_URL: http://bookmap-service:8788
     depends_on:
       - bitget-marketdata
+      - trade-engine
       - bookmap-service
     restart: always
 
@@ -26,6 +28,20 @@ services:
     environment:
       BITGET_WS_SERVICE_HOST: 0.0.0.0
       BITGET_WS_SERVICE_PORT: 8787
+    restart: always
+
+  trade-engine:
+    build: .
+    container_name: trade-engine
+    command: npm run trade-engine:start
+    env_file:
+      - .env
+    environment:
+      TRADE_ENGINE_HOST: 0.0.0.0
+      TRADE_ENGINE_PORT: 8789
+      BITGET_WS_SERVICE_URL: http://bitget-marketdata:8787
+    depends_on:
+      - bitget-marketdata
     restart: always
 
   bookmap-service:
