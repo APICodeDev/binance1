@@ -1,7 +1,23 @@
 import http, { ServerResponse } from 'http';
 import { Position } from '@prisma/client';
 import { prisma } from '@/lib/db';
-import { normalizePositionManagementMode } from '@/lib/positions';
+import { writeAuditLog } from '@/lib/audit';
+import { notifyAllActiveDevices } from '@/lib/pushNotifications';
+import { notifyPositiveClose } from '@/lib/ntfy';
+import {
+  bitgetBuildPositionContext,
+  bitgetCancelAllOrders,
+  bitgetClosePosition,
+  bitgetEnsureVerifiedStopOrder,
+  bitgetGetPositionMode,
+  bitgetOrderSuccess,
+} from '@/lib/bitget';
+import {
+  calculateCloseMetrics,
+  isFixedPriceManagementMode,
+  normalizePositionManagementMode,
+  resolveBitgetCloseExecution,
+} from '@/lib/positions';
 
 type TradingMode = 'demo' | 'live';
 
@@ -46,22 +62,45 @@ type PositionMarketUpdate = {
   eventTimestamp: number;
 };
 
+type EngineSettings = {
+  exhaustionGuardEnabled: boolean;
+  takeProfitAutoCloseEnabled: boolean;
+};
+
 const HOST = process.env.TRADE_ENGINE_HOST || '127.0.0.1';
 const PORT = Number.parseInt(process.env.TRADE_ENGINE_PORT || '8789', 10);
 const MARKETDATA_URL = (process.env.BITGET_WS_SERVICE_URL || 'http://127.0.0.1:8787').replace(/\/$/, '');
 const POSITION_REFRESH_MS = Number.parseInt(process.env.TRADE_ENGINE_POSITION_REFRESH_MS || '3000', 10);
+const SETTINGS_REFRESH_MS = Number.parseInt(process.env.TRADE_ENGINE_SETTINGS_REFRESH_MS || '5000', 10);
 const MARKET_STREAM_RECONNECT_MS = Number.parseInt(process.env.TRADE_ENGINE_MARKET_STREAM_RECONNECT_MS || '2000', 10);
 const DEFAULT_COMMISSION = Number.parseFloat(process.env.TRADE_ENGINE_DEFAULT_COMMISSION || '0.0006');
+const STOP_SYNC_COOLDOWN_MS = Number.parseInt(process.env.TRADE_ENGINE_STOP_COOLDOWN_MS || '1200', 10);
+const POSITION_PERSIST_COOLDOWN_MS = Number.parseInt(process.env.TRADE_ENGINE_POSITION_PERSIST_COOLDOWN_MS || '2000', 10);
+const EXHAUSTION_MIN_MFE_PERCENT = 1.0;
+const EXHAUSTION_MIN_STAGNATION_MS = 90 * 60 * 1000;
+const EXHAUSTION_MIN_RETRACEMENT_RATIO = 0.35;
+const EXHAUSTION_FLAT_MIN_MFE_PERCENT = 1.5;
+const EXHAUSTION_FLAT_MIN_PROFIT_PERCENT = 1.0;
+const EXHAUSTION_FLAT_MIN_STAGNATION_MS = 120 * 60 * 1000;
+const EXHAUSTION_FLAT_MAX_GIVEBACK_PERCENT = 0.25;
 
 const marketSnapshots = new Map<string, MarketSnapshot>();
 const openPositions = new Map<number, Position>();
 const positionsByMarketKey = new Map<string, Set<number>>();
 const watchedMarketKeys = new Set<string>();
 const engineSubscribers = new Map<number, EngineSubscriber>();
+const positionLocks = new Set<number>();
+const lastPersistAtByPosition = new Map<number, number>();
+const lastStopSyncAtByPosition = new Map<number, number>();
 let nextSubscriberId = 1;
 let lastReloadAt: number | null = null;
 let lastMarketEventAt: number | null = null;
+let lastSettingsReloadAt: number | null = null;
 let lastWarning: string | null = null;
+let engineSettings: EngineSettings = {
+  exhaustionGuardEnabled: true,
+  takeProfitAutoCloseEnabled: false,
+};
 
 const makeMarketKey = (tradingMode: TradingMode, symbol: string) => `${tradingMode}:${symbol.toUpperCase()}`;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -100,6 +139,34 @@ const resolveLivePrice = (snapshot: MarketSnapshot) => {
   }
 
   return null;
+};
+
+const updateCachedPosition = (positionId: number, patch: Partial<Position>) => {
+  const current = openPositions.get(positionId);
+  if (!current) {
+    return;
+  }
+
+  openPositions.set(positionId, {
+    ...current,
+    ...patch,
+  });
+};
+
+const removeOpenPosition = (position: Position) => {
+  openPositions.delete(position.id);
+  const marketKey = makeMarketKey(((position as any).tradingMode || 'demo') as TradingMode, position.symbol);
+  const ids = positionsByMarketKey.get(marketKey);
+  if (ids) {
+    ids.delete(position.id);
+    if (ids.size === 0) {
+      positionsByMarketKey.delete(marketKey);
+    }
+  }
+
+  positionLocks.delete(position.id);
+  lastPersistAtByPosition.delete(position.id);
+  lastStopSyncAtByPosition.delete(position.id);
 };
 
 const computeCandidateStopLoss = (position: Position, currentPrice: number) => {
@@ -262,6 +329,355 @@ const reloadOpenPositions = async () => {
   });
 };
 
+const reloadSettings = async () => {
+  const [exhaustionGuardSetting, takeProfitAutoCloseSetting] = await Promise.all([
+    prisma.setting.findUnique({ where: { key: 'exhaustion_guard_enabled' } }),
+    prisma.setting.findUnique({ where: { key: 'take_profit_auto_close_enabled' } }),
+  ]);
+
+  engineSettings = {
+    exhaustionGuardEnabled: exhaustionGuardSetting?.value !== '0',
+    takeProfitAutoCloseEnabled: takeProfitAutoCloseSetting?.value === '1',
+  };
+
+  lastSettingsReloadAt = Date.now();
+  emitEngineEvent('settings_reloaded', {
+    ...engineSettings,
+    at: lastSettingsReloadAt,
+  });
+};
+
+const shouldPersistPosition = (positionId: number, force = false) => {
+  if (force) {
+    return true;
+  }
+
+  const lastPersistAt = lastPersistAtByPosition.get(positionId) || 0;
+  return (Date.now() - lastPersistAt) >= POSITION_PERSIST_COOLDOWN_MS;
+};
+
+const persistPositionSnapshot = async (position: Position, patch: Partial<Position>, force = false) => {
+  if (!shouldPersistPosition(position.id, force)) {
+    updateCachedPosition(position.id, patch);
+    return;
+  }
+
+  await prisma.position.update({
+    where: { id: position.id },
+    data: patch as any,
+  });
+  updateCachedPosition(position.id, patch);
+  lastPersistAtByPosition.set(position.id, Date.now());
+};
+
+const syncStopForPosition = async (position: Position, update: PositionMarketUpdate) => {
+  if (!update.canImproveStop || update.candidateStopLoss === null) {
+    return null;
+  }
+
+  const lastSyncAt = lastStopSyncAtByPosition.get(position.id) || 0;
+  if ((Date.now() - lastSyncAt) < STOP_SYNC_COOLDOWN_MS) {
+    return null;
+  }
+
+  const tradingMode = ((position as any).tradingMode || 'demo') as TradingMode;
+  const positionMode = await bitgetGetPositionMode(position.symbol.toUpperCase(), tradingMode) || 'one_way_mode';
+  const positionContext = bitgetBuildPositionContext(position.positionType as 'buy' | 'sell', positionMode);
+  const syncResult = await bitgetEnsureVerifiedStopOrder({
+    symbol: position.symbol.toUpperCase(),
+    side: positionContext.closeSide,
+    stopPrice: update.candidateStopLoss,
+    quantity: position.quantity,
+    tradingMode,
+    tradeSide: positionContext.closeTradeSide,
+  });
+
+  lastStopSyncAtByPosition.set(position.id, Date.now());
+
+  if (!syncResult.ok) {
+    emitEngineEvent('warning', {
+      kind: 'stop_sync_failed',
+      positionId: position.id,
+      symbol: position.symbol,
+      tradingMode,
+      message: syncResult.message,
+      at: Date.now(),
+    });
+    return null;
+  }
+
+  await prisma.position.update({
+    where: { id: position.id },
+    data: {
+      stopLoss: update.candidateStopLoss,
+    } as any,
+  });
+  updateCachedPosition(position.id, {
+    stopLoss: update.candidateStopLoss,
+  });
+  lastPersistAtByPosition.set(position.id, Date.now());
+
+  await writeAuditLog({
+    action: 'trade_engine.stop_moved',
+    targetType: 'position',
+    targetId: String(position.id),
+    metadata: {
+      symbol: position.symbol,
+      tradingMode,
+      previousStopLoss: position.stopLoss,
+      updatedStopLoss: update.candidateStopLoss,
+      action: syncResult.message,
+    },
+  });
+
+  emitEngineEvent('stop_moved', {
+    positionId: position.id,
+    symbol: position.symbol,
+    tradingMode,
+    previousStopLoss: position.stopLoss,
+    updatedStopLoss: update.candidateStopLoss,
+    action: syncResult.message,
+    at: Date.now(),
+  });
+
+  return update.candidateStopLoss;
+};
+
+const closePositionFromEngine = async (position: Position, update: PositionMarketUpdate, reason: 'stop_loss' | 'trailing_stop' | 'take_profit' | 'exhaustion') => {
+  const tradingMode = ((position as any).tradingMode || 'demo') as TradingMode;
+  const positionMode = await bitgetGetPositionMode(position.symbol.toUpperCase(), tradingMode) || 'one_way_mode';
+  const positionContext = bitgetBuildPositionContext(position.positionType as 'buy' | 'sell', positionMode);
+  await bitgetCancelAllOrders(position.symbol.toUpperCase(), tradingMode);
+  const closeResp = await bitgetClosePosition(
+    position.symbol.toUpperCase(),
+    positionContext.closeSide,
+    position.quantity,
+    tradingMode,
+    positionContext.closeTradeSide
+  );
+
+  if (!bitgetOrderSuccess(closeResp)) {
+    emitEngineEvent('warning', {
+      kind: 'close_failed',
+      positionId: position.id,
+      symbol: position.symbol,
+      tradingMode,
+      reason,
+      message: closeResp?.msg || closeResp?.message || 'close rejected',
+      at: Date.now(),
+    });
+    return false;
+  }
+
+  const exchangeClose = await resolveBitgetCloseExecution({
+    position: position as any,
+    tradingMode,
+    targetTime: new Date(),
+    fallbackExitPrice: update.price,
+    knownCloseResp: closeResp,
+    fallbackReason: reason,
+  });
+
+  const exitPrice = exchangeClose?.exitPrice || update.price;
+  const commission = position.commission ?? DEFAULT_COMMISSION;
+  const closeMetrics = calculateCloseMetrics({
+    positionType: position.positionType,
+    entryPrice: position.entryPrice,
+    quantity: position.quantity,
+    entryCommission: commission,
+    exitCommission: commission,
+    exitPrice,
+  });
+
+  await prisma.position.update({
+    where: { id: position.id },
+    data: {
+      status: 'closed',
+      closedAt: exchangeClose?.closedAt || new Date(),
+      profitLossPercent: closeMetrics.profitPercent,
+      profitLossFiat: closeMetrics.profitFiat,
+      exitPrice,
+      exitReason: exchangeClose?.exitReason || reason,
+      exitOrderId: exchangeClose?.exitOrderId || null,
+      exitSource: exchangeClose?.exitSource || null,
+      maxProfitPercent: Math.max(Number((position as any).maxProfitPercent || 0), update.profitPercent),
+      maxProfitAt: update.profitPercent > Number((position as any).maxProfitPercent || 0)
+        ? new Date()
+        : ((position as any).maxProfitAt || null),
+    } as any,
+  });
+
+  await writeAuditLog({
+    action: 'trade_engine.position_closed',
+    targetType: 'position',
+    targetId: String(position.id),
+    metadata: {
+      symbol: position.symbol,
+      tradingMode,
+      reason,
+      exitPrice,
+      profitPercent: closeMetrics.profitPercent,
+      profitFiat: closeMetrics.profitFiat,
+    },
+  });
+
+  await notifyPositiveClose({
+    symbol: position.symbol.toUpperCase(),
+    tradingMode,
+    profitFiat: closeMetrics.profitFiat,
+    profitPercent: closeMetrics.profitPercent,
+  }).catch(() => undefined);
+
+  await notifyAllActiveDevices({
+    title: `${position.symbol.toUpperCase()} cerrada`,
+    body: `La posicion #${position.id} en ${tradingMode.toUpperCase()} se cerro por ${reason}.`,
+    data: {
+      kind: reason === 'take_profit'
+        ? 'position_closed_take_profit'
+        : reason === 'trailing_stop'
+          ? 'position_closed_trailing_stop'
+          : reason === 'exhaustion'
+            ? 'position_closed_exhaustion'
+            : 'position_closed_stop_loss',
+      positionId: position.id,
+      symbol: position.symbol.toUpperCase(),
+      tradingMode,
+      profitPercent: Number(closeMetrics.profitPercent.toFixed(2)),
+      profitFiat: Number(closeMetrics.profitFiat.toFixed(2)),
+    },
+  }).catch(() => undefined);
+
+  emitEngineEvent('position_closed', {
+    positionId: position.id,
+    symbol: position.symbol.toUpperCase(),
+    tradingMode,
+    reason,
+    exitPrice,
+    profitPercent: closeMetrics.profitPercent,
+    profitFiat: closeMetrics.profitFiat,
+    at: Date.now(),
+  });
+
+  removeOpenPosition(position);
+  return true;
+};
+
+const processPositionMarketUpdate = async (positionId: number, snapshot: MarketSnapshot) => {
+  if (positionLocks.has(positionId)) {
+    return;
+  }
+
+  const position = openPositions.get(positionId);
+  if (!position) {
+    return;
+  }
+
+  const update = buildPositionMarketUpdate(position, snapshot);
+  if (!update) {
+    return;
+  }
+
+  positionLocks.add(positionId);
+  try {
+    emitEngineEvent('position_market_update', update);
+
+    const currentPosition = openPositions.get(positionId);
+    if (!currentPosition) {
+      return;
+    }
+
+    const managementMode = update.managementMode;
+    const fixedManaged = isFixedPriceManagementMode(currentPosition.managementMode);
+    const stratManaged = managementMode === 'strat';
+    const autoManaged = managementMode === 'auto';
+    const previousMaxProfitPercent = Math.max(0, Number((currentPosition as any).maxProfitPercent || 0));
+    const improvedMax = update.profitPercent > previousMaxProfitPercent;
+    const maxProfitPercent = improvedMax ? update.profitPercent : previousMaxProfitPercent;
+    const maxProfitAt = improvedMax
+      ? new Date()
+      : ((currentPosition as any).maxProfitAt ? new Date((currentPosition as any).maxProfitAt) : null);
+    const stagnationMs = maxProfitAt ? (Date.now() - maxProfitAt.getTime()) : 0;
+    const retracementRatio = maxProfitPercent > 0
+      ? Math.max(0, (maxProfitPercent - update.profitPercent) / maxProfitPercent)
+      : 0;
+    const givebackPercent = Math.max(0, maxProfitPercent - update.profitPercent);
+
+    let activeStopLoss = currentPosition.stopLoss;
+    const movedStopLoss = await syncStopForPosition(currentPosition, update);
+    if (typeof movedStopLoss === 'number') {
+      activeStopLoss = movedStopLoss;
+      update.stopLoss = movedStopLoss;
+    }
+
+    let exhaustionTriggered = false;
+    if (
+      autoManaged &&
+      engineSettings.exhaustionGuardEnabled &&
+      maxProfitPercent >= EXHAUSTION_MIN_MFE_PERCENT &&
+      update.profitPercent > 0 &&
+      stagnationMs >= EXHAUSTION_MIN_STAGNATION_MS &&
+      retracementRatio >= EXHAUSTION_MIN_RETRACEMENT_RATIO
+    ) {
+      exhaustionTriggered = true;
+    } else if (
+      autoManaged &&
+      engineSettings.exhaustionGuardEnabled &&
+      maxProfitPercent >= EXHAUSTION_FLAT_MIN_MFE_PERCENT &&
+      update.profitPercent >= EXHAUSTION_FLAT_MIN_PROFIT_PERCENT &&
+      stagnationMs >= EXHAUSTION_FLAT_MIN_STAGNATION_MS &&
+      givebackPercent <= EXHAUSTION_FLAT_MAX_GIVEBACK_PERCENT
+    ) {
+      exhaustionTriggered = true;
+    }
+
+    let takeProfitTriggered = false;
+    if (typeof update.takeProfit === 'number' && update.takeProfit > 0) {
+      if (currentPosition.positionType === 'buy') {
+        takeProfitTriggered = autoManaged
+          ? (engineSettings.takeProfitAutoCloseEnabled && update.price >= update.takeProfit)
+          : ((fixedManaged || stratManaged) && update.price >= update.takeProfit);
+      } else {
+        takeProfitTriggered = autoManaged
+          ? (engineSettings.takeProfitAutoCloseEnabled && update.price <= update.takeProfit)
+          : ((fixedManaged || stratManaged) && update.price <= update.takeProfit);
+      }
+    }
+
+    const stopLossTriggered = currentPosition.positionType === 'buy'
+      ? update.price <= activeStopLoss
+      : update.price >= activeStopLoss;
+
+    if (exhaustionTriggered || takeProfitTriggered || stopLossTriggered) {
+      const reason = exhaustionTriggered
+        ? 'exhaustion'
+        : takeProfitTriggered
+          ? 'take_profit'
+          : (typeof movedStopLoss === 'number' ? 'trailing_stop' : 'stop_loss');
+      await closePositionFromEngine(currentPosition, update, reason);
+      return;
+    }
+
+    await persistPositionSnapshot(currentPosition, {
+      stopLoss: activeStopLoss,
+      profitLossPercent: update.profitPercent,
+      profitLossFiat: update.profitFiat,
+      maxProfitPercent,
+      maxProfitAt,
+    }, improvedMax);
+  } catch (error: any) {
+    lastWarning = `position-${positionId}: ${error?.message || 'unknown error'}`;
+    emitEngineEvent('warning', {
+      kind: 'position_processing_failed',
+      positionId,
+      symbol: position.symbol,
+      warning: lastWarning,
+      at: Date.now(),
+    });
+  } finally {
+    positionLocks.delete(positionId);
+  }
+};
+
 const consumeMarketEvent = (payload: MarketEventPayload) => {
   const snapshot = payload.snapshot;
   const marketKey = makeMarketKey(snapshot.tradingMode, snapshot.symbol);
@@ -276,17 +692,7 @@ const consumeMarketEvent = (payload: MarketEventPayload) => {
   }
 
   for (const positionId of Array.from(relatedPositions)) {
-    const position = openPositions.get(positionId);
-    if (!position) {
-      continue;
-    }
-
-    const update = buildPositionMarketUpdate(position, snapshot);
-    if (!update) {
-      continue;
-    }
-
-    emitEngineEvent('position_market_update', update);
+    void processPositionMarketUpdate(positionId, snapshot);
   }
 };
 
@@ -399,8 +805,10 @@ const server = http.createServer(async (req, res) => {
       watchedSymbols: positionsByMarketKey.size,
       snapshots: marketSnapshots.size,
       subscribers: engineSubscribers.size,
+      settings: engineSettings,
       lastReloadAt,
       lastMarketEventAt,
+      lastSettingsReloadAt,
       lastWarning,
     }));
     return;
@@ -419,10 +827,14 @@ const server = http.createServer(async (req, res) => {
         stratTrailingEnabled: Boolean((position as any).stratTrailingEnabled),
         stopLoss: position.stopLoss,
         takeProfit: position.takeProfit,
+        maxProfitPercent: (position as any).maxProfitPercent ?? null,
+        maxProfitAt: (position as any).maxProfitAt ?? null,
       })),
       watchedSymbols: Array.from(positionsByMarketKey.keys()),
+      settings: engineSettings,
       lastReloadAt,
       lastMarketEventAt,
+      lastSettingsReloadAt,
       lastWarning,
     }));
     return;
@@ -462,6 +874,7 @@ const server = http.createServer(async (req, res) => {
       subscriberId,
       openPositions: openPositions.size,
       watchedSymbols: positionsByMarketKey.size,
+      settings: engineSettings,
     });
 
     req.on('close', () => {
@@ -475,7 +888,11 @@ const server = http.createServer(async (req, res) => {
 });
 
 async function main() {
-  await reloadOpenPositions();
+  await Promise.all([
+    reloadOpenPositions(),
+    reloadSettings(),
+  ]);
+
   setInterval(() => {
     reloadOpenPositions().catch((error: any) => {
       lastWarning = `reload-positions: ${error?.message || 'unknown error'}`;
@@ -485,6 +902,16 @@ async function main() {
       });
     });
   }, POSITION_REFRESH_MS).unref();
+
+  setInterval(() => {
+    reloadSettings().catch((error: any) => {
+      lastWarning = `reload-settings: ${error?.message || 'unknown error'}`;
+      emitEngineEvent('warning', {
+        warning: lastWarning,
+        at: Date.now(),
+      });
+    });
+  }, SETTINGS_REFRESH_MS).unref();
 
   void streamMarketMode('demo');
   void streamMarketMode('live');
