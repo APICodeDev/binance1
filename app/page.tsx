@@ -27,7 +27,8 @@ import {
   ChevronUp,
   Volume2,
   Play,
-  Flag
+  Flag,
+  Bell
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { apiClient } from '@/lib/apiClient';
@@ -723,6 +724,7 @@ export default function Dashboard() {
   const [showEjectModal, setShowEjectModal] = useState<Position | null>(null);
   const [lastEntryError, setLastEntryError] = useState<{timestamp: string; symbol: string; type: string; detail: string} | null>(null);
   const [lastWebhookStatus, setLastWebhookStatus] = useState<WebhookStatusSnapshot | null>(null);
+  const [showLastWebhookStatus, setShowLastWebhookStatus] = useState(false);
   const [hiddenEntryErrorKey, setHiddenEntryErrorKey] = useState<string | null>(null);
   const [errorPopup, setErrorPopup] = useState<string | null>(null);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
@@ -2646,8 +2648,12 @@ export default function Dashboard() {
               </button>
             )}
 
-            {lastWebhookStatus && (
-              <div className="mb-4 rounded-xl border border-cyan-900/50 bg-cyan-950/20 px-4 py-3">
+            {lastWebhookStatus && showLastWebhookStatus && (
+              <button
+                type="button"
+                onClick={() => setShowLastWebhookStatus(false)}
+                className="mb-4 block w-full rounded-xl border border-cyan-900/50 bg-cyan-950/20 px-4 py-3 text-left transition-colors hover:border-cyan-700/60 hover:bg-cyan-950/30"
+              >
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <p className="mb-1 text-[11px] font-bold uppercase tracking-wider text-cyan-400">Ultimo webhook TradingView</p>
@@ -2680,7 +2686,7 @@ export default function Dashboard() {
                     {lastWebhookStatus.rawBody}
                   </pre>
                 )}
-              </div>
+              </button>
             )}
 
             <div className="flex flex-col gap-3 mb-6 sm:flex-row sm:items-center sm:justify-between">
@@ -2691,7 +2697,25 @@ export default function Dashboard() {
                 {syncing && <RefreshCw size={14} className="animate-spin text-blue-400 ml-2" />}
               </h2>
               <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">
-                Tap any card to monitor live risk
+                <div className="flex items-center justify-end gap-2">
+                  {lastWebhookStatus && (
+                    <button
+                      type="button"
+                      onClick={() => setShowLastWebhookStatus((current) => !current)}
+                      className={cn(
+                        "inline-flex h-8 w-8 items-center justify-center rounded-full border transition-colors",
+                        showLastWebhookStatus
+                          ? "border-cyan-400/50 bg-cyan-400/15 text-cyan-300"
+                          : "border-slate-700 bg-slate-950/40 text-slate-500 hover:border-cyan-400/40 hover:text-cyan-300"
+                      )}
+                      aria-label={showLastWebhookStatus ? 'Ocultar ultimo webhook TradingView' : 'Mostrar ultimo webhook TradingView'}
+                      title={showLastWebhookStatus ? 'Ocultar ultimo webhook TradingView' : 'Mostrar ultimo webhook TradingView'}
+                    >
+                      <Bell size={14} />
+                    </button>
+                  )}
+                  <span>Tap any card to monitor live risk</span>
+                </div>
               </div>
             </div>
 
