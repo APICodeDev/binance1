@@ -1708,22 +1708,6 @@ export default function Dashboard() {
     setShowEjectModal(pos);
   };
 
-  const updateStratControls = async (
-    pos: Position,
-    payload: { stratBreakEvenEnabled?: boolean; stratTrailingEnabled?: boolean }
-  ) => {
-    try {
-      const response = await apiClient.updateStratPositionControls(pos.id, payload);
-      if (response?.message) {
-        setTokenMessage(String(response.message));
-      }
-      await fetchData(true, tradingMode);
-    } catch (error) {
-      setErrorPopup(getApiErrorMessage(error, 'No se pudo actualizar la gestion strat.'));
-      throw error;
-    }
-  };
-
   const confirmManualEject = async () => {
     if (!showEjectModal) return;
     const { id } = showEjectModal;
@@ -2724,7 +2708,7 @@ export default function Dashboard() {
                   </motion.div>
                 ) : (
                   openPositions?.map((pos) => (
-                    <PositionCard key={pos.id} pos={pos} onEject={manualEject} onUpdateStratControls={updateStratControls} />
+                    <PositionCard key={pos.id} pos={pos} onEject={manualEject} />
                   ))
                 )}
               </AnimatePresence>
@@ -3282,19 +3266,17 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
 function PositionCard({
   pos,
   onEject,
-  onUpdateStratControls,
 }: {
   pos: Position,
   onEject: (pos: Position) => void,
-  onUpdateStratControls: (pos: Position, payload: { stratBreakEvenEnabled?: boolean; stratTrailingEnabled?: boolean }) => Promise<void>,
 }) {
-  const [controlBusy, setControlBusy] = useState<'breakeven' | 'trailing' | null>(null);
   const isBuy = pos.positionType === 'buy';
   const managementMode = normalizeManagementMode(pos.managementMode);
   const managementModeLabel = formatManagementModeLabel(pos.managementMode);
   const stratManaged = managementMode === 'strat';
   const stratBreakEvenEnabled = Boolean(pos.stratBreakEvenEnabled);
   const stratTrailingEnabled = Boolean(pos.stratTrailingEnabled);
+  const quoteCurrency = pos.tradingMode === 'live' ? 'USDC' : 'USDT';
   const comm = pos.commission ?? 0.0006;
   const LEGACY_STOP_PERCENT = 1.2;
   const entryCost = pos.entryPrice * pos.quantity * comm;
@@ -3316,6 +3298,13 @@ function PositionCard({
   const isSafe = !stratManaged && pnlSafe > 0;
   const isBreakeven = !stratManaged && Math.abs(pnlSafe) < 0.05;
   const slAtEntry = !stratManaged && Math.abs(pos.stopLoss - pos.entryPrice) < Math.max(0.0000001, pos.entryPrice * 0.0001);
+  const stopEngineLabel = stratManaged
+    ? (stratTrailingEnabled
+        ? 'Strat Auto + Self Trailing'
+        : stratBreakEvenEnabled
+          ? 'Strat Auto + BreakEven'
+          : 'Strat Legacy')
+    : (stopAdjustedByApp ? 'Adapted By App' : 'Legacy 1.2% Default');
 
   const exchangeUrl = `https://www.bitget.com/en/futures/usdt/${pos.symbol}`;
   const tradingViewUrl = `https://www.tradingview.com/chart/?symbol=BITGET%3A${encodeURIComponent(`${pos.symbol}.P`)}`;
@@ -3422,127 +3411,78 @@ function PositionCard({
         </span>
       </div>
 
-      {stratManaged && (
-        <div className="space-y-3 rounded-2xl border border-amber-400/20 bg-amber-500/10 px-4 py-3">
-          <div className="text-[11px] font-black uppercase tracking-[0.18em] text-amber-300">
-            Strat mode: breakeven y trailing SELF activos por defecto en cada operacion.
-          </div>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <button
-              type="button"
-              disabled={controlBusy !== null}
-              onClick={async () => {
-                setControlBusy('breakeven');
-                try {
-                  await onUpdateStratControls(pos, { stratBreakEvenEnabled: !stratBreakEvenEnabled });
-                } finally {
-                  setControlBusy(null);
-                }
-              }}
-              className={cn(
-                "flex-1 rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] transition-colors",
-                stratBreakEvenEnabled
-                  ? "border-emerald-400/40 bg-emerald-500/15 text-emerald-300"
-                  : "border-slate-700 bg-slate-950/50 text-slate-400 hover:border-emerald-400/30 hover:text-emerald-300",
-                controlBusy !== null && "cursor-wait opacity-60"
-              )}
-            >
-              {controlBusy === 'breakeven' ? 'Syncing...' : stratBreakEvenEnabled ? 'Breakeven On' : 'Breakeven Off'}
-            </button>
-            <button
-              type="button"
-              disabled={controlBusy !== null}
-              onClick={async () => {
-                setControlBusy('trailing');
-                try {
-                  await onUpdateStratControls(pos, { stratTrailingEnabled: !stratTrailingEnabled });
-                } finally {
-                  setControlBusy(null);
-                }
-              }}
-              className={cn(
-                "flex-1 rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] transition-colors",
-                stratTrailingEnabled
-                  ? "border-cyan-400/40 bg-cyan-500/15 text-cyan-300"
-                  : "border-slate-700 bg-slate-950/50 text-slate-400 hover:border-cyan-400/30 hover:text-cyan-300",
-                controlBusy !== null && "cursor-wait opacity-60"
-              )}
-            >
-              {controlBusy === 'trailing' ? 'Syncing...' : stratTrailingEnabled ? 'Trailing On' : 'Trailing Off'}
-            </button>
-          </div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400">
-            {stratTrailingEnabled
-              ? 'Trailing activo con logica SELF: breakeven+fees, trailing por escalones y sin TP activo.'
-              : stratBreakEvenEnabled
-                ? 'Breakeven activo: movera el SL a entry+fees al llegar al umbral.'
-                : 'Protecciones strat temporales desactivadas en esta operacion.'}
-          </p>
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
-        <div className="space-y-1">
-          <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider">Entry Level</p>
-          <p className="text-sm font-mono text-slate-300">
-            {formatPrice(pos.entryPrice, pos.pricePrecision)}
-            <span className="ml-2 text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">
-              ({pos.amount.toFixed(0)} {pos.tradingMode === 'live' ? 'USDC' : 'USDT'})
-            </span>
-          </p>
-          <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider">
-            {new Date(pos.createdAt).toLocaleString()}
-          </p>
-        </div>
-        <div className="space-y-1 text-right">
-          <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider">Stop Target</p>
-          <p className={cn("text-sm font-mono", isSafe ? "text-emerald-400" : "text-rose-400/80")}>
-            {formatPrice(pos.stopLoss, pos.pricePrecision)}
-          </p>
-          <p className={cn("text-[11px] font-black uppercase tracking-[0.15em]", stopAdjustedByApp ? "text-cyan-300" : "text-slate-500")}>
-            {stopDistancePercent > 0 ? '+' : ''}{stopDistancePercent.toFixed(2)}% vs entry
-          </p>
-          <p className={cn("text-[10px] font-black uppercase tracking-[0.18em]", stopAdjustedByApp ? "text-cyan-300" : "text-slate-600")}>
-            {stratManaged
-              ? (stratTrailingEnabled
-                  ? 'Strat + SELF Trailing'
-                  : stratBreakEvenEnabled
-                    ? 'Strat + BreakEven'
-                    : 'Strat Protections Off')
-              : (stopAdjustedByApp ? 'Adapted By App' : 'Legacy 1.2% Default')}
-          </p>
-          {typeof pos.takeProfit === 'number' && pos.takeProfit > 0 && (
-            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-300">
-              TP {formatPrice(pos.takeProfit, pos.pricePrecision)}
-            </p>
-          )}
-        </div>
-      </div>
-
-      {(pos.commission !== undefined && pos.commission !== null) && (
-        <div className="px-3 py-1 bg-slate-800/50 rounded-lg self-start">
-          <p className="text-[9px] text-slate-500 font-bold uppercase">Fee: {(pos.commission * 100).toFixed(4)}%</p>
-        </div>
-      )}
-
-      <div className="bg-slate-950/50 rounded-2xl p-3 border border-slate-800/50">
-        <div className="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-start">
-          <div className="space-y-1">
-             <p className="text-[10px] text-emerald-400/50 font-black uppercase tracking-tighter">Real-time PnL</p>
-             <p className={cn("text-2xl font-black", grossPercent >= 0 ? "text-emerald-400" : "text-rose-400")}>
-                {grossPercent > 0 ? '+' : ''}{grossPercent.toFixed(2)}<span className="text-xs opacity-50">%</span>
-             </p>
-             <p className={cn("text-[11px] font-bold uppercase tracking-wide", netPercent >= 0 ? "text-emerald-500/80" : "text-rose-500/80")}>
+      <div className="space-y-4 rounded-2xl bg-slate-950/35 px-3 py-4">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-800/70 pb-3">
+          <div className="min-w-0">
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-emerald-400/70">Real-Time PnL</p>
+            <div className="mt-1 flex flex-wrap items-end gap-x-3 gap-y-1">
+              <p className={cn("text-4xl font-black leading-none", grossPercent >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                {grossPercent > 0 ? '+' : ''}{grossPercent.toFixed(2)}
+                <span className="ml-1 text-base opacity-60">%</span>
+              </p>
+              <p className={cn("pb-1 text-[11px] font-black uppercase tracking-[0.15em]", netPercent >= 0 ? "text-emerald-300/80" : "text-rose-300/80")}>
                 Net {netPercent > 0 ? '+' : ''}{netPercent.toFixed(2)}%
-             </p>
+              </p>
+            </div>
           </div>
-          <div className="text-left sm:text-right">
-            <p className={cn("text-sm font-black opacity-90", pos.profitLossFiat >= 0 ? "text-emerald-500" : "text-rose-500")}>
-              Net {pos.profitLossFiat > 0 ? '+' : ''}{pos.profitLossFiat.toFixed(2)} {pos.tradingMode === 'live' ? 'USDC' : 'USDT'}
+          <div className="shrink-0 text-right">
+            <p className="text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">Duration</p>
+            <p className="mt-1 text-sm font-black uppercase tracking-[0.15em] text-slate-200">
+              {formatOpenDuration(pos.createdAt)}
             </p>
-            <p className="text-[10px] text-slate-500 font-black uppercase tracking-wider mt-1">
-              Duration {formatOpenDuration(pos.createdAt)}
+          </div>
+        </div>
+
+        <div className="flex items-start justify-between gap-4 border-b border-slate-800/70 pb-3">
+          <div className="min-w-0">
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Stop Engine</p>
+            <p className={cn("mt-1 text-xl font-mono", isSafe ? "text-emerald-300" : "text-rose-300")}>
+              {formatPrice(pos.stopLoss, pos.pricePrecision)}
             </p>
+            <p className={cn("mt-2 text-[11px] font-black uppercase tracking-[0.15em]", stopAdjustedByApp || stratManaged ? "text-cyan-300" : "text-slate-500")}>
+              {stopDistancePercent > 0 ? '+' : ''}{stopDistancePercent.toFixed(2)}% vs entry
+            </p>
+          </div>
+          <div className="shrink-0 text-right">
+            <p className={cn("text-[10px] font-black uppercase tracking-[0.16em]", stopAdjustedByApp || stratManaged ? "text-cyan-200/90" : "text-slate-600")}>
+              {stopEngineLabel}
+            </p>
+            {typeof pos.takeProfit === 'number' && pos.takeProfit > 0 && (
+              <p className="mt-2 text-[10px] font-black uppercase tracking-[0.18em] text-amber-300">
+                TP {formatPrice(pos.takeProfit, pos.pricePrecision)}
+              </p>
+            )}
+            {stratManaged && !stratBreakEvenEnabled && !stratTrailingEnabled && (
+              <p className="mt-2 text-[10px] font-black uppercase tracking-[0.18em] text-amber-200">
+                Legacy Strat Config
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Entry</p>
+            <p className="mt-1 text-xl font-mono text-slate-200">
+              {formatPrice(pos.entryPrice, pos.pricePrecision)}
+            </p>
+            <p className="mt-2 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">
+              {new Date(pos.createdAt).toLocaleString()}
+            </p>
+          </div>
+          <div className="shrink-0 text-right">
+            <p className={cn("text-2xl font-black leading-none", pos.profitLossFiat >= 0 ? "text-emerald-400" : "text-rose-400")}>
+              {pos.profitLossFiat > 0 ? '+' : ''}{pos.profitLossFiat.toFixed(2)}
+            </p>
+            <p className="mt-1 text-[11px] font-black uppercase tracking-[0.15em] text-slate-300">
+              {quoteCurrency}
+            </p>
+            <div className="mt-2 flex flex-wrap justify-end gap-2 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">
+              <span>{pos.amount.toFixed(0)} {quoteCurrency}</span>
+              {(pos.commission !== undefined && pos.commission !== null) && (
+                <span>Fee {(pos.commission * 100).toFixed(4)}%</span>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -3550,7 +3490,7 @@ function PositionCard({
       {isSafe && (
         <div className="badge-safe justify-center py-2 animate-none bg-emerald-500/10 border-emerald-500/10">
           <ShieldCheck size={14} className="text-emerald-400" /> 
-          {isBreakeven ? 'BREAKEVEN SECURED' : `+${pnlSafe.toFixed(2)} ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'} SECURED`}
+          {isBreakeven ? 'BREAKEVEN SECURED' : `+${pnlSafe.toFixed(2)} ${quoteCurrency} SECURED`}
         </div>
       )}
 
