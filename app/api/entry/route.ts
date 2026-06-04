@@ -1191,7 +1191,7 @@ async function executeEntry(
     let initialStopAttempts = 0;
     let initialTakeProfitAttempts = 0;
     let initialTakeProfitPending = false;
-    let persistedTakeProfitPrice = takeProfitPrice;
+    let persistedTakeProfitPrice = stratManaged ? null : takeProfitPrice;
 
     if (shouldPlaceInitialStop) {
       const stopPlacement = await placeProtectionOrderWithRetries({
@@ -1282,6 +1282,8 @@ async function executeEntry(
         tradingMode,
         origin,
         timeframe,
+        stratBreakEvenEnabled: stratManaged,
+        stratTrailingEnabled: stratManaged,
         commission: (executionMode === 'maker' ? makerFeeRate : takerFeeRate) as any,
         pricePrecision,
       },
@@ -1348,6 +1350,8 @@ async function executeEntry(
         appliedTakeProfitPrice: persistedTakeProfitPrice,
         initialTakeProfitOrderPlaced: takeProfitManagedOnExchange,
         initialTakeProfitExchangeManaged: takeProfitManagedOnExchange,
+        stratBreakEvenEnabledOnOpen: stratManaged,
+        stratTrailingEnabledOnOpen: stratManaged,
         initialTakeProfitPending,
         initialTakeProfitAttempts,
         initialStopAttempts,
@@ -1442,6 +1446,10 @@ async function executeEntry(
         exchangeManaged: takeProfitManagedOnExchange,
         pending: initialTakeProfitPending,
         attempts: initialTakeProfitAttempts,
+      },
+      stratControls: {
+        breakEvenEnabled: stratManaged,
+        trailingEnabled: stratManaged,
       },
     });
   } catch (error: any) {

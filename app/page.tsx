@@ -3094,7 +3094,7 @@ function PositionCard({
       {stratManaged && (
         <div className="space-y-3 rounded-2xl border border-amber-400/20 bg-amber-500/10 px-4 py-3">
           <div className="text-[11px] font-black uppercase tracking-[0.18em] text-amber-300">
-            Strat mode: salida por SL o TP. Trailing SELF opcional por operacion.
+            Strat mode: breakeven y trailing SELF activos por defecto en cada operacion.
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <button
@@ -3142,10 +3142,10 @@ function PositionCard({
           </div>
           <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400">
             {stratTrailingEnabled
-              ? 'Trailing activo con logica SELF: breakeven+fees, trailing por escalones y TP anulado.'
+              ? 'Trailing activo con logica SELF: breakeven+fees, trailing por escalones y sin TP activo.'
               : stratBreakEvenEnabled
                 ? 'Breakeven activo: movera el SL a entry+fees al llegar al umbral.'
-                : 'Sin breakeven ni trailing manuales en esta operacion.'}
+                : 'Protecciones strat temporales desactivadas en esta operacion.'}
           </p>
         </div>
       )}
@@ -3177,7 +3177,7 @@ function PositionCard({
                   ? 'Strat + SELF Trailing'
                   : stratBreakEvenEnabled
                     ? 'Strat + BreakEven'
-                    : 'Strat Fixed SL/TP')
+                    : 'Strat Protections Off')
               : (stopAdjustedByApp ? 'Adapted By App' : 'Legacy 1.2% Default')}
           </p>
           {typeof pos.takeProfit === 'number' && pos.takeProfit > 0 && (
