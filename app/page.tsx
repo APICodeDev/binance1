@@ -3318,10 +3318,27 @@ function PositionCard({
   const riskDistancePercent = isBuy ? -stopDistancePercent : stopDistancePercent;
   const isLegacyStop = Math.abs(Math.abs(riskDistancePercent) - LEGACY_STOP_PERCENT) < 0.05;
   const stopAdjustedByApp = !isLegacyStop;
+  const breakevenStopPrice = isBuy
+    ? pos.entryPrice * (1 + comm) / (1 - comm)
+    : pos.entryPrice * (1 - comm) / (1 + comm);
+  const stopVsBreakevenDelta = isBuy
+    ? pos.stopLoss - breakevenStopPrice
+    : breakevenStopPrice - pos.stopLoss;
+  const stopTolerance = Math.max(
+    0.0000001,
+    (typeof pos.pricePrecision === 'number' ? Math.pow(10, -pos.pricePrecision) : pos.entryPrice * 0.0001)
+  );
   
-  const isSafe = !stratManaged && pnlSafe > 0;
-  const isBreakeven = !stratManaged && Math.abs(pnlSafe) < 0.05;
-  const slAtEntry = !stratManaged && Math.abs(pos.stopLoss - pos.entryPrice) < Math.max(0.0000001, pos.entryPrice * 0.0001);
+  const isSafe = pnlSafe > 0.05;
+  const isBreakeven = Math.abs(pnlSafe) <= 0.05;
+  const breakevenActive = stopVsBreakevenDelta >= -stopTolerance;
+  const trailingSecured = isSafe && stopVsBreakevenDelta > stopTolerance;
+  const slAtEntry = breakevenActive && !trailingSecured;
+  const protectionStatus = trailingSecured
+    ? `Secured +${pnlSafe.toFixed(2)} ${quoteCurrency}`
+    : breakevenActive
+      ? 'Breakeven Active'
+      : 'Protection Arming';
   const stopEngineLabel = stratManaged
     ? (stratTrailingEnabled
         ? 'Strat Auto + Self Trailing'
@@ -3471,6 +3488,16 @@ function PositionCard({
             <p className={cn("text-[10px] font-black uppercase tracking-[0.16em]", stopAdjustedByApp || stratManaged ? "text-cyan-200/90" : "text-slate-600")}>
               {stopEngineLabel}
             </p>
+            <p className={cn(
+              "mt-2 text-[10px] font-black uppercase tracking-[0.18em]",
+              trailingSecured
+                ? "text-emerald-300"
+                : breakevenActive
+                  ? "text-amber-300"
+                  : "text-slate-500"
+            )}>
+              {protectionStatus}
+            </p>
             {typeof pos.takeProfit === 'number' && pos.takeProfit > 0 && (
               <p className="mt-2 text-[10px] font-black uppercase tracking-[0.18em] text-amber-300">
                 TP {formatPrice(pos.takeProfit, pos.pricePrecision)}
@@ -3514,13 +3541,13 @@ function PositionCard({
       {isSafe && (
         <div className="badge-safe justify-center py-2 animate-none bg-emerald-500/10 border-emerald-500/10">
           <ShieldCheck size={14} className="text-emerald-400" /> 
-          {isBreakeven ? 'BREAKEVEN SECURED' : `+${pnlSafe.toFixed(2)} ${quoteCurrency} SECURED`}
+          {`+${pnlSafe.toFixed(2)} ${quoteCurrency} SECURED`}
         </div>
       )}
 
-      {slAtEntry && (
+      {breakevenActive && (
         <div className="px-3 py-2 rounded-xl border border-amber-500/20 bg-amber-500/10 text-center text-[11px] font-black uppercase tracking-[0.2em] text-amber-300">
-          Breakeven Plus Fees
+          {slAtEntry ? 'Breakeven Plus Fees Active' : 'Trailing Lock Active'}
         </div>
       )}
 

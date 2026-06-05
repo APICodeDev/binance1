@@ -202,8 +202,8 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     const fixedManaged = isFixedPriceManagementMode((pos as any).managementMode);
     const selfManaged = managementMode === 'self';
     const stratManaged = managementMode === 'strat';
-    const stratBreakEvenEnabled = Boolean((pos as any).stratBreakEvenEnabled);
-    const stratTrailingEnabled = Boolean((pos as any).stratTrailingEnabled);
+    const stratBreakEvenEnabled = stratManaged || Boolean((pos as any).stratBreakEvenEnabled);
+    const stratTrailingEnabled = stratManaged || Boolean((pos as any).stratTrailingEnabled);
     const stratSelfLogicEnabled = stratManaged && stratTrailingEnabled;
     const stratBreakEvenOnlyEnabled = stratManaged && stratBreakEvenEnabled && !stratTrailingEnabled;
     const effectiveSelfManaged = selfManaged || stratSelfLogicEnabled;

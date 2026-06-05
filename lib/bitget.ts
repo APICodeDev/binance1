@@ -834,6 +834,14 @@ export const bitgetEnsureVerifiedStopOrder = async (params: {
   tradeSide?: 'open' | 'close';
 }) => {
   const { symbol, side, stopPrice, quantity, tradingMode, tradeSide } = params;
+  const exchangeInfo = await bitgetGetExchangeInfo(symbol, tradingMode);
+  const normalizedStopPrice = exchangeInfo
+    ? bitgetNormalizePriceByContractDirectional(
+        stopPrice,
+        exchangeInfo,
+        side === 'SELL' ? 'up' : 'down'
+      )
+    : stopPrice;
   const pending = await bitgetGetPendingStopOrders(symbol, tradingMode);
   if (!pending.ok) {
     return { ok: false, message: pending.error || 'Unable to fetch pending stop orders before sync' };
@@ -853,7 +861,7 @@ export const bitgetEnsureVerifiedStopOrder = async (params: {
     const currentTriggerPrice = Number.parseFloat(String(primary.triggerPrice || primary.planTriggerPrice || '0'));
     const currentSize = Number.parseFloat(String(primary.size || primary.sz || '0'));
     if (Number.isFinite(currentTriggerPrice) &&
-      bitgetPriceMatches(currentTriggerPrice, stopPrice) &&
+      bitgetPriceMatches(currentTriggerPrice, normalizedStopPrice) &&
       (!Number.isFinite(currentSize) || currentSize <= 0 || bitgetSizeMatches(currentSize, quantity))) {
       action = 'unchanged';
     } else {
@@ -862,7 +870,7 @@ export const bitgetEnsureVerifiedStopOrder = async (params: {
       await bitgetCancelAlgoOrders(symbol, tradingMode);
       await bitgetCancelLossOrders(symbol, tradingMode);
       await sleep(300); // Give Bitget time to process cancellation
-      const placeResp = await bitgetPlaceStopMarket(symbol, side, stopPrice, quantity, tradingMode, tradeSide);
+      const placeResp = await bitgetPlaceStopMarket(symbol, side, normalizedStopPrice, quantity, tradingMode, tradeSide);
       if (!bitgetOrderSuccess(placeResp)) {
         return { ok: false, message: placeResp?.msg || placeResp?.message || JSON.stringify(placeResp) };
       }
@@ -872,7 +880,7 @@ export const bitgetEnsureVerifiedStopOrder = async (params: {
     await bitgetCancelAlgoOrders(symbol, tradingMode);
     await bitgetCancelLossOrders(symbol, tradingMode);
     await sleep(300); // Give Bitget time to process cancellation
-    const placeResp = await bitgetPlaceStopMarket(symbol, side, stopPrice, quantity, tradingMode, tradeSide);
+    const placeResp = await bitgetPlaceStopMarket(symbol, side, normalizedStopPrice, quantity, tradingMode, tradeSide);
     if (!bitgetOrderSuccess(placeResp)) {
       return { ok: false, message: placeResp?.msg || placeResp?.message || JSON.stringify(placeResp) };
     }
@@ -881,13 +889,13 @@ export const bitgetEnsureVerifiedStopOrder = async (params: {
 
   for (const delayMs of PROTECTION_VERIFY_DELAYS_MS) {
     await sleep(delayMs);
-    const verification = await bitgetVerifyPendingStopOrder(symbol, stopPrice, quantity, tradingMode);
+    const verification = await bitgetVerifyPendingStopOrder(symbol, normalizedStopPrice, quantity, tradingMode);
     if (verification.ok && verification.verified) {
-      return { ok: true, message: action, order: verification.order };
+      return { ok: true, message: action, order: verification.order, normalizedStopPrice };
     }
   }
 
-  return { ok: false, message: `Stop order could not be verified at ${stopPrice}` };
+  return { ok: false, message: `Stop order could not be verified at ${normalizedStopPrice}` };
 };
 
 export const bitgetGetPendingTpslOrders = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo') => {
