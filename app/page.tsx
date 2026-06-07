@@ -280,6 +280,7 @@ interface DashboardSettingsSnapshot {
   api_stop_mode: 'signal' | 'legacy';
   exhaustion_guard_enabled: string;
   take_profit_auto_close_enabled: string;
+  reverse_on_opposite_signal_enabled: string;
 }
 
 interface DashboardSnapshotPayload {
@@ -707,6 +708,7 @@ export default function Dashboard() {
   const [apiStopMode, setApiStopMode] = useState<'signal' | 'legacy'>('signal');
   const [exhaustionGuardEnabled, setExhaustionGuardEnabled] = useState(false);
   const [takeProfitAutoCloseEnabled, setTakeProfitAutoCloseEnabled] = useState(false);
+  const [reverseOnOppositeSignalEnabled, setReverseOnOppositeSignalEnabled] = useState(true);
   const [availableSounds, setAvailableSounds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -1017,6 +1019,7 @@ export default function Dashboard() {
     setApiStopMode(settings.api_stop_mode === 'legacy' ? 'legacy' : 'signal');
     setExhaustionGuardEnabled(settings.exhaustion_guard_enabled === '1');
     setTakeProfitAutoCloseEnabled(settings.take_profit_auto_close_enabled === '1');
+    setReverseOnOppositeSignalEnabled(settings.reverse_on_opposite_signal_enabled !== '0');
 
     if (settings.last_entry_error) {
       try {
@@ -1112,6 +1115,7 @@ export default function Dashboard() {
           api_stop_mode: settings.api_stop_mode === 'legacy' ? 'legacy' : 'signal',
           exhaustion_guard_enabled: settings.exhaustion_guard_enabled || '1',
           take_profit_auto_close_enabled: settings.take_profit_auto_close_enabled || '0',
+          reverse_on_opposite_signal_enabled: settings.reverse_on_opposite_signal_enabled || '1',
         },
       });
     } catch (error) {
@@ -1615,6 +1619,16 @@ export default function Dashboard() {
     }
   };
 
+  const toggleReverseOnOppositeSignal = async () => {
+    const nextValue = !reverseOnOppositeSignalEnabled;
+    try {
+      await apiClient.updateSettings({ reverse_on_opposite_signal_enabled: nextValue ? '1' : '0' });
+      setReverseOnOppositeSignalEnabled(nextValue);
+    } catch (error) {
+      setErrorPopup(getApiErrorMessage(error, 'Unable to update reverse-on-opposite-signal mode.'));
+    }
+  };
+
   const toggleApiStopMode = async () => {
     const nextValue = apiStopMode === 'signal' ? 'legacy' : 'signal';
     try {
@@ -2088,6 +2102,31 @@ export default function Dashboard() {
                   <div className={cn(
                     "absolute top-1 left-1 w-3 h-3 bg-white rounded-full transition-transform",
                     botEnabled ? "translate-x-5" : "translate-x-0"
+                  )} />
+                </div>
+              </div>
+
+              <div className={cn(
+                "flex items-center gap-2 px-4 py-2 rounded-full border transition-all duration-500",
+                reverseOnOppositeSignalEnabled ? "bg-amber-400/10 border-amber-400/30 text-amber-300" : "bg-slate-900 border-slate-800 text-slate-400"
+              )}>
+                <RefreshCw size={16} className={cn(reverseOnOppositeSignalEnabled && "animate-pulse")} />
+                <span className="text-[11px] font-bold uppercase hidden sm:inline">
+                  {reverseOnOppositeSignalEnabled ? 'REVERSE ON OPPOSITE ON' : 'REVERSE ON OPPOSITE OFF'}
+                </span>
+                <span className="text-[11px] font-bold uppercase sm:hidden">
+                  {reverseOnOppositeSignalEnabled ? 'REVERSE ON' : 'REVERSE OFF'}
+                </span>
+                <div
+                  className={cn(
+                    "w-10 h-5 rounded-full relative cursor-pointer transition-colors",
+                    reverseOnOppositeSignalEnabled ? "bg-amber-400" : "bg-slate-600"
+                  )}
+                  onClick={toggleReverseOnOppositeSignal}
+                >
+                  <div className={cn(
+                    "absolute top-1 left-1 w-3 h-3 bg-white rounded-full transition-transform",
+                    reverseOnOppositeSignalEnabled ? "translate-x-5" : "translate-x-0"
                   )} />
                 </div>
               </div>

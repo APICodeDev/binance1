@@ -51,6 +51,7 @@ const DASHBOARD_SETTING_KEYS = [
   'api_stop_mode',
   'exhaustion_guard_enabled',
   'take_profit_auto_close_enabled',
+  'reverse_on_opposite_signal_enabled',
 ] as const;
 
 type DashboardMode = 'demo' | 'live';
@@ -108,6 +109,7 @@ async function buildDashboardSnapshot(mode: DashboardMode) {
       api_stop_mode: settingsMap.api_stop_mode || 'signal',
       exhaustion_guard_enabled: settingsMap.exhaustion_guard_enabled || '1',
       take_profit_auto_close_enabled: settingsMap.take_profit_auto_close_enabled || '0',
+      reverse_on_opposite_signal_enabled: settingsMap.reverse_on_opposite_signal_enabled || '1',
     },
   };
 }

@@ -768,9 +768,11 @@ async function executeEntry(
     const customAmountSetting = await prisma.setting.findUnique({ where: { key: 'custom_amount' } });
     const leverageEnabledSetting = await prisma.setting.findUnique({ where: { key: 'leverage_enabled' } });
     const leverageValueSetting = await prisma.setting.findUnique({ where: { key: 'leverage_value' } });
+    const reverseOnOppositeSignalEnabledSetting = await prisma.setting.findUnique({ where: { key: 'reverse_on_opposite_signal_enabled' } });
     const customAmount = parseFloat(String(customAmountSetting?.value || '0').replace(/[^0-9.]/g, ''));
     const leverageEnabled = leverageEnabledSetting?.value === '1';
     const configuredLeverage = Number.parseFloat(String(leverageValueSetting?.value || '1'));
+    const reverseOnOppositeSignalEnabled = reverseOnOppositeSignalEnabledSetting?.value !== '0';
     if (customAmount > 0) {
       amount = customAmount;
     }
@@ -904,6 +906,33 @@ async function executeEntry(
         },
         req,
       });
+
+      if (!reverseOnOppositeSignalEnabled) {
+        await writeAuditLog({
+          action: 'position.reverse_close_only',
+          userId: auth?.user?.id,
+          targetType: 'position',
+          targetId: String(existing.id),
+          metadata: {
+            symbol,
+            tradingMode,
+            existingPositionType: existing.positionType,
+            incomingPositionType: type,
+            managementMode: existing.managementMode,
+            incomingManagementMode: storedManagementMode,
+            positionOrigin: existing.origin || null,
+            signalOrigin: origin,
+            trigger: auth ? auth.authType : 'webhook',
+            reverseOnOppositeSignalEnabled,
+          },
+          req,
+        });
+
+        return NextResponse.json({
+          success: true,
+          message: `Posicion previa cerrada en ${symbol} (${tradingMode}) por senal opuesta. La apertura automatica de la nueva direccion esta desactivada.`,
+        });
+      }
     }
 
     const exchangeInfo = await bitgetGetExchangeInfo(symbol, tradingMode);
