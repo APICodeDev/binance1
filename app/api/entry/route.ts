@@ -646,8 +646,10 @@ async function executeEntry(
     const symbol = bitgetNormalizeSymbol(data.symbol || '');
     let amount = parseFloat(data.amount) || 0;
     const type = String(data.type || '').toLowerCase();
-    const fixedPriceMode = isFixedPriceManagementMode(data.mode);
-    const managementMode = normalizePositionManagementMode(data.mode) as PositionManagementMode;
+    const modeProvided = data.mode !== undefined && data.mode !== null && String(data.mode).trim() !== '';
+    const requestedMode = modeProvided ? data.mode : 'strat';
+    const fixedPriceMode = isFixedPriceManagementMode(requestedMode);
+    const managementMode = normalizePositionManagementMode(requestedMode) as PositionManagementMode;
     const storedManagementMode = fixedPriceMode ? 'fixed' : managementMode;
     const stratManaged = managementMode === 'strat';
     const origin = normalizeSignalOrigin(data.origin);

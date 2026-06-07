@@ -1641,7 +1641,10 @@ export default function Dashboard() {
 
   const submitNewPosition = async () => {
     try {
-      await apiClient.openPosition(newPos);
+      await apiClient.openPosition({
+        ...newPos,
+        mode: 'strat',
+      });
       setShowModal(false);
       setNewPos({
         symbol: '',
@@ -1680,6 +1683,7 @@ export default function Dashboard() {
         symbol: bookmapSymbol,
         amount: customAmount || '100',
         type: entryType,
+        mode: 'strat',
         origin: 'Heatmap',
         timeframe: 'OrderBook',
         stopPrice: bookmapData.preSignal.stopPrice,
@@ -1798,10 +1802,6 @@ export default function Dashboard() {
   };
 
   const totalSecuredProfit = openPositions.reduce((acc, pos) => {
-    if (normalizeManagementMode(pos.managementMode) === 'strat') {
-      return acc;
-    }
-
     const isBuy = pos.positionType === 'buy';
     const comm = pos.commission ?? 0.0006;
     const isSafe = (isBuy && pos.stopLoss > pos.entryPrice) || (!isBuy && pos.stopLoss < pos.entryPrice);
@@ -3337,8 +3337,8 @@ function PositionCard({
   const managementMode = normalizeManagementMode(pos.managementMode);
   const managementModeLabel = formatManagementModeLabel(pos.managementMode);
   const stratManaged = managementMode === 'strat';
-  const stratBreakEvenEnabled = Boolean(pos.stratBreakEvenEnabled);
-  const stratTrailingEnabled = Boolean(pos.stratTrailingEnabled);
+  const stratBreakEvenEnabled = stratManaged || Boolean(pos.stratBreakEvenEnabled);
+  const stratTrailingEnabled = stratManaged || Boolean(pos.stratTrailingEnabled);
   const quoteCurrency = pos.tradingMode === 'live' ? 'USDC' : 'USDT';
   const comm = pos.commission ?? 0.0006;
   const LEGACY_STOP_PERCENT = 1.2;
