@@ -9,13 +9,16 @@ import {
   bitgetCancelAllOrders,
   bitgetClosePosition,
   bitgetEnsureVerifiedStopOrder,
+  bitgetGetHistoricalCandles,
   bitgetGetPositionMode,
   bitgetGetSinglePosition,
   bitgetOrderSuccess,
 } from '@/lib/bitget';
 import {
+  AdaptiveProtectionContext,
+  buildAdaptiveProtectionContext,
   calculateCloseMetrics,
-  computeTrendProtectionDecision,
+  computeAdaptiveProtectionDecision,
   isFixedPriceManagementMode,
   normalizePositionManagementMode,
   resolveBitgetCloseExecution,
@@ -90,6 +93,8 @@ const marketSnapshots = new Map<string, MarketSnapshot>();
 const openPositions = new Map<number, Position>();
 const positionsByMarketKey = new Map<string, Set<number>>();
 const watchedMarketKeys = new Set<string>();
+const adaptiveContextByPosition = new Map<number, AdaptiveProtectionContext | null>();
+const adaptiveContextPromiseByPosition = new Map<number, Promise<AdaptiveProtectionContext | null>>();
 const engineSubscribers = new Map<number, EngineSubscriber>();
 const positionLocks = new Set<number>();
 const lastPersistAtByPosition = new Map<number, number>();
@@ -179,9 +184,51 @@ const removeOpenPosition = (position: Position) => {
   positionLocks.delete(position.id);
   lastPersistAtByPosition.delete(position.id);
   lastStopSyncAtByPosition.delete(position.id);
+  adaptiveContextByPosition.delete(position.id);
+  adaptiveContextPromiseByPosition.delete(position.id);
 };
 
-const computeCandidateStopLoss = (position: Position, currentPrice: number) => {
+const loadAdaptiveContextForPosition = async (position: Position) => {
+  const cached = adaptiveContextByPosition.get(position.id);
+  if (typeof cached !== 'undefined') {
+    return cached;
+  }
+
+  const pending = adaptiveContextPromiseByPosition.get(position.id);
+  if (pending) {
+    return pending;
+  }
+
+  const createdAtMs = new Date(position.createdAt).getTime();
+  const tradingMode = ((position as any).tradingMode || 'demo') as TradingMode;
+  const promise = Promise.all([
+    bitgetGetHistoricalCandles(position.symbol, '15m', 8, tradingMode, createdAtMs).catch(() => ({ ok: false as const, error: '15m history failed' })),
+    bitgetGetHistoricalCandles(position.symbol, '1H', 20, tradingMode, createdAtMs).catch(() => ({ ok: false as const, error: '1H history failed' })),
+  ])
+    .then(([candles15m, candles1h]) => {
+      if (!candles15m.ok || !candles1h.ok) {
+        return null;
+      }
+
+      return buildAdaptiveProtectionContext({
+        positionType: position.positionType,
+        entryPrice: position.entryPrice,
+        candles15m: candles15m.candles,
+        candles1h: candles1h.candles,
+      });
+    })
+    .catch(() => null)
+    .finally(() => {
+      adaptiveContextPromiseByPosition.delete(position.id);
+    });
+
+  adaptiveContextPromiseByPosition.set(position.id, promise);
+  const resolved = await promise;
+  adaptiveContextByPosition.set(position.id, resolved);
+  return resolved;
+};
+
+const computeCandidateStopLoss = (position: Position, currentPrice: number, adaptiveContext: AdaptiveProtectionContext | null) => {
   const managementMode = normalizePositionManagementMode(position.managementMode);
   const stratBreakEvenEnabled = isStratBreakEvenActive(position);
   const stratTrailingEnabled = isStratTrailingActive(position);
@@ -194,17 +241,17 @@ const computeCandidateStopLoss = (position: Position, currentPrice: number) => {
     : ((position.entryPrice - currentPrice) / position.entryPrice) * 100;
   const historicalMaxProfitPercent = Math.max(0, Number((position as any).maxProfitPercent || 0));
   const effectiveMovePercent = Math.max(marketMovePercent, historicalMaxProfitPercent);
-  const trendProtection = computeTrendProtectionDecision({
-    origin: (position as any).origin,
+  const adaptiveProtection = computeAdaptiveProtectionDecision({
     positionType: position.positionType,
     entryPrice: position.entryPrice,
     entryCommission: commission,
     exitCommission: commission,
     effectiveMovePercent,
+    context: adaptiveContext,
   });
 
-  if (trendProtection) {
-    return trendProtection.stopPrice;
+  if (adaptiveProtection) {
+    return adaptiveProtection.stopPrice;
   }
 
   if (position.positionType === 'buy') {
@@ -270,7 +317,11 @@ const hasBreachedStopLevel = (position: Position, currentPrice: number, stopPric
     : currentPrice >= stopPrice;
 };
 
-const buildPositionMarketUpdate = (position: Position, snapshot: MarketSnapshot): PositionMarketUpdate | null => {
+const buildPositionMarketUpdate = (
+  position: Position,
+  snapshot: MarketSnapshot,
+  adaptiveContext: AdaptiveProtectionContext | null
+): PositionMarketUpdate | null => {
   const livePrice = resolveLivePrice(snapshot);
   if (!livePrice) {
     return null;
@@ -286,7 +337,7 @@ const buildPositionMarketUpdate = (position: Position, snapshot: MarketSnapshot)
   const profitPercent = position.positionType === 'buy'
     ? ((currentPrice - position.entryPrice) / position.entryPrice) * 100
     : ((position.entryPrice - currentPrice) / position.entryPrice) * 100;
-  const candidateStopLoss = computeCandidateStopLoss(position, currentPrice);
+  const candidateStopLoss = computeCandidateStopLoss(position, currentPrice, adaptiveContext);
   const canImproveStop = candidateStopLoss !== null && (
     (position.positionType === 'buy' && candidateStopLoss > position.stopLoss) ||
     (position.positionType === 'sell' && candidateStopLoss < position.stopLoss)
@@ -743,7 +794,8 @@ const processPositionMarketUpdate = async (positionId: number, snapshot: MarketS
     return;
   }
 
-  const update = buildPositionMarketUpdate(position, snapshot);
+  const adaptiveContext = await loadAdaptiveContextForPosition(position);
+  const update = buildPositionMarketUpdate(position, snapshot, adaptiveContext);
   if (!update) {
     return;
   }

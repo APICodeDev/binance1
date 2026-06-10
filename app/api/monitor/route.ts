@@ -5,7 +5,7 @@ import { writeAuditLog } from '@/lib/audit';
 import { fail, ok } from '@/lib/apiResponse';
 import { requireAuth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { calculateCloseMetrics, computeTrendProtectionDecision, isFixedPriceManagementMode, normalizePositionManagementMode, resolveBitgetCloseExecution } from '@/lib/positions';
+import { buildAdaptiveProtectionContext, calculateCloseMetrics, computeAdaptiveProtectionDecision, isFixedPriceManagementMode, normalizePositionManagementMode, resolveBitgetCloseExecution } from '@/lib/positions';
 import { attachTakeProfitUpgradeMeta } from '@/lib/positionSignals';
 import { notifyPositiveClose } from '@/lib/ntfy';
 import { notifyAllActiveDevices } from '@/lib/pushNotifications';
@@ -18,6 +18,7 @@ import {
   bitgetCancelAllOrders,
   bitgetCancelAlgoOrders,
   bitgetEnsureVerifiedStopOrder,
+  bitgetGetHistoricalCandles,
   bitgetGetPendingStopOrders,
   bitgetGetRecentCandleRange,
   bitgetModifyStopOrder,
@@ -170,6 +171,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
 
   const results: string[] = [];
   const pushEvents: Array<{ title: string; body: string; data?: Record<string, unknown> }> = [];
+  const adaptiveContextCache = new Map<number, Awaited<ReturnType<typeof buildAdaptiveProtectionContext>>>();
 
   const syncStopOrder = async (
     symbol: string,
@@ -196,6 +198,30 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
 
     const lockedPercent = Math.floor((marketMovePercent - 0.25) + 1e-9);
     return lockedPercent >= 1 ? lockedPercent : null;
+  };
+
+  const getAdaptiveContextForPosition = async (pos: any, mode: 'demo' | 'live') => {
+    if (adaptiveContextCache.has(pos.id)) {
+      return adaptiveContextCache.get(pos.id) ?? null;
+    }
+
+    const createdAtMs = new Date(pos.createdAt).getTime();
+    const [candles15m, candles1h] = await Promise.all([
+      bitgetGetHistoricalCandles(pos.symbol, '15m', 8, mode, createdAtMs).catch(() => ({ ok: false as const, error: '15m history failed' })),
+      bitgetGetHistoricalCandles(pos.symbol, '1H', 20, mode, createdAtMs).catch(() => ({ ok: false as const, error: '1H history failed' })),
+    ]);
+
+    const context = candles15m.ok && candles1h.ok
+      ? buildAdaptiveProtectionContext({
+          positionType: pos.positionType,
+          entryPrice: pos.entryPrice,
+          candles15m: candles15m.candles,
+          candles1h: candles1h.candles,
+        })
+      : null;
+
+    adaptiveContextCache.set(pos.id, context);
+    return context;
   };
 
   for (const pos of positions) {
@@ -330,13 +356,14 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       ? Math.max(0, (maxProfitPercent - profitPercent) / maxProfitPercent)
       : 0;
     const givebackPercent = Math.max(0, maxProfitPercent - profitPercent);
-    const trendProtection = computeTrendProtectionDecision({
-      origin: (pos as any).origin,
+    const adaptiveContext = await getAdaptiveContextForPosition(pos, mode);
+    const adaptiveProtection = computeAdaptiveProtectionDecision({
       positionType: pos.positionType,
       entryPrice: pos.entryPrice,
       entryCommission: entryComm,
       exitCommission: comm,
       effectiveMovePercent: Math.max(marketMovePercent, maxProfitPercent),
+      context: adaptiveContext,
     });
 
     let newSl = pos.stopLoss;
@@ -398,11 +425,11 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     if (!exhaustionTriggered && pos.positionType === 'buy') {
       if (autoManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice >= takeProfit) {
         takeProfitTriggered = true;
-      } else if (trendProtection && trendProtection.stopPrice > pos.stopLoss) {
-        const slResp = await syncStopOrder(symbol, positionContext.closeSide, trendProtection.stopPrice, pos.quantity, mode, positionContext.closeTradeSide);
+      } else if (adaptiveProtection && adaptiveProtection.stopPrice > pos.stopLoss) {
+        const slResp = await syncStopOrder(symbol, positionContext.closeSide, adaptiveProtection.stopPrice, pos.quantity, mode, positionContext.closeTradeSide);
         if (slResp.ok) {
-          newSl = trendProtection.stopPrice;
-          results.push(`SL_UPDATE (${mode}): ${symbol} trend ${trendProtection.reason} -> ${trendProtection.stopPrice}`);
+          newSl = adaptiveProtection.stopPrice;
+          results.push(`SL_UPDATE (${mode}): ${symbol} adaptive ${adaptiveProtection.reason} -> ${adaptiveProtection.stopPrice}`);
         }
       } else if (effectiveSelfManaged) {
         const trailingStep = getSelfManagedTrailingStep(marketMovePercent);
@@ -479,11 +506,11 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     } else if (!exhaustionTriggered) { // short
       if (autoManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice <= takeProfit) {
         takeProfitTriggered = true;
-      } else if (trendProtection && trendProtection.stopPrice < pos.stopLoss) {
-        const slResp = await syncStopOrder(symbol, positionContext.closeSide, trendProtection.stopPrice, pos.quantity, mode, positionContext.closeTradeSide);
+      } else if (adaptiveProtection && adaptiveProtection.stopPrice < pos.stopLoss) {
+        const slResp = await syncStopOrder(symbol, positionContext.closeSide, adaptiveProtection.stopPrice, pos.quantity, mode, positionContext.closeTradeSide);
         if (slResp.ok) {
-          newSl = trendProtection.stopPrice;
-          results.push(`SL_UPDATE (${mode}): ${symbol} trend ${trendProtection.reason} -> ${trendProtection.stopPrice}`);
+          newSl = adaptiveProtection.stopPrice;
+          results.push(`SL_UPDATE (${mode}): ${symbol} adaptive ${adaptiveProtection.reason} -> ${adaptiveProtection.stopPrice}`);
         }
       } else if (effectiveSelfManaged) {
         const trailingStep = getSelfManagedTrailingStep(marketMovePercent);

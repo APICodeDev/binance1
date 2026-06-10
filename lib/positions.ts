@@ -21,11 +21,24 @@ const SELF_MODE_ALIASES = new Set(['self', 'sefl', 'selft']);
 const FIXED_PRICE_MODE_ALIASES = new Set(['fixed']);
 const STRAT_MODE_ALIASES = new Set(['strat', 'strategy']);
 const CLOSE_RETRY_DELAYS_MS = [400, 900, 1600];
-const TREND_ORIGIN = 'TREND';
-const TREND_BREAK_EVEN_EXTRA_BUFFER_PERCENT = 0.08;
-const TREND_TRAILING_EXTRA_BUFFER_PERCENT = 0.23;
-const TREND_TRAILING_GIVEBACK_PERCENT = 0.18;
-const TREND_MIN_NET_LOCKED_PERCENT = 0.03;
+const ADAPTIVE_MIN_ATR_1H_PERCENT = 0.4;
+const ADAPTIVE_CHOP_RANGE_BASE_PERCENT = 1.8;
+const ADAPTIVE_CHOP_RANGE_SPREAD_PERCENT = 1.0;
+const ADAPTIVE_BREAK_EVEN_BASE_BUFFER_PERCENT = 0.04;
+const ADAPTIVE_BREAK_EVEN_QUALITY_BONUS_PERCENT = 0.18;
+const ADAPTIVE_BREAK_EVEN_CHOP_PENALTY_PERCENT = 0.08;
+const ADAPTIVE_BREAK_EVEN_MIN_PERCENT = 0.16;
+const ADAPTIVE_BREAK_EVEN_MAX_PERCENT = 0.38;
+const ADAPTIVE_TRAILING_BASE_OFFSET_PERCENT = 0.10;
+const ADAPTIVE_TRAILING_QUALITY_BONUS_PERCENT = 0.14;
+const ADAPTIVE_TRAILING_MIN_PERCENT = 0.26;
+const ADAPTIVE_TRAILING_MAX_PERCENT = 0.62;
+const ADAPTIVE_GIVEBACK_BASE_PERCENT = 0.10;
+const ADAPTIVE_GIVEBACK_QUALITY_BONUS_PERCENT = 0.14;
+const ADAPTIVE_GIVEBACK_CHOP_PENALTY_PERCENT = 0.06;
+const ADAPTIVE_GIVEBACK_MIN_PERCENT = 0.08;
+const ADAPTIVE_GIVEBACK_MAX_PERCENT = 0.28;
+const ADAPTIVE_MIN_NET_LOCKED_PERCENT = 0.03;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function normalizePositionManagementMode(value: unknown): PositionManagementMode {
@@ -50,8 +63,125 @@ export function isSelfManagedPosition(value: unknown) {
   return normalizePositionManagementMode(value) === 'self';
 }
 
-function normalizeOrigin(value: unknown) {
-  return String(value ?? '').trim().toUpperCase();
+type MarketCandle = {
+  ts: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+};
+
+export type AdaptiveProtectionContext = {
+  signedTrend4hPercent: number;
+  atr1hPercent: number;
+  rangePercent8x15m: number;
+  entryPercentile: number;
+  pullbackScore: number;
+  chopScore: number;
+  trendAlignScore: number;
+  qualityScore: number;
+};
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function calculateTrueRange(current: MarketCandle, previous: MarketCandle | null) {
+  if (!previous) {
+    return current.high - current.low;
+  }
+
+  return Math.max(
+    current.high - current.low,
+    Math.abs(current.high - previous.close),
+    Math.abs(current.low - previous.close)
+  );
+}
+
+function calculateAverageTrueRangePercent(candles: MarketCandle[], period: number) {
+  if (candles.length < period) {
+    return null;
+  }
+
+  const slice = candles.slice(-period);
+  const trueRanges = slice.map((candle, index) => {
+    const previous = index === 0 ? (candles[candles.length - slice.length - 1] || null) : slice[index - 1];
+    return calculateTrueRange(candle, previous);
+  });
+  const averageTrueRange = trueRanges.reduce((acc, value) => acc + value, 0) / trueRanges.length;
+  const referencePrice = slice[slice.length - 1]?.close || 0;
+
+  if (!(referencePrice > 0)) {
+    return null;
+  }
+
+  return (averageTrueRange / referencePrice) * 100;
+}
+
+function calculateEntryPercentile(entryPrice: number, low: number, high: number) {
+  const span = high - low;
+  if (!(span > 0)) {
+    return 0.5;
+  }
+
+  return clamp((entryPrice - low) / span, 0, 1);
+}
+
+export function buildAdaptiveProtectionContext(params: {
+  positionType: string;
+  entryPrice: number;
+  candles15m: MarketCandle[];
+  candles1h: MarketCandle[];
+}) {
+  const { positionType, entryPrice, candles15m, candles1h } = params;
+  if (!(entryPrice > 0) || candles15m.length < 8 || candles1h.length < 5) {
+    return null;
+  }
+
+  const recent15m = candles15m.slice(-8);
+  const rangeHigh = Math.max(...recent15m.map((candle) => candle.high));
+  const rangeLow = Math.min(...recent15m.map((candle) => candle.low));
+  const rangePercent8x15m = ((rangeHigh - rangeLow) / entryPrice) * 100;
+  const entryPercentile = calculateEntryPercentile(entryPrice, rangeLow, rangeHigh);
+  const pullbackScore = positionType === 'buy' ? 1 - entryPercentile : entryPercentile;
+  const atr1hPercent = calculateAverageTrueRangePercent(candles1h, Math.min(14, candles1h.length));
+  const current1hClose = candles1h[candles1h.length - 1]?.close || 0;
+  const previous4hClose = candles1h[candles1h.length - 5]?.close || 0;
+
+  if (!(current1hClose > 0) || !(previous4hClose > 0) || atr1hPercent === null) {
+    return null;
+  }
+
+  const signedTrend4hPercent = ((current1hClose - previous4hClose) / previous4hClose) * 100;
+  const trendAlignedPercent = positionType === 'buy' ? signedTrend4hPercent : -signedTrend4hPercent;
+  const trendAlignScore = clamp(
+    trendAlignedPercent / Math.max(atr1hPercent, ADAPTIVE_MIN_ATR_1H_PERCENT),
+    -1,
+    1
+  );
+  const chopScore = clamp(
+    (rangePercent8x15m - ADAPTIVE_CHOP_RANGE_BASE_PERCENT) / ADAPTIVE_CHOP_RANGE_SPREAD_PERCENT,
+    0,
+    1
+  );
+  const qualityScore = clamp(
+    (0.55 * Math.max(0, trendAlignScore)) +
+      (0.45 * pullbackScore) -
+      (0.50 * chopScore),
+    0,
+    1
+  );
+
+  return {
+    signedTrend4hPercent,
+    atr1hPercent,
+    rangePercent8x15m,
+    entryPercentile,
+    pullbackScore,
+    chopScore,
+    trendAlignScore,
+    qualityScore,
+  } satisfies AdaptiveProtectionContext;
 }
 
 export function calculateFeeAwareExitPrice(params: {
@@ -77,35 +207,55 @@ export function calculateFeeAwareExitPrice(params: {
   return entryPrice * (1 - entryCommission - targetRatio) / (1 + exitCommission);
 }
 
-export function computeTrendProtectionDecision(params: {
-  origin?: string | null;
+export function computeAdaptiveProtectionDecision(params: {
   positionType: string;
   entryPrice: number;
   entryCommission: number;
   exitCommission: number;
   effectiveMovePercent: number;
+  context: AdaptiveProtectionContext | null;
 }) {
   const {
-    origin,
     positionType,
     entryPrice,
     entryCommission,
     exitCommission,
     effectiveMovePercent,
+    context,
   } = params;
 
-  if (normalizeOrigin(origin) !== TREND_ORIGIN) {
+  if (!context) {
     return null;
   }
 
   const roundTripFeePercent = (entryCommission + exitCommission) * 100;
-  const breakEvenActivationPercent = Math.max(0.2, roundTripFeePercent + TREND_BREAK_EVEN_EXTRA_BUFFER_PERCENT);
-  const trailingActivationPercent = Math.max(0.35, roundTripFeePercent + TREND_TRAILING_EXTRA_BUFFER_PERCENT);
+  const breakEvenActivationPercent = clamp(
+    roundTripFeePercent +
+      ADAPTIVE_BREAK_EVEN_BASE_BUFFER_PERCENT +
+      (ADAPTIVE_BREAK_EVEN_QUALITY_BONUS_PERCENT * context.qualityScore) -
+      (ADAPTIVE_BREAK_EVEN_CHOP_PENALTY_PERCENT * context.chopScore),
+    ADAPTIVE_BREAK_EVEN_MIN_PERCENT,
+    ADAPTIVE_BREAK_EVEN_MAX_PERCENT
+  );
+  const trailingActivationPercent = clamp(
+    breakEvenActivationPercent +
+      ADAPTIVE_TRAILING_BASE_OFFSET_PERCENT +
+      (ADAPTIVE_TRAILING_QUALITY_BONUS_PERCENT * context.qualityScore),
+    ADAPTIVE_TRAILING_MIN_PERCENT,
+    ADAPTIVE_TRAILING_MAX_PERCENT
+  );
+  const givebackPercent = clamp(
+    ADAPTIVE_GIVEBACK_BASE_PERCENT +
+      (ADAPTIVE_GIVEBACK_QUALITY_BONUS_PERCENT * context.qualityScore) -
+      (ADAPTIVE_GIVEBACK_CHOP_PENALTY_PERCENT * context.chopScore),
+    ADAPTIVE_GIVEBACK_MIN_PERCENT,
+    ADAPTIVE_GIVEBACK_MAX_PERCENT
+  );
 
   if (effectiveMovePercent >= trailingActivationPercent) {
     const lockedNetPercent = Math.max(
-      TREND_MIN_NET_LOCKED_PERCENT,
-      effectiveMovePercent - TREND_TRAILING_GIVEBACK_PERCENT - roundTripFeePercent
+      ADAPTIVE_MIN_NET_LOCKED_PERCENT,
+      effectiveMovePercent - givebackPercent - roundTripFeePercent
     );
 
     return {
@@ -118,6 +268,10 @@ export function computeTrendProtectionDecision(params: {
         netProfitTargetPercent: lockedNetPercent,
       }),
       lockedNetPercent,
+      breakEvenActivationPercent,
+      trailingActivationPercent,
+      givebackPercent,
+      context,
     };
   }
 
@@ -129,9 +283,13 @@ export function computeTrendProtectionDecision(params: {
         entryPrice,
         entryCommission,
         exitCommission,
-        netProfitTargetPercent: TREND_MIN_NET_LOCKED_PERCENT,
+        netProfitTargetPercent: ADAPTIVE_MIN_NET_LOCKED_PERCENT,
       }),
-      lockedNetPercent: TREND_MIN_NET_LOCKED_PERCENT,
+      lockedNetPercent: ADAPTIVE_MIN_NET_LOCKED_PERCENT,
+      breakEvenActivationPercent,
+      trailingActivationPercent,
+      givebackPercent,
+      context,
     };
   }
 

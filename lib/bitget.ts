@@ -659,13 +659,45 @@ export const bitgetGetRecentCandleRange = async (
   tradingMode: 'demo' | 'live' = 'demo',
   limit = 5
 ) => {
+  const historical = await bitgetGetHistoricalCandles(symbol, '1m', limit, tradingMode);
+  if (!historical.ok) {
+    return { ok: false, error: historical.error };
+  }
+
+  const candles = historical.candles;
+  if (candles.length === 0) {
+    return { ok: false, error: 'No candle data available' };
+  }
+
+  return {
+    ok: true,
+    high: Math.max(...candles.map((candle: any) => candle.high)),
+    low: Math.min(...candles.map((candle: any) => candle.low)),
+    candles,
+    error: null,
+  };
+};
+
+export const bitgetGetHistoricalCandles = async (
+  symbol: string,
+  granularity: string,
+  limit: number,
+  tradingMode: 'demo' | 'live' = 'demo',
+  endTime?: number
+) => {
   const sym = symbol.toUpperCase();
-  const resp = await bitgetRequest('/api/v2/mix/market/history-candles', {
+  const params: Record<string, string> = {
     symbol: sym,
     productType: getProductType(sym),
-    granularity: '1m',
+    granularity,
     limit: String(limit),
-  }, 'GET', false, tradingMode);
+  };
+
+  if (typeof endTime === 'number' && Number.isFinite(endTime) && endTime > 0) {
+    params.endTime = String(Math.trunc(endTime));
+  }
+
+  const resp = await bitgetRequest('/api/v2/mix/market/history-candles', params, 'GET', false, tradingMode);
 
   if (!resp || resp.code !== '00000' || !Array.isArray(resp.data)) {
     return { ok: false, error: resp?.msg || resp?.message || 'history-candles failed' };
@@ -691,8 +723,6 @@ export const bitgetGetRecentCandleRange = async (
 
   return {
     ok: true,
-    high: Math.max(...candles.map((candle: any) => candle.high)),
-    low: Math.min(...candles.map((candle: any) => candle.low)),
     candles,
     error: null,
   };
