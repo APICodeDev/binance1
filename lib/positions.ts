@@ -21,6 +21,11 @@ const SELF_MODE_ALIASES = new Set(['self', 'sefl', 'selft']);
 const FIXED_PRICE_MODE_ALIASES = new Set(['fixed']);
 const STRAT_MODE_ALIASES = new Set(['strat', 'strategy']);
 const CLOSE_RETRY_DELAYS_MS = [400, 900, 1600];
+const TREND_ORIGIN = 'TREND';
+const TREND_BREAK_EVEN_EXTRA_BUFFER_PERCENT = 0.08;
+const TREND_TRAILING_EXTRA_BUFFER_PERCENT = 0.23;
+const TREND_TRAILING_GIVEBACK_PERCENT = 0.18;
+const TREND_MIN_NET_LOCKED_PERCENT = 0.03;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function normalizePositionManagementMode(value: unknown): PositionManagementMode {
@@ -43,6 +48,94 @@ export function isFixedPriceManagementMode(value: unknown) {
 
 export function isSelfManagedPosition(value: unknown) {
   return normalizePositionManagementMode(value) === 'self';
+}
+
+function normalizeOrigin(value: unknown) {
+  return String(value ?? '').trim().toUpperCase();
+}
+
+export function calculateFeeAwareExitPrice(params: {
+  positionType: string;
+  entryPrice: number;
+  entryCommission: number;
+  exitCommission: number;
+  netProfitTargetPercent: number;
+}) {
+  const {
+    positionType,
+    entryPrice,
+    entryCommission,
+    exitCommission,
+    netProfitTargetPercent,
+  } = params;
+  const targetRatio = netProfitTargetPercent / 100;
+
+  if (positionType === 'buy') {
+    return entryPrice * (1 + entryCommission + targetRatio) / (1 - exitCommission);
+  }
+
+  return entryPrice * (1 - entryCommission - targetRatio) / (1 + exitCommission);
+}
+
+export function computeTrendProtectionDecision(params: {
+  origin?: string | null;
+  positionType: string;
+  entryPrice: number;
+  entryCommission: number;
+  exitCommission: number;
+  effectiveMovePercent: number;
+}) {
+  const {
+    origin,
+    positionType,
+    entryPrice,
+    entryCommission,
+    exitCommission,
+    effectiveMovePercent,
+  } = params;
+
+  if (normalizeOrigin(origin) !== TREND_ORIGIN) {
+    return null;
+  }
+
+  const roundTripFeePercent = (entryCommission + exitCommission) * 100;
+  const breakEvenActivationPercent = Math.max(0.2, roundTripFeePercent + TREND_BREAK_EVEN_EXTRA_BUFFER_PERCENT);
+  const trailingActivationPercent = Math.max(0.35, roundTripFeePercent + TREND_TRAILING_EXTRA_BUFFER_PERCENT);
+
+  if (effectiveMovePercent >= trailingActivationPercent) {
+    const lockedNetPercent = Math.max(
+      TREND_MIN_NET_LOCKED_PERCENT,
+      effectiveMovePercent - TREND_TRAILING_GIVEBACK_PERCENT - roundTripFeePercent
+    );
+
+    return {
+      reason: 'trailing' as const,
+      stopPrice: calculateFeeAwareExitPrice({
+        positionType,
+        entryPrice,
+        entryCommission,
+        exitCommission,
+        netProfitTargetPercent: lockedNetPercent,
+      }),
+      lockedNetPercent,
+    };
+  }
+
+  if (effectiveMovePercent >= breakEvenActivationPercent) {
+    return {
+      reason: 'break_even' as const,
+      stopPrice: calculateFeeAwareExitPrice({
+        positionType,
+        entryPrice,
+        entryCommission,
+        exitCommission,
+        netProfitTargetPercent: TREND_MIN_NET_LOCKED_PERCENT,
+      }),
+      lockedNetPercent: TREND_MIN_NET_LOCKED_PERCENT,
+    };
+  }
+
+  return null;
 }
 
 type CloseablePosition = {

@@ -5,7 +5,7 @@ import { writeAuditLog } from '@/lib/audit';
 import { fail, ok } from '@/lib/apiResponse';
 import { requireAuth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { calculateCloseMetrics, isFixedPriceManagementMode, normalizePositionManagementMode, resolveBitgetCloseExecution } from '@/lib/positions';
+import { calculateCloseMetrics, computeTrendProtectionDecision, isFixedPriceManagementMode, normalizePositionManagementMode, resolveBitgetCloseExecution } from '@/lib/positions';
 import { attachTakeProfitUpgradeMeta } from '@/lib/positionSignals';
 import { notifyPositiveClose } from '@/lib/ntfy';
 import { notifyAllActiveDevices } from '@/lib/pushNotifications';
@@ -330,6 +330,14 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       ? Math.max(0, (maxProfitPercent - profitPercent) / maxProfitPercent)
       : 0;
     const givebackPercent = Math.max(0, maxProfitPercent - profitPercent);
+    const trendProtection = computeTrendProtectionDecision({
+      origin: (pos as any).origin,
+      positionType: pos.positionType,
+      entryPrice: pos.entryPrice,
+      entryCommission: entryComm,
+      exitCommission: comm,
+      effectiveMovePercent: Math.max(marketMovePercent, maxProfitPercent),
+    });
 
     let newSl = pos.stopLoss;
     const previousStopLoss = pos.stopLoss;
@@ -390,6 +398,12 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     if (!exhaustionTriggered && pos.positionType === 'buy') {
       if (autoManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice >= takeProfit) {
         takeProfitTriggered = true;
+      } else if (trendProtection && trendProtection.stopPrice > pos.stopLoss) {
+        const slResp = await syncStopOrder(symbol, positionContext.closeSide, trendProtection.stopPrice, pos.quantity, mode, positionContext.closeTradeSide);
+        if (slResp.ok) {
+          newSl = trendProtection.stopPrice;
+          results.push(`SL_UPDATE (${mode}): ${symbol} trend ${trendProtection.reason} -> ${trendProtection.stopPrice}`);
+        }
       } else if (effectiveSelfManaged) {
         const trailingStep = getSelfManagedTrailingStep(marketMovePercent);
         if (trailingStep !== null) {
@@ -465,6 +479,12 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     } else if (!exhaustionTriggered) { // short
       if (autoManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice <= takeProfit) {
         takeProfitTriggered = true;
+      } else if (trendProtection && trendProtection.stopPrice < pos.stopLoss) {
+        const slResp = await syncStopOrder(symbol, positionContext.closeSide, trendProtection.stopPrice, pos.quantity, mode, positionContext.closeTradeSide);
+        if (slResp.ok) {
+          newSl = trendProtection.stopPrice;
+          results.push(`SL_UPDATE (${mode}): ${symbol} trend ${trendProtection.reason} -> ${trendProtection.stopPrice}`);
+        }
       } else if (effectiveSelfManaged) {
         const trailingStep = getSelfManagedTrailingStep(marketMovePercent);
         if (trailingStep !== null) {

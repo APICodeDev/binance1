@@ -15,6 +15,7 @@ import {
 } from '@/lib/bitget';
 import {
   calculateCloseMetrics,
+  computeTrendProtectionDecision,
   isFixedPriceManagementMode,
   normalizePositionManagementMode,
   resolveBitgetCloseExecution,
@@ -193,6 +194,18 @@ const computeCandidateStopLoss = (position: Position, currentPrice: number) => {
     : ((position.entryPrice - currentPrice) / position.entryPrice) * 100;
   const historicalMaxProfitPercent = Math.max(0, Number((position as any).maxProfitPercent || 0));
   const effectiveMovePercent = Math.max(marketMovePercent, historicalMaxProfitPercent);
+  const trendProtection = computeTrendProtectionDecision({
+    origin: (position as any).origin,
+    positionType: position.positionType,
+    entryPrice: position.entryPrice,
+    entryCommission: commission,
+    exitCommission: commission,
+    effectiveMovePercent,
+  });
+
+  if (trendProtection) {
+    return trendProtection.stopPrice;
+  }
 
   if (position.positionType === 'buy') {
     if (effectiveSelfManaged) {
