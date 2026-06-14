@@ -230,6 +230,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     const fixedManaged = isFixedPriceManagementMode((pos as any).managementMode);
     const selfManaged = managementMode === 'self';
     const stratManaged = managementMode === 'strat';
+    const trendManaged = managementMode === 'trend';
     const stratBreakEvenEnabled = stratManaged || Boolean((pos as any).stratBreakEvenEnabled);
     const stratTrailingEnabled = stratManaged || Boolean((pos as any).stratTrailingEnabled);
     const stratSelfLogicEnabled = stratManaged && stratTrailingEnabled;
@@ -351,6 +352,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     const maxProfitAt = improvedMax
       ? new Date()
       : ((pos as any).maxProfitAt ? new Date((pos as any).maxProfitAt) : null);
+    const effectiveMovePercent = Math.max(marketMovePercent, maxProfitPercent);
     const stagnationMs = maxProfitAt ? (Date.now() - maxProfitAt.getTime()) : 0;
     const retracementRatio = maxProfitPercent > 0
       ? Math.max(0, (maxProfitPercent - profitPercent) / maxProfitPercent)
@@ -423,7 +425,18 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     }
 
     if (!exhaustionTriggered && pos.positionType === 'buy') {
-      if (autoManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice >= takeProfit) {
+      if (trendManaged && effectiveMovePercent > 1) {
+        const targetSlPrice = pos.entryPrice * (1 + entryComm) / (1 - comm);
+        if (targetSlPrice > pos.stopLoss) {
+          const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
+          if (slResp.ok) {
+            newSl = targetSlPrice;
+            results.push(`SL_UPDATE (${mode}): ${symbol} trend breakeven -> ${targetSlPrice}`);
+          } else {
+            results.push(`SL_SYNC_WARNING (${mode}): ${symbol} trend breakeven -> ${slResp.message}`);
+          }
+        }
+      } else if (autoManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice >= takeProfit) {
         takeProfitTriggered = true;
       } else if (adaptiveProtection && adaptiveProtection.stopPrice > pos.stopLoss) {
         const slResp = await syncStopOrder(symbol, positionContext.closeSide, adaptiveProtection.stopPrice, pos.quantity, mode, positionContext.closeTradeSide);
@@ -504,7 +517,18 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
         }
       }
     } else if (!exhaustionTriggered) { // short
-      if (autoManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice <= takeProfit) {
+      if (trendManaged && effectiveMovePercent > 1) {
+        const targetSlPrice = pos.entryPrice * (1 - entryComm) / (1 + comm);
+        if (targetSlPrice < pos.stopLoss) {
+          const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
+          if (slResp.ok) {
+            newSl = targetSlPrice;
+            results.push(`SL_UPDATE (${mode}): ${symbol} trend breakeven -> ${targetSlPrice}`);
+          } else {
+            results.push(`SL_SYNC_WARNING (${mode}): ${symbol} trend breakeven -> ${slResp.message}`);
+          }
+        }
+      } else if (autoManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice <= takeProfit) {
         takeProfitTriggered = true;
       } else if (adaptiveProtection && adaptiveProtection.stopPrice < pos.stopLoss) {
         const slResp = await syncStopOrder(symbol, positionContext.closeSide, adaptiveProtection.stopPrice, pos.quantity, mode, positionContext.closeTradeSide);
@@ -592,7 +616,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       const closeResp = await bitgetClosePosition(symbol, closeSide, pos.quantity, mode, positionContext.closeTradeSide);
 
       if (bitgetOrderSuccess(closeResp)) {
-        const stopWasMovedByTrailing = Math.abs(newSl - previousStopLoss) > Math.max(1e-8, Math.abs(previousStopLoss) * 0.000001);
+        const stopWasMovedByTrailing = !trendManaged && Math.abs(newSl - previousStopLoss) > Math.max(1e-8, Math.abs(previousStopLoss) * 0.000001);
         const closeReason = exhaustionTriggered
           ? 'exhaustion'
           : stopLossTriggered
@@ -704,6 +728,8 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
             : stratBreakEvenEnabled
               ? 'Breakeven activo'
               : 'SL/TP fijos')
+          : trendManaged
+            ? `OK_TREND (${mode}): #${pos.id} ${symbol} | Price: ${currentPrice} | PnL: ${profitPercent.toFixed(2)}% | Breakeven > 1%`
           : `OK (${mode}): #${pos.id} ${symbol} | Price: ${currentPrice} | PnL: ${profitPercent.toFixed(2)}%`
       );
     }

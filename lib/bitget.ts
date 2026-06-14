@@ -14,6 +14,7 @@ const WS_SERVICE_URL = (process.env.BITGET_WS_SERVICE_URL || 'http://127.0.0.1:8
 const DEFAULT_TAKER_FEE = 0.0006;
 const DEFAULT_MAKER_FEE = 0.0002;
 const PROTECTION_VERIFY_DELAYS_MS = [300, 600, 1200, 1500, 2000];
+const BITGET_PROTECTION_TRIGGER_TYPE = 'fill_price';
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const parseFeeRate = (value?: string) => {
@@ -462,7 +463,7 @@ export const bitgetPlaceStopMarket = async (
     productType: getProductType(sym),
     planType: 'normal_plan',
     triggerPrice: stopPrice.toFixed(precision),
-    triggerType: 'mark_price',
+    triggerType: BITGET_PROTECTION_TRIGGER_TYPE,
     executePrice: '0', // market order
     side: side.toLowerCase(),
     orderType: 'market',
@@ -500,7 +501,7 @@ export const bitgetPlaceTpslMarket = async (
     marginCoin: getMarginCoin(sym),
     planType,
     triggerPrice: triggerPrice.toFixed(precision),
-    triggerType: 'mark_price',
+    triggerType: BITGET_PROTECTION_TRIGGER_TYPE,
     executePrice: '0',
     holdSide,
     size: quantity.toString(),
@@ -1027,7 +1028,7 @@ export const bitgetModifyStopOrder = async (
     productType: getProductType(sym),
     marginCoin: getMarginCoin(sym),
     newTriggerPrice: stopPrice.toFixed(precision),
-    newTriggerType: 'mark_price',
+    newTriggerType: BITGET_PROTECTION_TRIGGER_TYPE,
   }, 'POST', true, tradingMode);
 };
 
@@ -1047,7 +1048,7 @@ export const bitgetModifyTpslOrder = async (
     productType: getProductType(sym),
     marginCoin: getMarginCoin(sym),
     triggerPrice: triggerPrice.toFixed(precision),
-    triggerType: 'mark_price',
+    triggerType: BITGET_PROTECTION_TRIGGER_TYPE,
     executePrice: '0',
     size: quantity.toString(),
   }, 'POST', true, tradingMode);

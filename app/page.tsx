@@ -72,7 +72,7 @@ interface Position {
   id: number;
   symbol: string;
   positionType: 'buy' | 'sell';
-  managementMode?: 'auto' | 'self' | 'strat' | 'fixed';
+  managementMode?: 'auto' | 'self' | 'strat' | 'trend' | 'fixed';
   amount: number;
   quantity: number;
   entryPrice: number;
@@ -329,7 +329,7 @@ interface LivePositionMarketUpdatePayload {
   takeProfit: number | null;
   candidateStopLoss: number | null;
   canImproveStop: boolean;
-  managementMode: 'auto' | 'self' | 'strat';
+  managementMode: 'auto' | 'self' | 'strat' | 'trend';
   stratBreakEvenEnabled: boolean;
   stratTrailingEnabled: boolean;
   eventTimestamp: number;
@@ -663,7 +663,7 @@ function formatClosedDuration(createdAt: string, closedAt?: string) {
   return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
 }
 
-function normalizeManagementMode(value?: string | null): 'auto' | 'self' | 'strat' {
+function normalizeManagementMode(value?: string | null): 'auto' | 'self' | 'strat' | 'trend' {
   const raw = String(value ?? '').trim().toLowerCase();
   if (raw === 'self' || raw === 'fixed') {
     return 'self';
@@ -671,6 +671,10 @@ function normalizeManagementMode(value?: string | null): 'auto' | 'self' | 'stra
 
   if (raw === 'strat' || raw === 'strategy') {
     return 'strat';
+  }
+
+  if (raw === 'trend') {
+    return 'trend';
   }
 
   return 'auto';
@@ -684,6 +688,10 @@ function formatManagementModeLabel(value?: string | null) {
 
   if (normalized === 'strat') {
     return 'Strat';
+  }
+
+  if (normalized === 'trend') {
+    return 'Trend';
   }
 
   return 'Auto';
@@ -3337,6 +3345,7 @@ function PositionCard({
   const managementMode = normalizeManagementMode(pos.managementMode);
   const managementModeLabel = formatManagementModeLabel(pos.managementMode);
   const stratManaged = managementMode === 'strat';
+  const trendManaged = managementMode === 'trend';
   const stratBreakEvenEnabled = stratManaged || Boolean(pos.stratBreakEvenEnabled);
   const stratTrailingEnabled = stratManaged || Boolean(pos.stratTrailingEnabled);
   const quoteCurrency = pos.tradingMode === 'live' ? 'USDC' : 'USDT';
@@ -3384,6 +3393,8 @@ function PositionCard({
         : stratBreakEvenEnabled
           ? 'Strat Auto + BreakEven'
           : 'Strat Legacy')
+    : trendManaged
+      ? 'Trend Legacy + BreakEven >1%'
     : (stopAdjustedByApp ? 'Adapted By App' : 'Legacy 1.2% Default');
 
   const exchangeUrl = `https://www.bitget.com/en/futures/usdt/${pos.symbol}`;

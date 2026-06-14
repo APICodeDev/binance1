@@ -8,6 +8,7 @@ struct PositionCardView: View {
         let isBuy = position.positionType == "buy"
         let managementMode = position.managementModeLabel
         let isStrategyManaged = position.isStrategyManaged
+        let isTrendManaged = position.normalizedManagementMode == "trend"
         let stopDelta = position.entryPrice == 0 ? 0 : ((position.stopLoss - position.entryPrice) / position.entryPrice) * 100
         let legacyDistance = abs(abs(isBuy ? -stopDelta : stopDelta) - 1.2) < 0.05
         let fillDeltaPercent = signedFillDeltaPercent
@@ -39,6 +40,17 @@ struct PositionCardView: View {
                     .padding(.vertical, 10)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.orange.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+
+            if isTrendManaged {
+                Text("Trend: SL legacy fijo, sin TP ni trailing. Breakeven al superar 1%.")
+                    .font(.caption.bold())
+                    .foregroundStyle(.cyan)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.cyan.opacity(0.12))
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
 

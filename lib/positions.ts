@@ -15,11 +15,12 @@ import {
 } from '@/lib/bitget';
 
 export type TradingMode = 'demo' | 'live';
-export type PositionManagementMode = 'auto' | 'self' | 'strat';
+export type PositionManagementMode = 'auto' | 'self' | 'strat' | 'trend';
 
 const SELF_MODE_ALIASES = new Set(['self', 'sefl', 'selft']);
 const FIXED_PRICE_MODE_ALIASES = new Set(['fixed']);
 const STRAT_MODE_ALIASES = new Set(['strat', 'strategy']);
+const TREND_MODE_ALIASES = new Set(['trend']);
 const CLOSE_RETRY_DELAYS_MS = [400, 900, 1600];
 const ADAPTIVE_MIN_ATR_1H_PERCENT = 0.4;
 const ADAPTIVE_CHOP_RANGE_BASE_PERCENT = 1.8;
@@ -49,6 +50,10 @@ export function normalizePositionManagementMode(value: unknown): PositionManagem
 
   if (STRAT_MODE_ALIASES.has(raw)) {
     return 'strat';
+  }
+
+  if (TREND_MODE_ALIASES.has(raw)) {
+    return 'trend';
   }
 
   return 'auto';

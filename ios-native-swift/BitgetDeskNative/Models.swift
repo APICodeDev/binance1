@@ -41,6 +41,9 @@ struct Position: Codable, Identifiable {
         if raw == "strat" || raw == "strategy" {
             return "strat"
         }
+        if raw == "trend" {
+            return "trend"
+        }
         return "auto"
     }
 
@@ -50,6 +53,8 @@ struct Position: Codable, Identifiable {
             return "Self"
         case "strat":
             return "Strat"
+        case "trend":
+            return "Trend"
         default:
             return "Auto"
         }

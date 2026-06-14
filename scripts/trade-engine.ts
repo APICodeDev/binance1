@@ -61,7 +61,7 @@ type PositionMarketUpdate = {
   takeProfit: number | null;
   candidateStopLoss: number | null;
   canImproveStop: boolean;
-  managementMode: 'auto' | 'self' | 'strat';
+  managementMode: 'auto' | 'self' | 'strat' | 'trend';
   stratBreakEvenEnabled: boolean;
   stratTrailingEnabled: boolean;
   eventTimestamp: number;
@@ -232,6 +232,7 @@ const computeCandidateStopLoss = (position: Position, currentPrice: number, adap
   const managementMode = normalizePositionManagementMode(position.managementMode);
   const stratBreakEvenEnabled = isStratBreakEvenActive(position);
   const stratTrailingEnabled = isStratTrailingActive(position);
+  const trendManaged = managementMode === 'trend';
   const effectiveSelfManaged = managementMode === 'self' || (managementMode === 'strat' && stratTrailingEnabled);
   const stratBreakEvenOnlyEnabled = managementMode === 'strat' && stratBreakEvenEnabled && !stratTrailingEnabled;
   const autoManaged = managementMode === 'auto';
@@ -241,6 +242,18 @@ const computeCandidateStopLoss = (position: Position, currentPrice: number, adap
     : ((position.entryPrice - currentPrice) / position.entryPrice) * 100;
   const historicalMaxProfitPercent = Math.max(0, Number((position as any).maxProfitPercent || 0));
   const effectiveMovePercent = Math.max(marketMovePercent, historicalMaxProfitPercent);
+  if (trendManaged) {
+    if (position.positionType === 'buy') {
+      return effectiveMovePercent > 1
+        ? position.entryPrice * (1 + commission) / (1 - commission)
+        : null;
+    }
+
+    return effectiveMovePercent > 1
+      ? position.entryPrice * (1 - commission) / (1 + commission)
+      : null;
+  }
+
   const adaptiveProtection = computeAdaptiveProtectionDecision({
     positionType: position.positionType,
     entryPrice: position.entryPrice,
@@ -812,6 +825,7 @@ const processPositionMarketUpdate = async (positionId: number, snapshot: MarketS
     const managementMode = update.managementMode;
     const fixedManaged = isFixedPriceManagementMode(currentPosition.managementMode);
     const stratManaged = managementMode === 'strat';
+    const trendManaged = managementMode === 'trend';
     const autoManaged = managementMode === 'auto';
     const previousMaxProfitPercent = Math.max(0, Number((currentPosition as any).maxProfitPercent || 0));
     const improvedMax = update.profitPercent > previousMaxProfitPercent;
@@ -856,11 +870,15 @@ const processPositionMarketUpdate = async (positionId: number, snapshot: MarketS
     let takeProfitTriggered = false;
     if (typeof update.takeProfit === 'number' && update.takeProfit > 0) {
       if (currentPosition.positionType === 'buy') {
-        takeProfitTriggered = autoManaged
+        takeProfitTriggered = trendManaged
+          ? false
+          : autoManaged
           ? (engineSettings.takeProfitAutoCloseEnabled && update.price >= update.takeProfit)
           : ((fixedManaged || stratManaged) && update.price >= update.takeProfit);
       } else {
-        takeProfitTriggered = autoManaged
+        takeProfitTriggered = trendManaged
+          ? false
+          : autoManaged
           ? (engineSettings.takeProfitAutoCloseEnabled && update.price <= update.takeProfit)
           : ((fixedManaged || stratManaged) && update.price <= update.takeProfit);
       }
@@ -873,10 +891,12 @@ const processPositionMarketUpdate = async (positionId: number, snapshot: MarketS
             : Math.min(activeStopLoss, update.candidateStopLoss)
         )
       : activeStopLoss;
-    const stopLossTriggered = hasBreachedStopLevel(currentPosition, update.price, derivedStopLoss);
+    const stopLossTriggered = trendManaged
+      ? false
+      : hasBreachedStopLevel(currentPosition, update.price, derivedStopLoss);
 
     if (exhaustionTriggered || takeProfitTriggered || stopLossTriggered) {
-      const impliedTrailingStop = update.candidateStopLoss !== null && (
+      const impliedTrailingStop = !trendManaged && update.candidateStopLoss !== null && (
         (currentPosition.positionType === 'buy' && update.candidateStopLoss > currentPosition.stopLoss) ||
         (currentPosition.positionType === 'sell' && update.candidateStopLoss < currentPosition.stopLoss)
       );

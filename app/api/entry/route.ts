@@ -501,6 +501,13 @@ async function maybeUpgradeTakeProfitFromSameDirectionSignal(params: {
     });
   }
 
+  if (existingManagementMode === 'trend') {
+    return NextResponse.json({
+      success: true,
+      message: `Ignorada (${tradingMode}): Ya existe una posicion TREND abierta en direccion ${type} para ${symbol} y no se le ajusta TP desde nuevas senales.`,
+    });
+  }
+
   if (candidateTakeProfit === null) {
     return NextResponse.json({
       success: true,
@@ -652,6 +659,7 @@ async function executeEntry(
     const managementMode = normalizePositionManagementMode(requestedMode) as PositionManagementMode;
     const storedManagementMode = fixedPriceMode ? 'fixed' : managementMode;
     const stratManaged = managementMode === 'strat';
+    const trendManaged = managementMode === 'trend';
     const origin = normalizeSignalOrigin(data.origin);
     const timeframe = data.timeframe ? String(data.timeframe) : null;
     const incomingQuantity = parseFloat(data.quantity || data.contracts) || 0;
@@ -1177,19 +1185,23 @@ async function executeEntry(
       );
     const normalizedRequestedTakeProfit = takeProfitResolution.normalizedRequestedTakeProfit;
     const isRequestedTakeProfitValid = takeProfitResolution.isRequestedTakeProfitValid;
-    const stopPrice = stratManaged
+    const stopPrice = trendManaged
+      ? legacyStopPrice
+      : stratManaged
       ? (isRequestedStopValid ? normalizedRequestedStop : legacyStopPrice)
       : managementMode === 'self'
         ? normalizedRequestedStop
         : (apiStopMode === 'legacy' ? legacyStopPrice : (isRequestedStopValid ? normalizedRequestedStop : legacyStopPrice));
-    const takeProfitPrice = stratManaged
+    const takeProfitPrice = trendManaged
+      ? null
+      : stratManaged
       ? (isRequestedTakeProfitValid ? normalizedRequestedTakeProfit : null)
       : (isRequestedTakeProfitValid ? normalizedRequestedTakeProfit : null);
     const slSide = positionContext.closeSide;
     const holdSide = positionContext.holdSide;
     const rollbackCloseSide = slSide;
-    const shouldRejectInvalidStop = !stratManaged && ((managementMode === 'self' && stopInputProvided) || hasPayloadValue(rawRequestedStopPercent));
-    const shouldRejectInvalidTakeProfit = !stratManaged && ((managementMode === 'self' && takeProfitInputProvided) || hasPayloadValue(rawRequestedTakeProfitPercent));
+    const shouldRejectInvalidStop = !stratManaged && !trendManaged && ((managementMode === 'self' && stopInputProvided) || hasPayloadValue(rawRequestedStopPercent));
+    const shouldRejectInvalidTakeProfit = !stratManaged && !trendManaged && ((managementMode === 'self' && takeProfitInputProvided) || hasPayloadValue(rawRequestedTakeProfitPercent));
 
     if ((!stratManaged && managementMode === 'self' && !isRequestedStopValid) || (shouldRejectInvalidStop && stopInputProvided && !isRequestedStopValid)) {
       await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
@@ -1216,13 +1228,13 @@ async function executeEntry(
 
     const shouldPlaceInitialStop = stopPrice !== null;
     const shouldPlaceInitialTakeProfit = takeProfitPrice !== null;
-    const shouldPlaceNativeTakeProfit = shouldPlaceInitialTakeProfit && !stratManaged;
+    const shouldPlaceNativeTakeProfit = shouldPlaceInitialTakeProfit;
     let slResponse: any = null;
     let tpResponse: any = null;
     let initialStopAttempts = 0;
     let initialTakeProfitAttempts = 0;
     let initialTakeProfitPending = false;
-    let persistedTakeProfitPrice = stratManaged ? null : takeProfitPrice;
+    let persistedTakeProfitPrice = takeProfitPrice;
 
     if (shouldPlaceInitialStop) {
       const stopPlacement = await placeProtectionOrderWithRetries({
@@ -1244,7 +1256,7 @@ async function executeEntry(
       return NextResponse.json({ error: true, message: errDetail, detail: slResponse }, { status: 500 });
     }
 
-    if (stratManaged && shouldPlaceInitialStop) {
+    if ((stratManaged || trendManaged) && shouldPlaceInitialStop) {
       const verifiedStop = await verifyProtectionOrder({
         kind: 'stop',
         symbol,
@@ -1288,6 +1300,33 @@ async function executeEntry(
       await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
       const errDetail = `TP rechazado por Bitget (${tradingMode}) para ${symbol}. ` +
         `${summarizeBitgetResponse(tpResponse)}. Intentos=${initialTakeProfitAttempts || 1}. Rollback ejecutado.`;
+      await saveLastEntryError(errDetail, symbol, type);
+      return NextResponse.json({ error: true, message: errDetail, detail: tpResponse }, { status: 500 });
+    }
+
+    if (stratManaged && shouldPlaceNativeTakeProfit && !initialTakeProfitPending) {
+      const verifiedTakeProfit = await verifyProtectionOrder({
+        kind: 'takeProfit',
+        symbol,
+        tradingMode,
+        expectedTriggerPrice: takeProfitPrice!,
+        expectedSize: filledSize,
+        pricePrecision,
+      });
+
+      if (!verifiedTakeProfit.ok) {
+        await bitgetCancelAllOrders(symbol, tradingMode);
+        await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
+        const errDetail = `TP no quedo verificado en Bitget (${tradingMode}) para ${symbol} en el precio ${takeProfitPrice}. Rollback ejecutado.`;
+        await saveLastEntryError(errDetail, symbol, type);
+        return NextResponse.json({ error: true, message: errDetail, detail: tpResponse }, { status: 500 });
+      }
+    }
+
+    if (stratManaged && shouldPlaceNativeTakeProfit && initialTakeProfitPending) {
+      await bitgetCancelAllOrders(symbol, tradingMode);
+      await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
+      const errDetail = `TP no pudo quedar confirmado en Bitget (${tradingMode}) para ${symbol}. Intentos=${initialTakeProfitAttempts || 1}. Rollback ejecutado.`;
       await saveLastEntryError(errDetail, symbol, type);
       return NextResponse.json({ error: true, message: errDetail, detail: tpResponse }, { status: 500 });
     }
@@ -1363,6 +1402,7 @@ async function executeEntry(
         requestedStopInputSource: stopInputSource,
         apiStopMode,
         stratManaged,
+        trendManaged,
         computedStopPriceFromPercent,
         computedStopPriceFromOffset,
         resolvedRequestedStopPrice,
@@ -1453,7 +1493,9 @@ async function executeEntry(
         realEntryFee,
       },
       stop: {
-        mode: stratManaged
+        mode: trendManaged
+          ? 'legacy'
+          : stratManaged
           ? (isRequestedStopValid ? stopInputSource : 'legacy')
           : managementMode === 'self'
           ? stopInputSource
