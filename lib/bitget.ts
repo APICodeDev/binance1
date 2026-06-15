@@ -11,11 +11,15 @@ const BITGET_DEMO_PASSPHRASE = process.env.BITGET_DEMO_PASSPHRASE || '';
 
 const BASE_URL = 'https://api.bitget.com';
 const WS_SERVICE_URL = (process.env.BITGET_WS_SERVICE_URL || 'http://127.0.0.1:8787').replace(/\/$/, '');
-const DEFAULT_TAKER_FEE = 0.0006;
-const DEFAULT_MAKER_FEE = 0.0002;
+const DEFAULT_DEMO_FEE = 0.0002;
+const DEFAULT_LIVE_FEE = 0.0004;
 const PROTECTION_VERIFY_DELAYS_MS = [300, 600, 1200, 1500, 2000];
 const BITGET_PROTECTION_TRIGGER_TYPE = 'fill_price';
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export const getDefaultBitgetFeeRate = (tradingMode: 'demo' | 'live') => (
+  tradingMode === 'live' ? DEFAULT_LIVE_FEE : DEFAULT_DEMO_FEE
+);
 
 const parseFeeRate = (value?: string) => {
   const parsed = Number.parseFloat(String(value || '').trim());
@@ -38,7 +42,7 @@ const getConfiguredTakerFee = (symbol: string, tradingMode: 'demo' | 'live') => 
     }
   }
 
-  return DEFAULT_TAKER_FEE;
+  return getDefaultBitgetFeeRate(tradingMode);
 };
 
 const getConfiguredMakerFee = (symbol: string, tradingMode: 'demo' | 'live') => {
@@ -57,7 +61,7 @@ const getConfiguredMakerFee = (symbol: string, tradingMode: 'demo' | 'live') => 
     }
   }
 
-  return DEFAULT_MAKER_FEE;
+  return getDefaultBitgetFeeRate(tradingMode);
 };
 
 const bitgetRequest = async (
@@ -769,14 +773,18 @@ export const bitgetGetWsBestBidAsk = async (symbol: string, tradingMode: 'demo' 
 export const bitgetGetVipFeeRates = async () => {
   const resp = await bitgetRequest('/api/v2/mix/market/vip-fee-rate', {}, 'GET', false, 'live');
   if (!resp || resp.code !== '00000' || !Array.isArray(resp.data)) {
-    return { ok: false, makerFeeRate: DEFAULT_MAKER_FEE, takerFeeRate: DEFAULT_TAKER_FEE };
+    return {
+      ok: false,
+      makerFeeRate: getDefaultBitgetFeeRate('live'),
+      takerFeeRate: getDefaultBitgetFeeRate('live'),
+    };
   }
 
   const levelOne = resp.data[0];
   return {
     ok: true,
-    makerFeeRate: parseFeeRate(levelOne?.makerFeeRate) ?? DEFAULT_MAKER_FEE,
-    takerFeeRate: parseFeeRate(levelOne?.takerFeeRate) ?? DEFAULT_TAKER_FEE,
+    makerFeeRate: parseFeeRate(levelOne?.makerFeeRate) ?? getDefaultBitgetFeeRate('live'),
+    takerFeeRate: parseFeeRate(levelOne?.takerFeeRate) ?? getDefaultBitgetFeeRate('live'),
   };
 };
 

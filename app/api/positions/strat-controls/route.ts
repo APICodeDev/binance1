@@ -11,6 +11,7 @@ import {
   bitgetCancelVerifiedTakeProfitOrders,
   bitgetEnsureVerifiedStopOrder,
   bitgetGetCommissionRate,
+  getDefaultBitgetFeeRate,
   bitgetGetPositionMode,
   bitgetGetPrice,
 } from '@/lib/bitget';
@@ -80,12 +81,12 @@ export async function POST(req: NextRequest) {
   if (nextBreakEvenEnabled || nextTrailingEnabled) {
     const [currentPrice, exitCommission, positionMode] = await Promise.all([
       bitgetGetPrice(symbol, tradingMode).catch(() => false),
-      bitgetGetCommissionRate(symbol, tradingMode).catch(() => position.commission ?? 0.0006),
+      bitgetGetCommissionRate(symbol, tradingMode).catch(() => getDefaultBitgetFeeRate(tradingMode)),
       bitgetGetPositionMode(symbol, tradingMode).catch(() => 'one_way_mode' as const),
     ]);
 
     if (typeof currentPrice === 'number' && Number.isFinite(currentPrice) && currentPrice > 0) {
-      const entryCommission = position.commission ?? exitCommission;
+      const entryCommission = exitCommission;
       const marketMovePercent = position.positionType === 'buy'
         ? ((currentPrice - position.entryPrice) / position.entryPrice) * 100
         : ((position.entryPrice - currentPrice) / position.entryPrice) * 100;

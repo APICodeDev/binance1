@@ -9,6 +9,10 @@ private struct TradeNotificationState: Codable {
     let closedIDs: [Int]
 }
 
+private func fallbackCommissionRate(for tradingMode: String) -> Double {
+    tradingMode.lowercased() == "live" ? 0.0004 : 0.0002
+}
+
 struct TradeNotificationDelta {
     let newOpenPositions: [Position]
     let newClosedPositions: [Position]
@@ -247,7 +251,7 @@ final class AppViewModel: ObservableObject {
     var securedAmount: Double {
         openPositions.reduce(0) { partialResult, position in
             let isBuy = position.positionType == "buy"
-            let commissionRate = position.commission ?? 0.0006
+            let commissionRate = fallbackCommissionRate(for: position.tradingMode)
             let hasProtectedProfit =
                 (isBuy && position.stopLoss > position.entryPrice) ||
                 (!isBuy && position.stopLoss < position.entryPrice)

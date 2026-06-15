@@ -493,7 +493,7 @@ export async function closeTrackedPosition(pos: CloseablePosition): Promise<Clos
   }
 
   const exitComm = await bitgetGetCommissionRate(symbol, tradingMode);
-  const entryComm = pos.commission ?? exitComm;
+  const entryComm = exitComm;
   const positionMode = await bitgetGetPositionMode(symbol, tradingMode) || 'one_way_mode';
   const positionContext = bitgetBuildPositionContext(pos.positionType as 'buy' | 'sell', positionMode);
   let closeResp: any = null;

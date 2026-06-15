@@ -263,7 +263,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       }
 
       const comm = await bitgetGetCommissionRate(symbol, mode);
-      const entryComm = (pos as any).commission ?? comm;
+      const entryComm = comm;
       const currentPrice = (await bitgetGetPrice(symbol, mode)) || pos.entryPrice;
       const exchangeClose = await resolveBitgetCloseExecution({
         position: pos as any,
@@ -332,7 +332,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     const recentLow: number | null = recentRange.ok ? (recentRange.low ?? null) : null;
 
     const comm = await bitgetGetCommissionRate(symbol, mode);
-    const entryComm = (pos as any).commission ?? comm;
+    const entryComm = comm;
     const entryCost = pos.entryPrice * pos.quantity * entryComm;
     const exitCost = currentPrice * pos.quantity * comm;
 

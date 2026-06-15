@@ -65,7 +65,7 @@ const LEVERAGE_ENABLED_STORAGE_KEY = 'dashboard:leverage-enabled';
 const LEVERAGE_VALUE_STORAGE_KEY = 'dashboard:leverage-value';
 const ACTIVE_MONITOR_POLL_MS = 3000;
 const IDLE_MONITOR_POLL_MS = 10000;
-const LIVE_RECONCILE_POLL_MS = 30000;
+const LIVE_RECONCILE_POLL_MS = 8000;
 
 // Typing for positions from API
 interface Position {
@@ -697,6 +697,10 @@ function formatManagementModeLabel(value?: string | null) {
   return 'Auto';
 }
 
+function getFallbackCommissionRate(tradingMode: 'demo' | 'live') {
+  return tradingMode === 'live' ? 0.0004 : 0.0002;
+}
+
 export default function Dashboard() {
   const [currentView, setCurrentView] = useState<'dashboard' | 'bookmap' | 'admin' | 'stats'>('dashboard');
   const [showMenu, setShowMenu] = useState(false);
@@ -775,6 +779,7 @@ export default function Dashboard() {
   const [heatmapPaperData, setHeatmapPaperData] = useState<HeatmapPaperPayload | null>(null);
   const [heatmapPaperMessage, setHeatmapPaperMessage] = useState<string | null>(null);
 
+  const openPositionIdsRef = useRef<number[]>([]);
   const filteredSymbols = AVAILABLE_SYMBOLS.filter((symbol) =>
     symbol.includes(newPos.symbol.toUpperCase())
   );
@@ -1056,6 +1061,13 @@ export default function Dashboard() {
 
     setLastSyncAt(new Date().toISOString());
   }, []);
+
+  useEffect(() => {
+    openPositionIdsRef.current = openPositions
+      .filter((position) => position.tradingMode === tradingMode)
+      .map((position) => position.id)
+      .sort((left, right) => left - right);
+  }, [openPositions, tradingMode]);
 
   const applyLiveSettingsReload = useCallback((payload: LiveSettingsReloadPayload) => {
     setExhaustionGuardEnabled(payload.exhaustionGuardEnabled);
@@ -1341,10 +1353,24 @@ export default function Dashboard() {
 
             if (parsed.event === 'positions_reloaded') {
               const modeCounts = payload?.modeCounts;
+              const modePositionIds = tradingMode === 'live'
+                ? payload?.positionIdsByMode?.live
+                : payload?.positionIdsByMode?.demo;
               const nextModeCount = tradingMode === 'live'
                 ? Number(modeCounts?.live || 0)
                 : Number(modeCounts?.demo || 0);
-              if (Number.isFinite(nextModeCount) && nextModeCount !== openPositions.length) {
+              const normalizedIncomingIds = Array.isArray(modePositionIds)
+                ? modePositionIds
+                    .map((value: unknown) => Number(value))
+                    .filter((value: number) => Number.isFinite(value))
+                    .sort((left: number, right: number) => left - right)
+                : null;
+              const currentIds = openPositionIdsRef.current;
+              const idsChanged = normalizedIncomingIds !== null &&
+                normalizedIncomingIds.length === currentIds.length &&
+                normalizedIncomingIds.some((value: number, index: number) => value !== currentIds[index]);
+
+              if ((Number.isFinite(nextModeCount) && nextModeCount !== openPositions.length) || idsChanged) {
                 void fetchData(true, tradingMode);
               }
               setLastSyncAt(new Date(payload?.at || Date.now()).toISOString());
@@ -1811,7 +1837,7 @@ export default function Dashboard() {
 
   const totalSecuredProfit = openPositions.reduce((acc, pos) => {
     const isBuy = pos.positionType === 'buy';
-    const comm = pos.commission ?? 0.0006;
+    const comm = getFallbackCommissionRate(pos.tradingMode);
     const isSafe = (isBuy && pos.stopLoss > pos.entryPrice) || (!isBuy && pos.stopLoss < pos.entryPrice);
     if (isSafe) {
       const entryCost = pos.entryPrice * pos.quantity * comm;
@@ -2944,7 +2970,7 @@ Mode: ${formatManagementModeLabel(pos.managementMode)}
 Quantity: ${pos.quantity}
 Entry Price: ${formatPrice(pos.entryPrice, pos.pricePrecision)}
 Stop Target: ${formatPrice(pos.stopLoss, pos.pricePrecision)}
-Commission: ${((pos.commission ?? 0.0006) * 100).toFixed(4)}%
+Commission: ${(getFallbackCommissionRate(pos.tradingMode) * 100).toFixed(4)}%
 PnL %: ${pos.profitLossPercent.toFixed(2)}%
 PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixed(2)} ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}`;
                     
@@ -3349,7 +3375,7 @@ function PositionCard({
   const stratBreakEvenEnabled = stratManaged || Boolean(pos.stratBreakEvenEnabled);
   const stratTrailingEnabled = stratManaged || Boolean(pos.stratTrailingEnabled);
   const quoteCurrency = pos.tradingMode === 'live' ? 'USDC' : 'USDT';
-  const comm = pos.commission ?? 0.0006;
+  const comm = getFallbackCommissionRate(pos.tradingMode);
   const LEGACY_STOP_PERCENT = 1.2;
   const entryCost = pos.entryPrice * pos.quantity * comm;
   const exitCost = pos.stopLoss * pos.quantity * comm;
@@ -3580,9 +3606,7 @@ function PositionCard({
             </p>
             <div className="mt-2 flex flex-wrap justify-end gap-2 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">
               <span>{pos.amount.toFixed(0)} {quoteCurrency}</span>
-              {(pos.commission !== undefined && pos.commission !== null) && (
-                <span>Fee {(pos.commission * 100).toFixed(4)}%</span>
-              )}
+              <span>Fee {(getFallbackCommissionRate(pos.tradingMode) * 100).toFixed(4)}%</span>
             </div>
           </div>
         </div>

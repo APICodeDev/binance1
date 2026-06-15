@@ -9,6 +9,7 @@ import {
   bitgetCancelAllOrders,
   bitgetClosePosition,
   bitgetEnsureVerifiedStopOrder,
+  getDefaultBitgetFeeRate,
   bitgetGetHistoricalCandles,
   bitgetGetPositionMode,
   bitgetGetSinglePosition,
@@ -78,7 +79,6 @@ const MARKETDATA_URL = (process.env.BITGET_WS_SERVICE_URL || 'http://127.0.0.1:8
 const POSITION_REFRESH_MS = Number.parseInt(process.env.TRADE_ENGINE_POSITION_REFRESH_MS || '3000', 10);
 const SETTINGS_REFRESH_MS = Number.parseInt(process.env.TRADE_ENGINE_SETTINGS_REFRESH_MS || '5000', 10);
 const MARKET_STREAM_RECONNECT_MS = Number.parseInt(process.env.TRADE_ENGINE_MARKET_STREAM_RECONNECT_MS || '2000', 10);
-const DEFAULT_COMMISSION = Number.parseFloat(process.env.TRADE_ENGINE_DEFAULT_COMMISSION || '0.0006');
 const STOP_SYNC_COOLDOWN_MS = Number.parseInt(process.env.TRADE_ENGINE_STOP_COOLDOWN_MS || '1200', 10);
 const POSITION_PERSIST_COOLDOWN_MS = Number.parseInt(process.env.TRADE_ENGINE_POSITION_PERSIST_COOLDOWN_MS || '2000', 10);
 const EXHAUSTION_MIN_MFE_PERCENT = 1.0;
@@ -130,6 +130,11 @@ const getSelfManagedTrailingStep = (marketMovePercent: number) => {
 
   const lockedPercent = Math.floor((marketMovePercent - 0.25) + 1e-9);
   return lockedPercent >= 1 ? lockedPercent : null;
+};
+
+const getPositionCommission = (position: Position) => {
+  const tradingMode = ((position as any).tradingMode || 'demo') as TradingMode;
+  return getDefaultBitgetFeeRate(tradingMode);
 };
 
 const resolveLivePrice = (snapshot: MarketSnapshot) => {
@@ -236,7 +241,7 @@ const computeCandidateStopLoss = (position: Position, currentPrice: number, adap
   const effectiveSelfManaged = managementMode === 'self' || (managementMode === 'strat' && stratTrailingEnabled);
   const stratBreakEvenOnlyEnabled = managementMode === 'strat' && stratBreakEvenEnabled && !stratTrailingEnabled;
   const autoManaged = managementMode === 'auto';
-  const commission = position.commission ?? DEFAULT_COMMISSION;
+  const commission = getPositionCommission(position);
   const marketMovePercent = position.positionType === 'buy'
     ? ((currentPrice - position.entryPrice) / position.entryPrice) * 100
     : ((position.entryPrice - currentPrice) / position.entryPrice) * 100;
@@ -341,7 +346,7 @@ const buildPositionMarketUpdate = (
   }
 
   const currentPrice = livePrice.price;
-  const commission = position.commission ?? DEFAULT_COMMISSION;
+  const commission = getPositionCommission(position);
   const entryCost = position.entryPrice * position.quantity * commission;
   const exitCost = currentPrice * position.quantity * commission;
   const profitFiat = position.positionType === 'buy'
@@ -421,6 +426,23 @@ const buildModeCounts = () => {
   return { demo, live };
 };
 
+const buildPositionIdsByMode = () => {
+  const demo: number[] = [];
+  const live: number[] = [];
+
+  for (const position of Array.from(openPositions.values())) {
+    if (((position as any).tradingMode || 'demo') === 'live') {
+      live.push(position.id);
+    } else {
+      demo.push(position.id);
+    }
+  }
+
+  demo.sort((left, right) => left - right);
+  live.sort((left, right) => left - right);
+  return { demo, live };
+};
+
 const reloadOpenPositions = async () => {
   let positions = await prisma.position.findMany({
     where: { status: 'open' } as any,
@@ -474,6 +496,7 @@ const reloadOpenPositions = async () => {
     openPositions: openPositions.size,
     watchedSymbols: positionsByMarketKey.size,
     modeCounts: buildModeCounts(),
+    positionIdsByMode: buildPositionIdsByMode(),
     at: lastReloadAt,
   });
 };
@@ -636,7 +659,7 @@ const closePositionFromEngine = async (position: Position, update: PositionMarke
       });
 
       const exitPrice = exchangeClose?.exitPrice || update.price;
-      const commission = position.commission ?? DEFAULT_COMMISSION;
+      const commission = getPositionCommission(position);
       const closeMetrics = calculateCloseMetrics({
         positionType: position.positionType,
         entryPrice: position.entryPrice,
@@ -714,7 +737,7 @@ const closePositionFromEngine = async (position: Position, update: PositionMarke
   });
 
   const exitPrice = exchangeClose?.exitPrice || update.price;
-  const commission = position.commission ?? DEFAULT_COMMISSION;
+  const commission = getPositionCommission(position);
   const closeMetrics = calculateCloseMetrics({
     positionType: position.positionType,
     entryPrice: position.entryPrice,
