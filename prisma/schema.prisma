@@ -27,6 +27,7 @@ model Position {
   exitReason           String?   @map("exit_reason")
   exitOrderId          String?   @map("exit_order_id")
   exitSource           String?   @map("exit_source")
+  closeOrigin          String?   @map("close_origin")
   createdAt            DateTime  @default(now()) @map("created_at")
   closedAt             DateTime? @map("closed_at")
   origin               String?   // Added origin

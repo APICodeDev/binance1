@@ -660,7 +660,7 @@ async function executeEntry(
     const storedManagementMode = fixedPriceMode ? 'fixed' : managementMode;
     const stratManaged = managementMode === 'strat';
     const trendManaged = managementMode === 'trend';
-    const origin = normalizeSignalOrigin(data.origin);
+    const origin = normalizeSignalOrigin(data.origin) || (auth?.user ? 'Manual' : null);
     const timeframe = data.timeframe ? String(data.timeframe) : null;
     const incomingQuantity = parseFloat(data.quantity || data.contracts) || 0;
     const rawRequestedEntryPrice =

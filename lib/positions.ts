@@ -16,6 +16,7 @@ import {
 
 export type TradingMode = 'demo' | 'live';
 export type PositionManagementMode = 'auto' | 'self' | 'strat' | 'trend';
+export type PositionCloseOrigin = 'app_rules' | 'api_close' | 'manual' | 'exchange_sync';
 
 const SELF_MODE_ALIASES = new Set(['self', 'sefl', 'selft']);
 const FIXED_PRICE_MODE_ALIASES = new Set(['fixed']);
@@ -393,6 +394,24 @@ export function calculateCloseMetrics(params: {
   };
 }
 
+export function inferPositionCloseOrigin(params: {
+  exitReason?: string | null;
+  exitSource?: string | null;
+}) {
+  const reason = String(params.exitReason || '').trim().toLowerCase();
+  const source = String(params.exitSource || '').trim().toLowerCase();
+
+  if (reason === 'manual') {
+    return 'api_close' satisfies PositionCloseOrigin;
+  }
+
+  if (reason === 'exchange_closed' || source === 'exchange_reconciled') {
+    return 'manual' satisfies PositionCloseOrigin;
+  }
+
+  return 'app_rules' satisfies PositionCloseOrigin;
+}
+
 export async function resolveBitgetCloseExecution(params: {
   position: CloseablePosition;
   tradingMode: TradingMode;
@@ -622,6 +641,7 @@ export async function closeTrackedPosition(pos: CloseablePosition): Promise<Clos
       exitReason: execution.exitReason,
       exitOrderId: execution.exitOrderId,
       exitSource: execution.exitSource,
+      closeOrigin: 'api_close',
     } as any,
   });
 

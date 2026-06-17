@@ -83,6 +83,9 @@ interface Position {
   tradingMode: 'demo' | 'live';
   profitLossPercent: number;
   profitLossFiat: number;
+  closeOrigin?: 'app_rules' | 'api_close' | 'manual' | 'exchange_sync' | null;
+  exitSource?: string | null;
+  exitReason?: string | null;
   createdAt: string;
   closedAt?: string;
   origin?: string | null;
@@ -699,6 +702,30 @@ function formatManagementModeLabel(value?: string | null) {
 
 function getFallbackCommissionRate(tradingMode: 'demo' | 'live') {
   return tradingMode === 'live' ? 0.0004 : 0.0002;
+}
+
+function getCloseOriginLabel(position: Pick<Position, 'closeOrigin' | 'exitReason' | 'exitSource'>) {
+  if (position.closeOrigin === 'api_close') {
+    return 'API Close';
+  }
+
+  if (position.closeOrigin === 'manual') {
+    return 'Manual';
+  }
+
+  if (position.closeOrigin === 'exchange_sync') {
+    return 'Exchange Sync';
+  }
+
+  if (position.closeOrigin === 'app_rules') {
+    return 'App Rules';
+  }
+
+  const reason = String(position.exitReason || '').trim().toLowerCase();
+  const source = String(position.exitSource || '').trim().toLowerCase();
+  if (reason === 'manual') return 'API Close';
+  if (reason === 'exchange_closed' || source === 'exchange_reconciled') return 'Manual';
+  return source || reason ? 'App Rules' : '-';
 }
 
 export default function Dashboard() {
@@ -2926,6 +2953,10 @@ export default function Dashboard() {
                         <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-600">Duration</p>
                         <p className="font-mono text-slate-400">{durationStr}</p>
                       </div>
+                      <div>
+                        <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-600">Closed By</p>
+                        <p className="font-black text-slate-300">{getCloseOriginLabel(pos)}</p>
+                      </div>
                     </div>
                     <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-500">
                       Closed {pos.closedAt ? new Date(pos.closedAt).toLocaleString() : '-'}
@@ -2953,6 +2984,7 @@ export default function Dashboard() {
                     <th className="px-6 py-4">PnL {tradingMode === 'live' ? 'USDC' : 'USDT'}</th>
                     <th className="px-6 py-4">Closed At</th>
                     <th className="px-6 py-4">Duration</th>
+                    <th className="px-6 py-4">Closed By</th>
                     <th className="px-6 py-4">Origin / TF</th>
                   </tr>
                 </thead>
@@ -2972,7 +3004,8 @@ Entry Price: ${formatPrice(pos.entryPrice, pos.pricePrecision)}
 Stop Target: ${formatPrice(pos.stopLoss, pos.pricePrecision)}
 Commission: ${(getFallbackCommissionRate(pos.tradingMode) * 100).toFixed(4)}%
 PnL %: ${pos.profitLossPercent.toFixed(2)}%
-PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixed(2)} ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}`;
+PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixed(2)} ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}
+Closed By: ${getCloseOriginLabel(pos)}`;
                     
                     return (
                     <tr key={pos.id} title={tooltipData} className="text-sm hover:bg-slate-800/20 transition-colors group">
@@ -3003,6 +3036,9 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
                       <td className="px-6 py-4 font-mono text-xs text-slate-500">
                         {durationStr}
                       </td>
+                      <td className="px-6 py-4 text-xs font-black text-slate-300">
+                        {getCloseOriginLabel(pos)}
+                      </td>
                       <td className="px-6 py-4 text-xs font-bold text-slate-500">
                         {pos.origin || '-'}{pos.timeframe ? ` / ${pos.timeframe}` : ''}
                       </td>
@@ -3010,7 +3046,7 @@ PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixe
                   )})}
                   {recentClosedPositions.length === 0 && (
                     <tr>
-                      <td colSpan={9} className="px-6 py-12 text-center text-slate-600 italic text-sm">No missions completed yet in {tradingMode}.</td>
+                      <td colSpan={10} className="px-6 py-12 text-center text-slate-600 italic text-sm">No missions completed yet in {tradingMode}.</td>
                     </tr>
                   )}
                 </tbody>

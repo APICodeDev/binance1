@@ -12,6 +12,8 @@ import {
   getDefaultBitgetFeeRate,
   bitgetGetHistoricalCandles,
   bitgetGetPositionMode,
+  bitgetGetPrice,
+  bitgetGetPositions,
   bitgetGetSinglePosition,
   bitgetOrderSuccess,
 } from '@/lib/bitget';
@@ -20,6 +22,7 @@ import {
   buildAdaptiveProtectionContext,
   calculateCloseMetrics,
   computeAdaptiveProtectionDecision,
+  inferPositionCloseOrigin,
   isFixedPriceManagementMode,
   normalizePositionManagementMode,
   resolveBitgetCloseExecution,
@@ -443,6 +446,138 @@ const buildPositionIdsByMode = () => {
   return { demo, live };
 };
 
+const positionExistsInSnapshot = (snapshot: Awaited<ReturnType<typeof bitgetGetSinglePosition>>, symbol: string) => {
+  const normalizedSymbol = symbol.toUpperCase();
+  return snapshot.ok && snapshot.positions.some((remotePosition: any) => (
+    String(remotePosition?.symbol || '').toUpperCase() === normalizedSymbol &&
+    Number.parseFloat(String(remotePosition?.positionAmt || '0')) !== 0
+  ));
+};
+
+const reconcileExternallyClosedPosition = async (position: Position) => {
+  if (positionLocks.has(position.id)) {
+    return position;
+  }
+
+  const tradingMode = ((position as any).tradingMode || 'demo') as TradingMode;
+  const symbol = position.symbol.toUpperCase();
+  const [singleSnapshot, currentPrice] = await Promise.all([
+    bitgetGetSinglePosition(symbol, tradingMode).catch(() => null),
+    bitgetGetPrice(symbol, tradingMode).catch(() => false),
+  ]);
+
+  if (!singleSnapshot?.ok || positionExistsInSnapshot(singleSnapshot, symbol)) {
+    return position;
+  }
+
+  const exchangeClose = await resolveBitgetCloseExecution({
+    position: position as any,
+    tradingMode,
+    targetTime: new Date(),
+    fallbackExitPrice: typeof currentPrice === 'number' ? currentPrice : position.entryPrice,
+    fallbackReason: 'exchange_closed',
+  });
+
+  const exitPrice = exchangeClose?.exitPrice || (typeof currentPrice === 'number' ? currentPrice : position.entryPrice);
+  const commission = getPositionCommission(position);
+  const closeMetrics = calculateCloseMetrics({
+    positionType: position.positionType,
+    entryPrice: position.entryPrice,
+    quantity: position.quantity,
+    entryCommission: commission,
+    exitCommission: commission,
+    exitPrice,
+  });
+
+  await prisma.position.update({
+    where: { id: position.id },
+    data: {
+      status: 'closed',
+      closedAt: exchangeClose?.closedAt || new Date(),
+      profitLossPercent: closeMetrics.profitPercent,
+      profitLossFiat: closeMetrics.profitFiat,
+      exitPrice,
+      exitReason: exchangeClose?.exitReason || 'exchange_closed',
+      exitOrderId: exchangeClose?.exitOrderId || null,
+      exitSource: exchangeClose?.exitSource || 'exchange_reconciled',
+      closeOrigin: inferPositionCloseOrigin({
+        exitReason: exchangeClose?.exitReason || 'exchange_closed',
+        exitSource: exchangeClose?.exitSource || 'exchange_reconciled',
+      }),
+      maxProfitPercent: Number((position as any).maxProfitPercent || 0),
+      maxProfitAt: ((position as any).maxProfitAt ? new Date((position as any).maxProfitAt) : null),
+    } as any,
+  });
+
+  await writeAuditLog({
+    action: 'trade_engine.exchange_position_missing',
+    targetType: 'position',
+    targetId: String(position.id),
+    metadata: {
+      symbol,
+      tradingMode,
+      exitPrice,
+      exitReason: exchangeClose?.exitReason || 'exchange_closed',
+      exitSource: exchangeClose?.exitSource || 'exchange_reconciled',
+    },
+  }).catch(() => undefined);
+
+  emitEngineEvent('position_closed', {
+    positionId: position.id,
+    symbol,
+    tradingMode,
+    reason: exchangeClose?.exitReason || 'exchange_closed',
+    exitPrice,
+    profitPercent: closeMetrics.profitPercent,
+    profitFiat: closeMetrics.profitFiat,
+    at: Date.now(),
+  });
+
+  return null;
+};
+
+const reconcileOpenPositionsAgainstExchange = async (positions: Position[]) => {
+  if (positions.length === 0) {
+    return positions;
+  }
+
+  const modeSnapshots = await Promise.all([
+    bitgetGetPositions('demo').catch(() => null),
+    bitgetGetPositions('live').catch(() => null),
+  ]);
+
+  const openSymbolsByMode = {
+    demo: new Set<string>(),
+    live: new Set<string>(),
+  };
+
+  for (let index = 0; index < modeSnapshots.length; index += 1) {
+    const snapshot = modeSnapshots[index];
+    const mode = index === 0 ? 'demo' : 'live';
+    if (!snapshot?.ok) {
+      continue;
+    }
+
+    for (const remotePosition of snapshot.positions) {
+      if (Number.parseFloat(String(remotePosition?.positionAmt || '0')) !== 0) {
+        openSymbolsByMode[mode].add(String(remotePosition.symbol || '').toUpperCase());
+      }
+    }
+  }
+
+  const reconciled = await Promise.all(positions.map(async (position) => {
+    const tradingMode = ((position as any).tradingMode || 'demo') as TradingMode;
+    const symbol = position.symbol.toUpperCase();
+    if (openSymbolsByMode[tradingMode].has(symbol)) {
+      return position;
+    }
+
+    return reconcileExternallyClosedPosition(position);
+  }));
+
+  return reconciled.filter((position): position is Position => Boolean(position));
+};
+
 const reloadOpenPositions = async () => {
   let positions = await prisma.position.findMany({
     where: { status: 'open' } as any,
@@ -485,6 +620,8 @@ const reloadOpenPositions = async () => {
       },
     }).catch(() => undefined);
   }
+
+  positions = await reconcileOpenPositionsAgainstExchange(positions);
 
   rebuildPositionIndexes(positions);
   for (const marketKey of Array.from(positionsByMarketKey.keys())) {
@@ -680,6 +817,10 @@ const closePositionFromEngine = async (position: Position, update: PositionMarke
           exitReason: exchangeClose?.exitReason || reason,
           exitOrderId: exchangeClose?.exitOrderId || null,
           exitSource: exchangeClose?.exitSource || 'exchange_reconciled',
+          closeOrigin: inferPositionCloseOrigin({
+            exitReason: exchangeClose?.exitReason || reason,
+            exitSource: exchangeClose?.exitSource || 'exchange_reconciled',
+          }),
           maxProfitPercent: Math.max(Number((position as any).maxProfitPercent || 0), update.profitPercent),
           maxProfitAt: update.profitPercent > Number((position as any).maxProfitPercent || 0)
             ? new Date()
@@ -758,6 +899,10 @@ const closePositionFromEngine = async (position: Position, update: PositionMarke
       exitReason: exchangeClose?.exitReason || reason,
       exitOrderId: exchangeClose?.exitOrderId || null,
       exitSource: exchangeClose?.exitSource || null,
+      closeOrigin: inferPositionCloseOrigin({
+        exitReason: exchangeClose?.exitReason || reason,
+        exitSource: exchangeClose?.exitSource || null,
+      }),
       maxProfitPercent: Math.max(Number((position as any).maxProfitPercent || 0), update.profitPercent),
       maxProfitAt: update.profitPercent > Number((position as any).maxProfitPercent || 0)
         ? new Date()

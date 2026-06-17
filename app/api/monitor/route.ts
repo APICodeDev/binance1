@@ -5,7 +5,7 @@ import { writeAuditLog } from '@/lib/audit';
 import { fail, ok } from '@/lib/apiResponse';
 import { requireAuth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { buildAdaptiveProtectionContext, calculateCloseMetrics, computeAdaptiveProtectionDecision, isFixedPriceManagementMode, normalizePositionManagementMode, resolveBitgetCloseExecution } from '@/lib/positions';
+import { buildAdaptiveProtectionContext, calculateCloseMetrics, computeAdaptiveProtectionDecision, inferPositionCloseOrigin, isFixedPriceManagementMode, normalizePositionManagementMode, resolveBitgetCloseExecution } from '@/lib/positions';
 import { attachTakeProfitUpgradeMeta } from '@/lib/positionSignals';
 import { notifyPositiveClose } from '@/lib/ntfy';
 import { notifyAllActiveDevices } from '@/lib/pushNotifications';
@@ -294,6 +294,10 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
           exitReason: exchangeClose?.exitReason || 'exchange_closed',
           exitOrderId: exchangeClose?.exitOrderId || null,
           exitSource: exchangeClose?.exitSource || null,
+          closeOrigin: inferPositionCloseOrigin({
+            exitReason: exchangeClose?.exitReason || 'exchange_closed',
+            exitSource: exchangeClose?.exitSource || null,
+          }),
         } as any,
       });
       await notifyPositiveClose({
@@ -659,6 +663,10 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
             exitReason: exchangeClose?.exitReason || closeReason,
             exitOrderId: exchangeClose?.exitOrderId || null,
             exitSource: exchangeClose?.exitSource || null,
+            closeOrigin: inferPositionCloseOrigin({
+              exitReason: exchangeClose?.exitReason || closeReason,
+              exitSource: exchangeClose?.exitSource || null,
+            }),
           } as any,
         });
         await notifyPositiveClose({
