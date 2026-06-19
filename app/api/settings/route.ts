@@ -6,6 +6,19 @@ import { requireAuth, requireRole } from '@/lib/auth';
 import { writeAuditLog } from '@/lib/audit';
 import { prisma } from '@/lib/db';
 
+const DEFAULT_API_LEGACY_STOP_PERCENT = '1.2';
+
+function normalizePercentString(value: unknown) {
+  return String(value ?? '').trim().replace(',', '.');
+}
+
+function resolveStoredLegacyStopPercent(rawValue?: string | null) {
+  const parsed = Number.parseFloat(normalizePercentString(rawValue));
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed.toString()
+    : DEFAULT_API_LEGACY_STOP_PERCENT;
+}
+
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
   if (!auth.ok) {
@@ -22,6 +35,7 @@ export async function GET(req: NextRequest) {
   const profitSoundEnabled = await prisma.setting.findUnique({ where: { key: 'profit_sound_enabled' } });
   const profitSoundFile = await prisma.setting.findUnique({ where: { key: 'profit_sound_file' } });
   const apiStopMode = await prisma.setting.findUnique({ where: { key: 'api_stop_mode' } });
+  const apiLegacyStopPercent = await prisma.setting.findUnique({ where: { key: 'api_legacy_stop_percent' } });
   const exhaustionGuardEnabled = await prisma.setting.findUnique({ where: { key: 'exhaustion_guard_enabled' } });
   const takeProfitAutoCloseEnabled = await prisma.setting.findUnique({ where: { key: 'take_profit_auto_close_enabled' } });
   const reverseOnOppositeSignalEnabled = await prisma.setting.findUnique({ where: { key: 'reverse_on_opposite_signal_enabled' } });
@@ -37,6 +51,7 @@ export async function GET(req: NextRequest) {
     profit_sound_enabled: profitSoundEnabled?.value || '0',
     profit_sound_file: profitSoundFile?.value || '',
     api_stop_mode: apiStopMode?.value || 'signal',
+    api_legacy_stop_percent: resolveStoredLegacyStopPercent(apiLegacyStopPercent?.value),
     exhaustion_guard_enabled: exhaustionGuardEnabled?.value || '1',
     take_profit_auto_close_enabled: takeProfitAutoCloseEnabled?.value || '0',
     reverse_on_opposite_signal_enabled: reverseOnOppositeSignalEnabled?.value || '1'
@@ -50,6 +65,16 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
+  if (body.api_legacy_stop_percent !== undefined) {
+    const parsed = Number.parseFloat(normalizePercentString(body.api_legacy_stop_percent));
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return NextResponse.json(
+        { error: true, message: 'api_legacy_stop_percent must be a positive number.' },
+        { status: 400 }
+      );
+    }
+    body.api_legacy_stop_percent = parsed.toString();
+  }
 
   if (body.trading_mode === 'live') {
     const roleCheck = await requireRole(req, ['admin']);
@@ -67,6 +92,7 @@ export async function POST(req: NextRequest) {
     { key: 'profit_sound_enabled', value: body.profit_sound_enabled },
     { key: 'profit_sound_file', value: body.profit_sound_file },
     { key: 'api_stop_mode', value: body.api_stop_mode },
+    { key: 'api_legacy_stop_percent', value: body.api_legacy_stop_percent },
     { key: 'exhaustion_guard_enabled', value: body.exhaustion_guard_enabled },
     { key: 'take_profit_auto_close_enabled', value: body.take_profit_auto_close_enabled },
     { key: 'reverse_on_opposite_signal_enabled', value: body.reverse_on_opposite_signal_enabled }

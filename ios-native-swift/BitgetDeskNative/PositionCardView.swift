@@ -9,8 +9,9 @@ struct PositionCardView: View {
         let managementMode = position.managementModeLabel
         let isStrategyManaged = position.isStrategyManaged
         let isTrendManaged = position.normalizedManagementMode == "trend"
+        let configuredLegacyStopPercent = Double(appModel.apiLegacyStopPercent) ?? 1.2
         let stopDelta = position.entryPrice == 0 ? 0 : ((position.stopLoss - position.entryPrice) / position.entryPrice) * 100
-        let legacyDistance = abs(abs(isBuy ? -stopDelta : stopDelta) - 1.2) < 0.05
+        let legacyDistance = abs(abs(isBuy ? -stopDelta : stopDelta) - configuredLegacyStopPercent) < 0.05
         let fillDeltaPercent = signedFillDeltaPercent
         let fillDeltaColor: Color = fillDeltaPercent >= 0 ? .cyan : .orange
 
@@ -81,7 +82,7 @@ struct PositionCardView: View {
                     Text("\(stopDelta >= 0 ? "+" : "")\(String(format: "%.2f", stopDelta))% vs entry")
                         .font(.caption.bold())
                         .foregroundStyle(legacyDistance ? Color.secondary : Color.cyan)
-                    Text(isStrategyManaged ? "Legacy 1.2% Fixed For Strat" : (legacyDistance ? "Legacy 1.2% Default" : "Adapted By App"))
+                    Text(isStrategyManaged ? "Legacy \(String(format: "%.2f", configuredLegacyStopPercent))% Fixed For Strat" : (legacyDistance ? "Legacy \(String(format: "%.2f", configuredLegacyStopPercent))% Default" : "Adapted By App"))
                         .font(.caption2.bold())
                         .foregroundStyle(isStrategyManaged ? Color.orange : (legacyDistance ? Color.secondary : Color.cyan))
                     if !isStrategyManaged, let takeProfit = position.takeProfit, takeProfit > 0 {

@@ -48,6 +48,15 @@ import {
   bitgetSetLeverage,
 } from '@/lib/bitget';
 
+const DEFAULT_API_LEGACY_STOP_PERCENT = 1.2;
+
+function parseConfiguredLegacyStopPercent(rawValue?: string | null) {
+  const parsed = Number.parseFloat(String(rawValue ?? '').trim().replace(',', '.'));
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_API_LEGACY_STOP_PERCENT;
+}
+
 const DEFAULT_MAKER_RETRY_DELAYS_MS = [500];
 const DEFAULT_MAX_SPREAD_PERCENT = 0.6;
 const DEFAULT_MAX_TAKER_COST_PERCENT = 1.0;
@@ -748,8 +757,12 @@ async function executeEntry(
     }
 
     const tradingMode = await resolveTradingMode();
-    const apiStopModeSetting = await prisma.setting.findUnique({ where: { key: 'api_stop_mode' } });
+    const [apiStopModeSetting, apiLegacyStopPercentSetting] = await Promise.all([
+      prisma.setting.findUnique({ where: { key: 'api_stop_mode' } }),
+      prisma.setting.findUnique({ where: { key: 'api_legacy_stop_percent' } }),
+    ]);
     const apiStopMode = apiStopModeSetting?.value === 'legacy' ? 'legacy' : 'signal';
+    const apiLegacyStopPercent = parseConfiguredLegacyStopPercent(apiLegacyStopPercentSetting?.value);
     const forcedPositionMode = (() => {
       const raw = String(process.env.BITGET_FORCE_POSITION_MODE || '').trim().toLowerCase();
       if (raw === 'hedge_mode' || raw === 'one_way_mode') {
@@ -1137,7 +1150,7 @@ async function executeEntry(
       return NextResponse.json({ error: true, message: errDetail, detail: lastOrderResponse }, { status: 409 });
     }
 
-    const slPercent = 1.2 / 100;
+    const slPercent = apiLegacyStopPercent / 100;
     const rawLegacyStopPrice = type === 'buy' ? entryPrice * (1 - slPercent) : entryPrice * (1 + slPercent);
     const stopNormalizeDirection = type === 'buy' ? 'down' : 'up';
     const normalizeExitPrice = (price: number | null, direction: 'down' | 'up') =>

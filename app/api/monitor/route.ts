@@ -39,6 +39,15 @@ const EXHAUSTION_FLAT_MIN_MFE_PERCENT = 1.5;
 const EXHAUSTION_FLAT_MIN_PROFIT_PERCENT = 1.0;
 const EXHAUSTION_FLAT_MIN_STAGNATION_MS = 120 * 60 * 1000;
 const EXHAUSTION_FLAT_MAX_GIVEBACK_PERCENT = 0.25;
+const DEFAULT_API_LEGACY_STOP_PERCENT = '1.2';
+
+function resolveStoredLegacyStopPercent(rawValue?: string | null) {
+  const parsed = Number.parseFloat(String(rawValue ?? '').trim().replace(',', '.'));
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed.toString()
+    : DEFAULT_API_LEGACY_STOP_PERCENT;
+}
+
 const DASHBOARD_SETTING_KEYS = [
   'bot_enabled',
   'custom_amount',
@@ -50,6 +59,7 @@ const DASHBOARD_SETTING_KEYS = [
   'profit_sound_enabled',
   'profit_sound_file',
   'api_stop_mode',
+  'api_legacy_stop_percent',
   'exhaustion_guard_enabled',
   'take_profit_auto_close_enabled',
   'reverse_on_opposite_signal_enabled',
@@ -108,6 +118,7 @@ async function buildDashboardSnapshot(mode: DashboardMode) {
       profit_sound_enabled: settingsMap.profit_sound_enabled || '0',
       profit_sound_file: settingsMap.profit_sound_file || '',
       api_stop_mode: settingsMap.api_stop_mode || 'signal',
+      api_legacy_stop_percent: resolveStoredLegacyStopPercent(settingsMap.api_legacy_stop_percent),
       exhaustion_guard_enabled: settingsMap.exhaustion_guard_enabled || '1',
       take_profit_auto_close_enabled: settingsMap.take_profit_auto_close_enabled || '0',
       reverse_on_opposite_signal_enabled: settingsMap.reverse_on_opposite_signal_enabled || '1',

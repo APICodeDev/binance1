@@ -75,6 +75,7 @@ struct SettingsPayload: Codable {
     let profit_sound_enabled: String
     let profit_sound_file: String
     let api_stop_mode: String
+    let api_legacy_stop_percent: String
     let exhaustion_guard_enabled: String
     let take_profit_auto_close_enabled: String
 }

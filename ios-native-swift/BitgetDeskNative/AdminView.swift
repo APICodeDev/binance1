@@ -78,10 +78,35 @@ struct AdminView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Initial Stop")
                     .font(.headline)
-                Text("Signal Stop First")
-                    .font(.subheadline.bold())
-                    .foregroundStyle(.cyan)
-                Text("Si el JSON trae un Stop Loss valido, la app lo respeta como SL inicial. Si no llega, el backend cae al 1.2% legacy.")
+                Toggle("Signal Stop First", isOn: Binding(
+                    get: { appModel.apiStopMode == "signal" },
+                    set: { newValue in
+                        Task { await appModel.updateSetting(key: "api_stop_mode", value: newValue ? "signal" : "legacy") }
+                    }
+                ))
+
+                LabeledContent("Legacy SL %") {
+                    HStack(spacing: 8) {
+                        TextField("1.2", text: Binding(
+                            get: { appModel.apiLegacyStopPercent },
+                            set: { appModel.apiLegacyStopPercent = $0 }
+                        ))
+                        .keyboardType(.decimalPad)
+                        .multilineTextAlignment(.trailing)
+                        .onSubmit {
+                            Task { await appModel.saveApiLegacyStopPercent() }
+                        }
+
+                        Button("Save") {
+                            Task { await appModel.saveApiLegacyStopPercent() }
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+
+                Text(appModel.apiStopMode == "signal"
+                     ? "Si el JSON trae un Stop Loss valido, la app lo respeta como SL inicial. Si no llega, el backend cae al \(appModel.apiLegacyStopPercent)% legacy."
+                     : "Ignora el Stop Loss recibido por JSON y usa siempre el stop legacy del \(appModel.apiLegacyStopPercent)%.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

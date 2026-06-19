@@ -281,6 +281,7 @@ interface DashboardSettingsSnapshot {
   profit_sound_enabled: string;
   profit_sound_file: string;
   api_stop_mode: 'signal' | 'legacy';
+  api_legacy_stop_percent: string;
   exhaustion_guard_enabled: string;
   take_profit_auto_close_enabled: string;
   reverse_on_opposite_signal_enabled: string;
@@ -666,6 +667,15 @@ function formatClosedDuration(createdAt: string, closedAt?: string) {
   return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
 }
 
+function normalizePercentInput(value: string) {
+  return value.replace(',', '.');
+}
+
+function parsePositivePercentInput(value: string) {
+  const parsed = Number.parseFloat(normalizePercentInput(value).trim());
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
 function normalizeManagementMode(value?: string | null): 'auto' | 'self' | 'strat' | 'trend' {
   const raw = String(value ?? '').trim().toLowerCase();
   if (raw === 'self' || raw === 'fixed') {
@@ -745,6 +755,9 @@ export default function Dashboard() {
   const [profitSoundEnabled, setProfitSoundEnabled] = useState(false);
   const [profitSoundFile, setProfitSoundFile] = useState('');
   const [apiStopMode, setApiStopMode] = useState<'signal' | 'legacy'>('signal');
+  const [apiLegacyStopPercent, setApiLegacyStopPercent] = useState('1.2');
+  const [apiLegacyStopPercentDirty, setApiLegacyStopPercentDirty] = useState(false);
+  const [apiLegacyStopPercentSaving, setApiLegacyStopPercentSaving] = useState(false);
   const [exhaustionGuardEnabled, setExhaustionGuardEnabled] = useState(false);
   const [takeProfitAutoCloseEnabled, setTakeProfitAutoCloseEnabled] = useState(false);
   const [reverseOnOppositeSignalEnabled, setReverseOnOppositeSignalEnabled] = useState(true);
@@ -1057,6 +1070,9 @@ export default function Dashboard() {
     setProfitSoundEnabled(settings.profit_sound_enabled === '1');
     setProfitSoundFile(settings.profit_sound_file || '');
     setApiStopMode(settings.api_stop_mode === 'legacy' ? 'legacy' : 'signal');
+    if (!apiLegacyStopPercentDirty) {
+      setApiLegacyStopPercent(settings.api_legacy_stop_percent || '1.2');
+    }
     setExhaustionGuardEnabled(settings.exhaustion_guard_enabled === '1');
     setTakeProfitAutoCloseEnabled(settings.take_profit_auto_close_enabled === '1');
     setReverseOnOppositeSignalEnabled(settings.reverse_on_opposite_signal_enabled !== '0');
@@ -1087,7 +1103,7 @@ export default function Dashboard() {
     }
 
     setLastSyncAt(new Date().toISOString());
-  }, []);
+  }, [apiLegacyStopPercentDirty]);
 
   useEffect(() => {
     openPositionIdsRef.current = openPositions
@@ -1160,6 +1176,7 @@ export default function Dashboard() {
           profit_sound_enabled: settings.profit_sound_enabled || '0',
           profit_sound_file: settings.profit_sound_file || '',
           api_stop_mode: settings.api_stop_mode === 'legacy' ? 'legacy' : 'signal',
+          api_legacy_stop_percent: settings.api_legacy_stop_percent || '1.2',
           exhaustion_guard_enabled: settings.exhaustion_guard_enabled || '1',
           take_profit_auto_close_enabled: settings.take_profit_auto_close_enabled || '0',
           reverse_on_opposite_signal_enabled: settings.reverse_on_opposite_signal_enabled || '1',
@@ -1699,6 +1716,41 @@ export default function Dashboard() {
       setErrorPopup(getApiErrorMessage(error, 'Unable to update API initial stop mode.'));
     }
   };
+
+  const saveApiLegacyStopPercent = async (val: string) => {
+    const parsed = parsePositivePercentInput(val);
+    if (parsed === null) {
+      return;
+    }
+
+    try {
+      setApiLegacyStopPercentSaving(true);
+      await apiClient.updateSettings({ api_legacy_stop_percent: parsed.toString() });
+      setApiLegacyStopPercent(parsed.toString());
+      setApiLegacyStopPercentDirty(false);
+    } catch (error) {
+      setErrorPopup(getApiErrorMessage(error, 'Unable to update legacy stop percent.'));
+    } finally {
+      setApiLegacyStopPercentSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!apiLegacyStopPercentDirty) {
+      return;
+    }
+
+    const parsed = parsePositivePercentInput(apiLegacyStopPercent);
+    if (parsed === null) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void saveApiLegacyStopPercent(apiLegacyStopPercent);
+    }, 700);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [apiLegacyStopPercent, apiLegacyStopPercentDirty]);
 
   const submitNewPosition = async () => {
     try {
@@ -2327,7 +2379,7 @@ export default function Dashboard() {
                     <div className="flex min-w-0 flex-1 flex-col">
                       <p className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-400">Trade Protection</p>
                       <h2 className="mt-1 text-xl font-black uppercase tracking-tight text-white">API Initial Stop</h2>
-                      <p className="mt-2 text-xs text-slate-500">Decide whether the first SL should respect a valid JSON stop or always fall back to the legacy 1.2% stop.</p>
+                      <p className="mt-2 text-xs text-slate-500">Decide whether the first SL should respect a valid JSON stop or always fall back to the legacy stop percentage configured here.</p>
                       <div className="mt-4 flex items-center gap-3">
                         <button
                           type="button"
@@ -2341,12 +2393,49 @@ export default function Dashboard() {
                         >
                           {apiStopMode === 'signal' ? 'Signal Stop First' : 'Legacy Stop Only'}
                         </button>
+                        <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3">
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={apiLegacyStopPercent}
+                            onChange={(e) => {
+                              setApiLegacyStopPercent(normalizePercentInput(e.target.value));
+                              setApiLegacyStopPercentDirty(true);
+                            }}
+                            onBlur={(e) => void saveApiLegacyStopPercent(e.target.value)}
+                            className="w-20 bg-transparent border-none p-0 m-0 text-sm font-black text-cyan-300 outline-none"
+                          />
+                          <span className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">%</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void saveApiLegacyStopPercent(apiLegacyStopPercent)}
+                          disabled={apiLegacyStopPercentSaving || parsePositivePercentInput(apiLegacyStopPercent) === null}
+                          className={cn(
+                            "rounded-xl border px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] transition-colors",
+                            apiLegacyStopPercentSaving || parsePositivePercentInput(apiLegacyStopPercent) === null
+                              ? "border-slate-800 bg-slate-950/40 text-slate-600"
+                              : "border-cyan-500/40 bg-cyan-500/10 text-cyan-200 hover:border-cyan-300 hover:text-cyan-100"
+                          )}
+                        >
+                          {apiLegacyStopPercentSaving ? 'Saving...' : 'Save %'}
+                        </button>
                       </div>
                       <p className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-xs font-bold text-slate-300">
                         {apiStopMode === 'signal'
-                          ? 'Si el JSON trae Stop Loss valido se respeta como SL inicial. Si no llega, el sistema cae al 1.2% legacy.'
-                          : 'Ignora el Stop Loss recibido por JSON y usa siempre el stop legacy del 1.2%.'}
+                          ? `Si el JSON trae Stop Loss valido se respeta como SL inicial. Si no llega, el sistema cae al ${apiLegacyStopPercent || '1.2'}% legacy.`
+                          : `Ignora el Stop Loss recibido por JSON y usa siempre el stop legacy del ${apiLegacyStopPercent || '1.2'}%.`}
                       </p>
+                      {apiLegacyStopPercentDirty && parsePositivePercentInput(apiLegacyStopPercent) !== null ? (
+                        <p className="mt-2 text-[11px] font-bold text-cyan-300">
+                          Guardando automaticamente este porcentaje para las proximas operaciones...
+                        </p>
+                      ) : null}
+                      {apiLegacyStopPercentDirty && parsePositivePercentInput(apiLegacyStopPercent) === null ? (
+                        <p className="mt-2 text-[11px] font-bold text-amber-300">
+                          Introduce un numero positivo para guardar el porcentaje.
+                        </p>
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -2832,7 +2921,7 @@ export default function Dashboard() {
                   </motion.div>
                 ) : (
                   openPositions?.map((pos) => (
-                    <PositionCard key={pos.id} pos={pos} onEject={manualEject} />
+                    <PositionCard key={pos.id} pos={pos} onEject={manualEject} legacyStopPercent={apiLegacyStopPercent} />
                   ))
                 )}
               </AnimatePresence>
@@ -3399,9 +3488,11 @@ Closed By: ${getCloseOriginLabel(pos)}`;
 function PositionCard({
   pos,
   onEject,
+  legacyStopPercent,
 }: {
   pos: Position,
   onEject: (pos: Position) => void,
+  legacyStopPercent: string,
 }) {
   const isBuy = pos.positionType === 'buy';
   const managementMode = normalizeManagementMode(pos.managementMode);
@@ -3412,7 +3503,10 @@ function PositionCard({
   const stratTrailingEnabled = stratManaged || Boolean(pos.stratTrailingEnabled);
   const quoteCurrency = pos.tradingMode === 'live' ? 'USDC' : 'USDT';
   const comm = getFallbackCommissionRate(pos.tradingMode);
-  const LEGACY_STOP_PERCENT = 1.2;
+  const parsedLegacyStopPercent = Number.parseFloat(legacyStopPercent || '1.2');
+  const LEGACY_STOP_PERCENT = Number.isFinite(parsedLegacyStopPercent) && parsedLegacyStopPercent > 0
+    ? parsedLegacyStopPercent
+    : 1.2;
   const entryCost = pos.entryPrice * pos.quantity * comm;
   const exitCost = pos.stopLoss * pos.quantity * comm;
   const grossPercent = pos.profitLossPercent;
@@ -3457,7 +3551,7 @@ function PositionCard({
           : 'Strat Legacy')
     : trendManaged
       ? 'Trend Legacy + BreakEven >1%'
-    : (stopAdjustedByApp ? 'Adapted By App' : 'Legacy 1.2% Default');
+    : (stopAdjustedByApp ? 'Adapted By App' : `Legacy ${LEGACY_STOP_PERCENT}% Default`);
 
   const exchangeUrl = `https://www.bitget.com/en/futures/usdt/${pos.symbol}`;
   const tradingViewUrl = `https://www.tradingview.com/chart/?symbol=BITGET%3A${encodeURIComponent(`${pos.symbol}.P`)}`;

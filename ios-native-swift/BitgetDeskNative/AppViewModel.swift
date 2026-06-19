@@ -179,6 +179,7 @@ final class AppViewModel: ObservableObject {
     @Published var leverageEnabled = false
     @Published var leverageValue = "1"
     @Published var apiStopMode = "signal"
+    @Published var apiLegacyStopPercent = "1.2"
     @Published var exhaustionGuardEnabled = true
     @Published var takeProfitAutoCloseEnabled = false
     @Published var openPositions: [Position] = []
@@ -526,6 +527,7 @@ final class AppViewModel: ObservableObject {
             leverageEnabled = settings.leverage_enabled == "1"
             leverageValue = settings.leverage_value
             apiStopMode = settings.api_stop_mode
+            apiLegacyStopPercent = settings.api_legacy_stop_percent
             exhaustionGuardEnabled = settings.exhaustion_guard_enabled != "0"
             takeProfitAutoCloseEnabled = settings.take_profit_auto_close_enabled == "1"
             profitSoundEnabled = settings.profit_sound_enabled == "1"
@@ -620,6 +622,17 @@ final class AppViewModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func saveApiLegacyStopPercent() async {
+        let normalized = apiLegacyStopPercent.replacingOccurrences(of: ",", with: ".").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let parsed = Double(normalized), parsed > 0 else {
+            errorMessage = "Legacy SL % must be a positive number."
+            return
+        }
+
+        apiLegacyStopPercent = String(parsed)
+        await updateSetting(key: "api_legacy_stop_percent", value: String(parsed))
     }
 
     func runMonitor() async {
