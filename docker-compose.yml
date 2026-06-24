@@ -1,6 +1,37 @@
 name: TraderBot
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: traderbot-postgres
+    environment:
+      POSTGRES_DB: traderbot
+      POSTGRES_USER: traderbot
+      POSTGRES_PASSWORD: traderbot
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U traderbot -d traderbot"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: always
+
+  db-init:
+    build: .
+    container_name: traderbot-db-init
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://traderbot:traderbot@postgres:5432/traderbot?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: sh -c "npx prisma db push && npm run create-admin"
+    restart: "no"
+
   bitget-bot:
     build: .
     container_name: bitget-trading-bot
@@ -9,13 +40,21 @@ services:
     env_file:
       - .env
     environment:
+      DATABASE_URL: postgresql://traderbot:traderbot@postgres:5432/traderbot?schema=public
       BITGET_WS_SERVICE_URL: http://bitget-marketdata:8787
       TRADE_ENGINE_URL: http://trade-engine:8789
       BOOKMAP_WS_SERVICE_URL: http://bookmap-service:8788
     depends_on:
-      - bitget-marketdata
-      - trade-engine
-      - bookmap-service
+      postgres:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+      bitget-marketdata:
+        condition: service_started
+      trade-engine:
+        condition: service_started
+      bookmap-service:
+        condition: service_started
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 30s
@@ -48,11 +87,17 @@ services:
     env_file:
       - .env
     environment:
+      DATABASE_URL: postgresql://traderbot:traderbot@postgres:5432/traderbot?schema=public
       TRADE_ENGINE_HOST: 0.0.0.0
       TRADE_ENGINE_PORT: 8789
       BITGET_WS_SERVICE_URL: http://bitget-marketdata:8787
     depends_on:
-      - bitget-marketdata
+      postgres:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+      bitget-marketdata:
+        condition: service_started
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8789/health').then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 30s
@@ -71,3 +116,6 @@ services:
       BOOKMAP_WS_SERVICE_HOST: 0.0.0.0
       BOOKMAP_WS_SERVICE_PORT: 8788
     restart: always
+
+volumes:
+  postgres_data:
