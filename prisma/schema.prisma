@@ -39,6 +39,8 @@ model Position {
   maxProfitAt          DateTime? @map("max_profit_at")
   stratBreakEvenEnabled Boolean  @default(false) @map("strat_break_even_enabled")
   stratTrailingEnabled  Boolean  @default(false) @map("strat_trailing_enabled")
+  manualBreakEvenEnabled Boolean @default(false) @map("manual_break_even_enabled")
+  manualTrailingOverride Boolean? @map("manual_trailing_override")
 
   @@map("positions")
 }

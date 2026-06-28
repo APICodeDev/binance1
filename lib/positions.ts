@@ -69,6 +69,53 @@ export function isSelfManagedPosition(value: unknown) {
   return normalizePositionManagementMode(value) === 'self';
 }
 
+type ProtectionConfigPosition = {
+  managementMode?: string | null;
+  stratBreakEvenEnabled?: boolean | null;
+  stratTrailingEnabled?: boolean | null;
+  manualBreakEvenEnabled?: boolean | null;
+  manualTrailingOverride?: boolean | null;
+};
+
+export function isBaseBreakEvenEnabled(value: unknown) {
+  if (isFixedPriceManagementMode(value)) {
+    return false;
+  }
+
+  return true;
+}
+
+export function isBaseTrailingEnabled(value: unknown) {
+  if (isFixedPriceManagementMode(value)) {
+    return false;
+  }
+
+  const managementMode = normalizePositionManagementMode(value);
+  return managementMode === 'auto' || managementMode === 'self' || managementMode === 'strat';
+}
+
+export function getManualTrailingOverride(position: ProtectionConfigPosition) {
+  return typeof position.manualTrailingOverride === 'boolean'
+    ? position.manualTrailingOverride
+    : null;
+}
+
+export function isBreakEvenEffectivelyEnabled(position: ProtectionConfigPosition) {
+  return isBaseBreakEvenEnabled(position.managementMode) ||
+    Boolean(position.manualBreakEvenEnabled) ||
+    Boolean(position.stratBreakEvenEnabled) ||
+    isTrailingEffectivelyEnabled(position);
+}
+
+export function isTrailingEffectivelyEnabled(position: ProtectionConfigPosition) {
+  const manualOverride = getManualTrailingOverride(position);
+  if (manualOverride !== null) {
+    return manualOverride;
+  }
+
+  return isBaseTrailingEnabled(position.managementMode) || Boolean(position.stratTrailingEnabled);
+}
+
 type MarketCandle = {
   ts: number;
   open: number;

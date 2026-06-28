@@ -108,6 +108,8 @@ interface Position {
   takeProfitTargetPercent?: number | null;
   stratBreakEvenEnabled?: boolean;
   stratTrailingEnabled?: boolean;
+  manualBreakEvenEnabled?: boolean;
+  manualTrailingOverride?: boolean | null;
 }
 
 interface AuthUser {
@@ -334,8 +336,8 @@ interface LivePositionMarketUpdatePayload {
   candidateStopLoss: number | null;
   canImproveStop: boolean;
   managementMode: 'auto' | 'self' | 'strat' | 'trend';
-  stratBreakEvenEnabled: boolean;
-  stratTrailingEnabled: boolean;
+  breakEvenEnabled: boolean;
+  trailingEnabled: boolean;
   eventTimestamp: number;
 }
 
@@ -708,6 +710,38 @@ function formatManagementModeLabel(value?: string | null) {
   }
 
   return 'Auto';
+}
+
+function isFixedManagementMode(value?: string | null) {
+  return String(value ?? '').trim().toLowerCase() === 'fixed';
+}
+
+function isBaseBreakEvenEnabledForPosition(position: Pick<Position, 'managementMode'>) {
+  return !isFixedManagementMode(position.managementMode);
+}
+
+function isBaseTrailingEnabledForPosition(position: Pick<Position, 'managementMode'>) {
+  if (isFixedManagementMode(position.managementMode)) {
+    return false;
+  }
+
+  const normalized = normalizeManagementMode(position.managementMode);
+  return normalized === 'auto' || normalized === 'self' || normalized === 'strat';
+}
+
+function isBreakEvenEffectivelyEnabledForPosition(position: Pick<Position, 'managementMode' | 'stratBreakEvenEnabled' | 'manualBreakEvenEnabled' | 'manualTrailingOverride' | 'stratTrailingEnabled'>) {
+  return isBaseBreakEvenEnabledForPosition(position) ||
+    Boolean(position.manualBreakEvenEnabled) ||
+    Boolean(position.stratBreakEvenEnabled) ||
+    isTrailingEffectivelyEnabledForPosition(position);
+}
+
+function isTrailingEffectivelyEnabledForPosition(position: Pick<Position, 'managementMode' | 'manualTrailingOverride' | 'stratTrailingEnabled'>) {
+  if (typeof position.manualTrailingOverride === 'boolean') {
+    return position.manualTrailingOverride;
+  }
+
+  return isBaseTrailingEnabledForPosition(position) || Boolean(position.stratTrailingEnabled);
 }
 
 function getFallbackCommissionRate(tradingMode: 'demo' | 'live') {
@@ -1841,6 +1875,28 @@ export default function Dashboard() {
     setShowEjectModal(pos);
   };
 
+  const updatePositionProtection = async (
+    pos: Position,
+    action: 'breakEven' | 'trailing',
+    enabled?: boolean
+  ) => {
+    const payload = action === 'breakEven'
+      ? { breakEvenEnabled: true }
+      : { trailingEnabled: typeof enabled === 'boolean' ? enabled : true };
+
+    const response = await apiClient.updatePositionProtectionControls(pos.id, payload);
+    const updatedPosition = response?.data?.position;
+    if (updatedPosition) {
+      setOpenPositions((current) => current.map((position) => (
+        position.id === pos.id
+          ? { ...position, ...updatedPosition }
+          : position
+      )));
+    } else {
+      await fetchData(true, pos.tradingMode);
+    }
+  };
+
   const confirmManualEject = async () => {
     if (!showEjectModal) return;
     const { id } = showEjectModal;
@@ -2921,7 +2977,13 @@ export default function Dashboard() {
                   </motion.div>
                 ) : (
                   openPositions?.map((pos) => (
-                    <PositionCard key={pos.id} pos={pos} onEject={manualEject} legacyStopPercent={apiLegacyStopPercent} />
+                    <PositionCard
+                      key={pos.id}
+                      pos={pos}
+                      onEject={manualEject}
+                      onUpdateProtection={updatePositionProtection}
+                      legacyStopPercent={apiLegacyStopPercent}
+                    />
                   ))
                 )}
               </AnimatePresence>
@@ -3488,19 +3550,23 @@ Closed By: ${getCloseOriginLabel(pos)}`;
 function PositionCard({
   pos,
   onEject,
+  onUpdateProtection,
   legacyStopPercent,
 }: {
   pos: Position,
   onEject: (pos: Position) => void,
+  onUpdateProtection: (pos: Position, action: 'breakEven' | 'trailing', enabled?: boolean) => Promise<void>,
   legacyStopPercent: string,
 }) {
+  const [protectionBusy, setProtectionBusy] = useState<null | 'breakEven' | 'trailing'>(null);
   const isBuy = pos.positionType === 'buy';
   const managementMode = normalizeManagementMode(pos.managementMode);
   const managementModeLabel = formatManagementModeLabel(pos.managementMode);
   const stratManaged = managementMode === 'strat';
   const trendManaged = managementMode === 'trend';
-  const stratBreakEvenEnabled = stratManaged || Boolean(pos.stratBreakEvenEnabled);
-  const stratTrailingEnabled = stratManaged || Boolean(pos.stratTrailingEnabled);
+  const breakEvenEnabled = isBreakEvenEffectivelyEnabledForPosition(pos);
+  const trailingEnabled = isTrailingEffectivelyEnabledForPosition(pos);
+  const breakEvenLocked = breakEvenEnabled;
   const quoteCurrency = pos.tradingMode === 'live' ? 'USDC' : 'USDT';
   const comm = getFallbackCommissionRate(pos.tradingMode);
   const parsedLegacyStopPercent = Number.parseFloat(legacyStopPercent || '1.2');
@@ -3544,14 +3610,19 @@ function PositionCard({
       ? 'Breakeven Active'
       : 'Protection Arming';
   const stopEngineLabel = stratManaged
-    ? (stratTrailingEnabled
+    ? (trailingEnabled
         ? 'Strat Auto + Self Trailing'
-        : stratBreakEvenEnabled
+        : breakEvenEnabled
           ? 'Strat Auto + BreakEven'
           : 'Strat Legacy')
     : trendManaged
       ? 'Trend Legacy + BreakEven >1%'
     : (stopAdjustedByApp ? 'Adapted By App' : `Legacy ${LEGACY_STOP_PERCENT}% Default`);
+  const protectionModeLabel = trailingEnabled
+    ? 'Breakeven + Trailing'
+    : breakEvenEnabled
+      ? 'Breakeven'
+      : 'Proteccion manual disponible';
 
   const exchangeUrl = `https://www.bitget.com/en/futures/usdt/${pos.symbol}`;
   const tradingViewUrl = `https://www.tradingview.com/chart/?symbol=BITGET%3A${encodeURIComponent(`${pos.symbol}.P`)}`;
@@ -3585,6 +3656,32 @@ function PositionCard({
   if (managementMode === 'self' && typeof pos.takeProfitTargetPercent === 'number' && pos.takeProfitTargetPercent > 0) {
     positionMeta.push(`TP ${pos.takeProfitTargetPercent.toFixed(2)}%`);
   }
+
+  const handleBreakEvenClick = async () => {
+    if (breakEvenLocked || protectionBusy) {
+      return;
+    }
+
+    setProtectionBusy('breakEven');
+    try {
+      await onUpdateProtection(pos, 'breakEven', true);
+    } finally {
+      setProtectionBusy(null);
+    }
+  };
+
+  const handleTrailingClick = async () => {
+    if (protectionBusy) {
+      return;
+    }
+
+    setProtectionBusy('trailing');
+    try {
+      await onUpdateProtection(pos, 'trailing', !trailingEnabled);
+    } finally {
+      setProtectionBusy(null);
+    }
+  };
 
   return (
     <motion.div 
@@ -3709,7 +3806,7 @@ function PositionCard({
                 TP {formatPrice(pos.takeProfit, pos.pricePrecision)}
               </p>
             )}
-            {stratManaged && !stratBreakEvenEnabled && !stratTrailingEnabled && (
+            {stratManaged && !breakEvenEnabled && !trailingEnabled && (
               <p className="mt-2 text-[10px] font-black uppercase tracking-[0.18em] text-amber-200">
                 Legacy Strat Config
               </p>
@@ -3739,6 +3836,47 @@ function PositionCard({
               <span>Fee {(getFallbackCommissionRate(pos.tradingMode) * 100).toFixed(4)}%</span>
             </div>
           </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-slate-800/80 bg-slate-950/35 p-3">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Proteccion por operacion</p>
+          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-cyan-300">{protectionModeLabel}</p>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={handleBreakEvenClick}
+            disabled={breakEvenLocked || protectionBusy !== null}
+            className={cn(
+              "rounded-xl border px-3 py-2 text-[11px] font-black uppercase tracking-[0.18em] transition-colors",
+              breakEvenEnabled
+                ? "border-amber-400/50 bg-amber-500/15 text-amber-300"
+                : "border-slate-700 bg-slate-900/70 text-slate-300 hover:border-amber-400/40 hover:text-amber-200",
+              (breakEvenLocked || protectionBusy !== null) && "cursor-not-allowed opacity-80"
+            )}
+          >
+            {protectionBusy === 'breakEven' ? 'Activando...' : breakEvenEnabled ? 'Breakeven Activo' : 'Activar Breakeven'}
+          </button>
+          <button
+            type="button"
+            onClick={handleTrailingClick}
+            disabled={protectionBusy !== null}
+            className={cn(
+              "rounded-xl border px-3 py-2 text-[11px] font-black uppercase tracking-[0.18em] transition-colors",
+              trailingEnabled
+                ? "border-emerald-400/50 bg-emerald-500/15 text-emerald-300"
+                : "border-slate-700 bg-slate-900/70 text-slate-300 hover:border-emerald-400/40 hover:text-emerald-200",
+              protectionBusy !== null && "cursor-not-allowed opacity-80"
+            )}
+          >
+            {protectionBusy === 'trailing'
+              ? (trailingEnabled ? 'Desactivando...' : 'Activando...')
+              : trailingEnabled
+                ? 'Desactivar Trailing'
+                : 'Activar Trailing'}
+          </button>
         </div>
       </div>
 

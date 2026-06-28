@@ -5,10 +5,13 @@ import { ok, fail } from '@/lib/apiResponse';
 import { requireAuth } from '@/lib/auth';
 import { writeAuditLog } from '@/lib/audit';
 import { prisma } from '@/lib/db';
-import { normalizePositionManagementMode } from '@/lib/positions';
+import {
+  getManualTrailingOverride,
+  isBreakEvenEffectivelyEnabled,
+  isTrailingEffectivelyEnabled,
+} from '@/lib/positions';
 import {
   bitgetBuildPositionContext,
-  bitgetCancelVerifiedTakeProfitOrders,
   bitgetEnsureVerifiedStopOrder,
   bitgetGetCommissionRate,
   getDefaultBitgetFeeRate,
@@ -38,8 +41,19 @@ export async function POST(req: NextRequest) {
     return fail(400, 'Position id is required');
   }
 
-  if (typeof body?.stratBreakEvenEnabled !== 'boolean' && typeof body?.stratTrailingEnabled !== 'boolean') {
-    return fail(400, 'At least one strat control flag is required');
+  const requestedBreakEvenEnabled = typeof body?.breakEvenEnabled === 'boolean'
+    ? body.breakEvenEnabled
+    : typeof body?.stratBreakEvenEnabled === 'boolean'
+      ? body.stratBreakEvenEnabled
+      : undefined;
+  const requestedTrailingEnabled = typeof body?.trailingEnabled === 'boolean'
+    ? body.trailingEnabled
+    : typeof body?.stratTrailingEnabled === 'boolean'
+      ? body.stratTrailingEnabled
+      : undefined;
+
+  if (typeof requestedBreakEvenEnabled !== 'boolean' && typeof requestedTrailingEnabled !== 'boolean') {
+    return fail(400, 'At least one protection control flag is required');
   }
 
   const position = await prisma.position.findUnique({ where: { id } });
@@ -47,36 +61,33 @@ export async function POST(req: NextRequest) {
     return fail(404, 'Open position not found');
   }
 
-  if (normalizePositionManagementMode(position.managementMode) !== 'strat') {
-    return fail(400, 'Strat controls are only available for strat positions');
+  if (requestedBreakEvenEnabled === false) {
+    return fail(400, 'Breakeven cannot be manually deactivated once available');
   }
 
-  const nextBreakEvenEnabled = typeof body.stratBreakEvenEnabled === 'boolean'
-    ? body.stratBreakEvenEnabled
-    : Boolean((position as any).stratBreakEvenEnabled);
-  const nextTrailingEnabled = typeof body.stratTrailingEnabled === 'boolean'
-    ? body.stratTrailingEnabled
-    : Boolean((position as any).stratTrailingEnabled);
+  const previousBreakEvenEnabled = isBreakEvenEffectivelyEnabled(position as any);
+  const previousTrailingEnabled = isTrailingEffectivelyEnabled(position as any);
+  const previousManualTrailingOverride = getManualTrailingOverride(position as any);
+  const nextManualBreakEvenEnabled = Boolean((position as any).manualBreakEvenEnabled) ||
+    requestedBreakEvenEnabled === true ||
+    requestedTrailingEnabled === true;
+  const nextManualTrailingOverride = typeof requestedTrailingEnabled === 'boolean'
+    ? requestedTrailingEnabled
+    : previousManualTrailingOverride;
+  const nextEffectivePosition = {
+    ...position,
+    manualBreakEvenEnabled: nextManualBreakEvenEnabled,
+    manualTrailingOverride: nextManualTrailingOverride,
+  } as any;
+  const nextBreakEvenEnabled = isBreakEvenEffectivelyEnabled(nextEffectivePosition);
+  const nextTrailingEnabled = isTrailingEffectivelyEnabled(nextEffectivePosition);
 
   const tradingMode = ((position as any).tradingMode || 'demo') as 'demo' | 'live';
   const symbol = position.symbol.toUpperCase();
-  const trailingJustEnabled = nextTrailingEnabled && !Boolean((position as any).stratTrailingEnabled);
+  const trailingJustEnabled = nextTrailingEnabled && !previousTrailingEnabled;
 
   let updatedStopLoss = position.stopLoss;
-  let updatedTakeProfit = position.takeProfit;
   let immediateSyncMessage: string | null = null;
-
-  if (trailingJustEnabled) {
-    const tpCancelResult = await bitgetCancelVerifiedTakeProfitOrders(symbol, tradingMode);
-    if (!tpCancelResult.ok) {
-      return fail(500, `Unable to remove take profit on Bitget for ${symbol}`, tpCancelResult.message);
-    }
-
-    updatedTakeProfit = null;
-    immediateSyncMessage = tpCancelResult.message === 'already-empty'
-      ? 'Trailing enabled. No active TP remained in Bitget.'
-      : 'Trailing enabled. TP removed from Bitget.';
-  }
 
   if (nextBreakEvenEnabled || nextTrailingEnabled) {
     const [currentPrice, exitCommission, positionMode] = await Promise.all([
@@ -131,7 +142,7 @@ export async function POST(req: NextRequest) {
 
         updatedStopLoss = candidateStop;
         immediateSyncMessage = trailingJustEnabled
-          ? `${immediateSyncMessage || 'Trailing enabled'} Stop synchronized: ${syncResult.message}.`
+          ? `Trailing enabled. Stop synchronized: ${syncResult.message}.`
           : syncResult.message;
       }
     }
@@ -140,27 +151,28 @@ export async function POST(req: NextRequest) {
   const updated = await prisma.position.update({
     where: { id: position.id },
     data: {
-      stratBreakEvenEnabled: nextBreakEvenEnabled,
-      stratTrailingEnabled: nextTrailingEnabled,
+      manualBreakEvenEnabled: nextManualBreakEvenEnabled,
+      manualTrailingOverride: nextManualTrailingOverride,
       stopLoss: updatedStopLoss,
-      takeProfit: updatedTakeProfit,
     } as any,
   });
 
   await writeAuditLog({
-    action: 'position.strat_controls_updated',
+    action: 'position.protection_controls_updated',
     userId: auth.auth.user.id,
     targetType: 'position',
     targetId: String(position.id),
     metadata: {
       symbol,
       tradingMode,
+      previousBreakEvenEnabled,
+      previousTrailingEnabled,
       stratBreakEvenEnabled: nextBreakEvenEnabled,
       stratTrailingEnabled: nextTrailingEnabled,
+      manualBreakEvenEnabled: nextManualBreakEvenEnabled,
+      manualTrailingOverride: nextManualTrailingOverride,
       previousStopLoss: position.stopLoss,
       updatedStopLoss,
-      previousTakeProfit: position.takeProfit,
-      updatedTakeProfit,
       immediateSyncMessage,
       trailingJustEnabled,
     },
