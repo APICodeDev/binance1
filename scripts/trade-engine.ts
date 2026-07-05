@@ -1022,9 +1022,9 @@ const processPositionMarketUpdate = async (positionId: number, snapshot: MarketS
             : Math.min(activeStopLoss, update.candidateStopLoss)
         )
       : activeStopLoss;
-    const stopLossTriggered = trendManaged
-      ? false
-      : hasBreachedStopLevel(currentPosition, update.price, derivedStopLoss);
+    // Trend keeps a fixed initial SL on open, so it still needs a local
+    // breach check in case the exchange-side protection is missing or fails.
+    const stopLossTriggered = hasBreachedStopLevel(currentPosition, update.price, derivedStopLoss);
 
     if (exhaustionTriggered || takeProfitTriggered || stopLossTriggered) {
       const impliedTrailingStop = !trendManaged && update.candidateStopLoss !== null && (

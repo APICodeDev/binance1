@@ -1199,7 +1199,7 @@ async function executeEntry(
     const normalizedRequestedTakeProfit = takeProfitResolution.normalizedRequestedTakeProfit;
     const isRequestedTakeProfitValid = takeProfitResolution.isRequestedTakeProfitValid;
     const stopPrice = trendManaged
-      ? legacyStopPrice
+      ? (isRequestedStopValid ? normalizedRequestedStop : legacyStopPrice)
       : stratManaged
       ? (isRequestedStopValid ? normalizedRequestedStop : legacyStopPrice)
       : managementMode === 'self'
@@ -1507,7 +1507,7 @@ async function executeEntry(
       },
       stop: {
         mode: trendManaged
-          ? 'legacy'
+          ? (isRequestedStopValid ? stopInputSource : 'legacy')
           : stratManaged
           ? (isRequestedStopValid ? stopInputSource : 'legacy')
           : managementMode === 'self'

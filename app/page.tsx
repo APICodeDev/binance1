@@ -3616,7 +3616,7 @@ function PositionCard({
           ? 'Strat Auto + BreakEven'
           : 'Strat Legacy')
     : trendManaged
-      ? 'Trend Legacy + BreakEven >1%'
+      ? 'Trend Signal/Legacy + BreakEven >1%'
     : (stopAdjustedByApp ? 'Adapted By App' : `Legacy ${LEGACY_STOP_PERCENT}% Default`);
   const protectionModeLabel = trailingEnabled
     ? 'Breakeven + Trailing'

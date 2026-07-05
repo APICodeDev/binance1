@@ -45,7 +45,7 @@ struct PositionCardView: View {
             }
 
             if isTrendManaged {
-                Text("Trend: SL legacy fijo, sin TP ni trailing. Breakeven al superar 1%.")
+                Text("Trend: usa el SL del webhook si es valido; si no, cae al legacy. Sin TP ni trailing. Breakeven al superar 1%.")
                     .font(.caption.bold())
                     .foregroundStyle(.cyan)
                     .padding(.horizontal, 12)
