@@ -2533,93 +2533,95 @@ export default function Dashboard() {
         </header>
 
         {authUser.role === 'admin' && currentView === 'admin' && (
-          <section className="rounded-[2rem] border border-slate-800 bg-slate-900/70 p-5 md:p-6 shadow-xl shadow-slate-950/20">
-            <div className="flex flex-col gap-5">
-              <div className="grid gap-4 xl:grid-cols-2">
-                <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-4">
+          <section className="rounded-[1.75rem] border border-slate-200/80 bg-white/90 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/70 dark:shadow-slate-950/20 md:p-5">
+            <div className="grid gap-4 xl:grid-cols-12">
+              <div className="xl:col-span-4 xl:self-start">
+                <div className="h-fit rounded-[1.25rem] border border-slate-200 bg-slate-50/90 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/40 dark:shadow-none">
                   <div className="flex items-start gap-3">
-                    <Zap size={18} className={cn("mt-1 shrink-0", leverageEnabled ? "text-amber-400" : "text-slate-500")} />
+                    <Zap size={18} className={cn("mt-1 shrink-0", leverageEnabled ? "text-amber-500 dark:text-amber-400" : "text-slate-400 dark:text-slate-500")} />
                     <div className="flex min-w-0 flex-1 flex-col">
                       <div className="flex items-center gap-2">
-                        <p className="text-[10px] font-black uppercase tracking-[0.3em] text-amber-400">Trade Sizing</p>
+                        <p className="text-[10px] font-black uppercase tracking-[0.24em] text-amber-500 dark:text-amber-400">Trade Sizing</p>
                         <div className="relative">
                           <button
                             type="button"
                             onClick={() => setShowLeverageHelp((current) => !current)}
                             onBlur={() => setTimeout(() => setShowLeverageHelp(false), 120)}
-                            className="flex h-5 w-5 items-center justify-center rounded-full border border-slate-700 bg-slate-950/70 text-slate-400 transition-colors hover:border-amber-400 hover:text-amber-300"
+                            className="flex h-5 w-5 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-500 transition-colors hover:border-amber-400 hover:text-amber-500 dark:border-slate-700 dark:bg-slate-950/70 dark:text-slate-400 dark:hover:text-amber-300"
                             aria-label="Leverage help"
                           >
                             <CircleHelp size={12} />
                           </button>
                           <div
                             className={cn(
-                              "absolute left-0 top-7 z-20 w-64 rounded-2xl border border-slate-700 bg-slate-950/95 p-4 text-left shadow-2xl shadow-slate-950/60 transition-all",
+                              "absolute left-0 top-7 z-20 w-64 rounded-2xl border border-slate-200 bg-white/95 p-4 text-left shadow-xl transition-all dark:border-slate-700 dark:bg-slate-950/95 dark:shadow-slate-950/60",
                               showLeverageHelp ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
                             )}
                           >
-                            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-300">How leverage works here</p>
-                            <p className="mt-2 text-xs leading-5 text-slate-300">
+                            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-500 dark:text-amber-300">How leverage works here</p>
+                            <p className="mt-2 text-xs leading-5 text-slate-600 dark:text-slate-300">
                               Entry Amount is the exposure you want to open. Leverage changes the margin Bitget uses for that exposure.
                             </p>
-                            <p className="mt-2 text-xs leading-5 text-slate-400">
+                            <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">
                               Example: if you want a 500 USDT position and your account has 100 USDT, use Entry Amount 500 and Leverage x5.
                             </p>
                           </div>
                         </div>
                       </div>
-                      <h2 className="mt-1 text-xl font-black uppercase tracking-tight text-white">Leverage</h2>
-                      <p className="mt-2 text-xs text-slate-500">Amount remains exposure. Leverage only changes the margin Bitget uses for that exposure.</p>
-                      <div className="mt-4 flex flex-wrap items-center gap-3">
+                      <h2 className="mt-1 text-xl font-black uppercase tracking-tight text-slate-900 dark:text-white">Leverage</h2>
+                      <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-500">Amount remains exposure. Leverage only changes the margin Bitget uses for that exposure.</p>
+                      <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_132px]">
                         <button
                           type="button"
                           onClick={toggleLeverage}
                           className={cn(
-                            "rounded-xl border px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] transition-colors",
+                            "rounded-xl border px-4 py-3 text-[10px] font-black uppercase tracking-[0.18em] transition-colors",
                             leverageEnabled
                               ? "border-amber-400 bg-amber-400 text-slate-950"
-                              : "border-slate-700 bg-slate-950/40 text-slate-400"
+                              : "border-slate-300 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-400"
                           )}
                         >
                           {leverageEnabled ? 'Leverage On' : 'Leverage Off'}
                         </button>
-                        <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3">
-                          <span className="text-sm font-black text-slate-500">x</span>
+                        <div className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-950/50">
+                          <span className="text-sm font-black text-slate-400 dark:text-slate-500">x</span>
                           <input
                             type="number"
                             min="1"
                             step="1"
                             value={leverageValue}
                             onChange={(e) => saveLeverageValue(e.target.value)}
-                            className="w-20 bg-transparent border-none text-sm font-black text-amber-400 outline-none p-0 m-0"
+                            className="w-full bg-transparent border-none text-sm font-black text-amber-500 outline-none p-0 m-0 dark:text-amber-400"
                           />
                         </div>
                       </div>
                     </div>
                   </div>
                 </div>
+              </div>
 
-                <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-4">
+              <div className="xl:col-span-8">
+                <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50/90 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/40 dark:shadow-none md:p-5">
                   <div className="flex items-start gap-3">
                     <ShieldCheck size={18} className="mt-1 shrink-0 text-cyan-300" />
                     <div className="flex min-w-0 flex-1 flex-col">
-                      <p className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-400">Trade Protection</p>
-                      <h2 className="mt-1 text-xl font-black uppercase tracking-tight text-white">API Initial Stop</h2>
-                      <p className="mt-2 text-xs text-slate-500">Decide whether the first SL should respect a valid JSON stop or always fall back to the legacy stop percentage configured here.</p>
-                      <div className="mt-4 flex items-center gap-3">
+                      <p className="text-[10px] font-black uppercase tracking-[0.24em] text-cyan-500 dark:text-cyan-400">Trade Protection</p>
+                      <h2 className="mt-1 text-xl font-black uppercase tracking-tight text-slate-900 dark:text-white">API Initial Stop</h2>
+                      <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-500">Decide whether the first SL should respect a valid JSON stop or always fall back to the legacy stop percentage configured here.</p>
+                      <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1.25fr)_160px_110px]">
                         <button
                           type="button"
                           onClick={toggleApiStopMode}
                           className={cn(
-                            "rounded-xl border px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] transition-colors",
+                            "rounded-xl border px-4 py-3 text-[10px] font-black uppercase tracking-[0.18em] transition-colors",
                             apiStopMode === 'signal'
                               ? "border-cyan-300 bg-cyan-300 text-slate-950"
-                              : "border-slate-700 bg-slate-950/40 text-slate-300"
+                              : "border-slate-300 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-300"
                           )}
                         >
                           {apiStopMode === 'signal' ? 'Signal Stop First' : 'Legacy Stop Only'}
                         </button>
-                        <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/50 px-4 py-3">
+                        <div className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-950/50">
                           <input
                             type="text"
                             inputMode="decimal"
@@ -2629,25 +2631,25 @@ export default function Dashboard() {
                               setApiLegacyStopPercentDirty(true);
                             }}
                             onBlur={(e) => void saveApiLegacyStopPercent(e.target.value)}
-                            className="w-20 bg-transparent border-none p-0 m-0 text-sm font-black text-cyan-300 outline-none"
+                            className="w-full bg-transparent border-none p-0 m-0 text-sm font-black text-cyan-500 outline-none dark:text-cyan-300"
                           />
-                          <span className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">%</span>
+                          <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">%</span>
                         </div>
                         <button
                           type="button"
                           onClick={() => void saveApiLegacyStopPercent(apiLegacyStopPercent)}
                           disabled={apiLegacyStopPercentSaving || parsePositivePercentInput(apiLegacyStopPercent) === null}
                           className={cn(
-                            "rounded-xl border px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] transition-colors",
+                            "rounded-xl border px-4 py-3 text-[10px] font-black uppercase tracking-[0.18em] transition-colors",
                             apiLegacyStopPercentSaving || parsePositivePercentInput(apiLegacyStopPercent) === null
-                              ? "border-slate-800 bg-slate-950/40 text-slate-600"
+                              ? "border-slate-200 bg-slate-100 text-slate-400 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-600"
                               : "border-cyan-500/40 bg-cyan-500/10 text-cyan-200 hover:border-cyan-300 hover:text-cyan-100"
                           )}
                         >
                           {apiLegacyStopPercentSaving ? 'Saving...' : 'Save %'}
                         </button>
                       </div>
-                      <p className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-xs font-bold text-slate-300">
+                      <p className="mt-3 rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-950/50 dark:text-slate-300">
                         {apiStopMode === 'signal'
                           ? `Si el JSON trae Stop Loss valido se respeta como SL inicial. Si no llega, el sistema cae al ${apiLegacyStopPercent || '1.2'}% legacy.`
                           : `Ignora el Stop Loss recibido por JSON y usa siempre el stop legacy del ${apiLegacyStopPercent || '1.2'}%.`}
@@ -2663,21 +2665,19 @@ export default function Dashboard() {
                         </p>
                       ) : null}
 
-                      <div className="mt-4 grid gap-4 xl:grid-cols-3">
+                      <div className="mt-4 grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
                         {PROTECTION_SETTING_GROUPS.map((group) => (
-                          <div key={group.title} className="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
-                            <p className="text-[10px] font-black uppercase tracking-[0.25em] text-emerald-300">{group.title}</p>
-                            <p className="mt-2 text-xs text-slate-400">{group.description}</p>
-                            <div className="mt-4 space-y-3">
+                          <div key={group.title} className="rounded-2xl border border-slate-200 bg-white/80 p-4 dark:border-slate-800 dark:bg-slate-950/50">
+                            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-emerald-500 dark:text-emerald-300">{group.title}</p>
+                            <p className="mt-2 text-sm leading-5 text-slate-500 dark:text-slate-400">{group.description}</p>
+                            <div className="mt-4 space-y-2.5">
                               {group.items.map((item) => {
                                 const invalid = parsePositivePercentInput(protectionSettings[item.key]) === null;
                                 const saving = savingProtectionKey === item.key;
                                 return (
-                                  <div key={item.key} className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
-                                    <div className="flex items-center justify-between gap-3">
-                                      <span className="text-xs font-bold text-slate-200">{item.label}</span>
-                                      <div className="flex items-center gap-2">
-                                        <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
+                                  <div key={item.key} className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50/90 p-3 dark:border-slate-800 dark:bg-slate-950/60 xl:grid-cols-[minmax(0,1fr)_132px_84px] xl:items-center">
+                                    <span className="text-sm font-semibold leading-tight text-slate-700 dark:text-slate-200">{item.label}</span>
+                                    <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-800 dark:bg-slate-950/70">
                                           <input
                                             type="text"
                                             inputMode="decimal"
@@ -2693,34 +2693,32 @@ export default function Dashboard() {
                                                 [item.key]: true,
                                               }));
                                             }}
-                                            className="w-16 bg-transparent border-none p-0 m-0 text-sm font-black text-emerald-300 outline-none"
+                                            className="w-full bg-transparent border-none p-0 m-0 text-sm font-black text-emerald-500 outline-none dark:text-emerald-300"
                                           />
-                                          <span className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">%</span>
-                                        </div>
-                                        <button
-                                          type="button"
-                                          onClick={() => void saveProtectionSetting(item.key)}
-                                          disabled={saving || invalid}
-                                          className={cn(
-                                            "rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] transition-colors",
-                                            saving || invalid
-                                              ? "border-slate-800 bg-slate-950/40 text-slate-600"
-                                              : "border-emerald-500/40 bg-emerald-500/10 text-emerald-200 hover:border-emerald-300 hover:text-emerald-100"
-                                          )}
-                                        >
-                                          {saving ? 'Saving...' : 'Save'}
-                                        </button>
-                                      </div>
+                                          <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">%</span>
                                     </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => void saveProtectionSetting(item.key)}
+                                      disabled={saving || invalid}
+                                      className={cn(
+                                        "rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] transition-colors",
+                                        saving || invalid
+                                          ? "border-slate-200 bg-slate-100 text-slate-400 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-600"
+                                          : "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 hover:border-emerald-400 hover:text-emerald-700 dark:text-emerald-200 dark:hover:text-emerald-100"
+                                      )}
+                                    >
+                                      {saving ? 'Saving...' : 'Save'}
+                                    </button>
                                     {invalid ? (
-                                      <p className="mt-2 text-[11px] font-bold text-amber-300">Usa un numero positivo.</p>
+                                      <p className="text-[11px] font-bold text-amber-500 dark:text-amber-300 xl:col-span-3">Usa un numero positivo.</p>
                                     ) : null}
                                   </div>
                                 );
                               })}
                             </div>
                             {group.note ? (
-                              <p className="mt-3 text-[11px] font-bold text-slate-500">{group.note}</p>
+                              <p className="mt-3 text-[11px] font-bold text-slate-400 dark:text-slate-500">{group.note}</p>
                             ) : null}
                           </div>
                         ))}
@@ -2730,95 +2728,98 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-4">
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="xl:col-span-12">
+                <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50/90 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/40 dark:shadow-none">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.3em] text-violet-400">Bitget Account</p>
-                    <h2 className="text-xl font-black uppercase tracking-tight text-white">Account Overview</h2>
-                    <p className="mt-2 text-xs text-slate-500">Live and demo summary based on the Bitget APIs available for balances, futures accounts and spot assets.</p>
+                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-violet-500 dark:text-violet-400">Bitget Account</p>
+                    <h2 className="text-xl font-black uppercase tracking-tight text-slate-900 dark:text-white">Account Overview</h2>
+                    <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-500">Live and demo summary based on the Bitget APIs available for balances, futures accounts and spot assets.</p>
                   </div>
                   <button
                     onClick={fetchAccountOverview}
-                    className="rounded-xl border border-slate-700 bg-slate-950/50 px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-300 transition-colors hover:border-violet-400/40 hover:text-violet-300"
+                    className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-slate-600 transition-colors hover:border-violet-400/40 hover:text-violet-600 dark:border-slate-700 dark:bg-slate-950/50 dark:text-slate-300 dark:hover:text-violet-300"
                   >
                     Refresh balances
                   </button>
-                </div>
+                  </div>
 
-                {accountOverviewMessage && (
-                  <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-xs font-bold text-slate-300">
+                  {accountOverviewMessage && (
+                  <div className="mt-4 rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-xs font-bold text-slate-700 dark:border-slate-800 dark:bg-slate-950/50 dark:text-slate-300">
                     {accountOverviewMessage}
                   </div>
-                )}
+                  )}
 
-                {accountOverviewLoading && !accountOverview ? (
-                  <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/50 px-4 py-6 text-sm text-slate-400">
+                  {accountOverviewLoading && !accountOverview ? (
+                  <div className="mt-4 rounded-2xl border border-slate-200 bg-white/80 px-4 py-6 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-950/50 dark:text-slate-400">
                     Loading account overview...
                   </div>
-                ) : accountOverview ? (
-                  <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                  ) : accountOverview ? (
+                  <div className="mt-4 grid gap-4 2xl:grid-cols-2">
                     <AccountOverviewCard title="Demo Account" modeData={accountOverview.demo} accent="text-emerald-400" />
                     <AccountOverviewCard title="Live Account" modeData={accountOverview.live} accent="text-rose-400" />
                   </div>
-                ) : null}
+                  ) : null}
+                </div>
               </div>
 
-              <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-4">
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="grid gap-4 md:grid-cols-2 xl:col-span-12 xl:grid-cols-3">
+                <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50/90 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/40 dark:shadow-none">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.3em] text-amber-400">Trade Management</p>
-                    <h2 className="text-xl font-black uppercase tracking-tight text-white">Exhaustion Guard</h2>
-                    <p className="mt-2 text-xs text-slate-500">Optional demo-safe exit layer. It closes a winning trade if it reached at least +1.0%, stopped making new highs for 90 minutes, and already gave back 35% of its best open profit.</p>
+                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-amber-500 dark:text-amber-400">Trade Management</p>
+                    <h2 className="text-xl font-black uppercase tracking-tight text-slate-900 dark:text-white">Exhaustion Guard</h2>
+                    <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-500">Optional demo-safe exit layer. It closes a winning trade if it reached at least +1.0%, stopped making new highs for 90 minutes, and already gave back 35% of its best open profit.</p>
                   </div>
                   <button
                     type="button"
                     onClick={toggleExhaustionGuard}
                     className={cn(
-                      "rounded-xl border px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] transition-colors",
+                      "rounded-xl border px-4 py-3 text-[10px] font-black uppercase tracking-[0.18em] transition-colors",
                       exhaustionGuardEnabled
                         ? "border-amber-400 bg-amber-400 text-slate-950"
-                        : "border-slate-700 bg-slate-950/40 text-slate-400"
+                        : "border-slate-300 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-400"
                     )}
                   >
                     {exhaustionGuardEnabled ? 'Guard On' : 'Guard Off'}
                   </button>
-                </div>
-                <p className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-xs font-bold text-slate-300">
+                  </div>
+                <p className="mt-4 rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-950/50 dark:text-slate-300">
                   Al apagarlo, el monitor vuelve al sistema actual de trailing y stop sin cierres extra por agotamiento.
                 </p>
-              </div>
+                </div>
 
-              <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-4">
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50/90 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/40 dark:shadow-none">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-400">Trade Management</p>
-                    <h2 className="text-xl font-black uppercase tracking-tight text-white">Take Profit Auto-Close</h2>
-                    <p className="mt-2 text-xs text-slate-500">Cuando llegue `takeProfit` en el JSON, el monitor podra cerrar automaticamente la operacion al tocarlo. Si esta apagado, la gestion sigue solo con stop y trailing.</p>
+                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-cyan-500 dark:text-cyan-400">Trade Management</p>
+                    <h2 className="text-xl font-black uppercase tracking-tight text-slate-900 dark:text-white">Take Profit Auto-Close</h2>
+                    <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-500">Cuando llegue `takeProfit` en el JSON, el monitor podra cerrar automaticamente la operacion al tocarlo. Si esta apagado, la gestion sigue solo con stop y trailing.</p>
                   </div>
                   <button
                     type="button"
                     onClick={toggleTakeProfitAutoClose}
                     className={cn(
-                      "rounded-xl border px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] transition-colors",
+                      "rounded-xl border px-4 py-3 text-[10px] font-black uppercase tracking-[0.18em] transition-colors",
                       takeProfitAutoCloseEnabled
                         ? "border-cyan-300 bg-cyan-300 text-slate-950"
-                        : "border-slate-700 bg-slate-950/40 text-slate-400"
+                        : "border-slate-300 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-400"
                     )}
                   >
                     {takeProfitAutoCloseEnabled ? 'TP On' : 'TP Off'}
                   </button>
-                </div>
-                <p className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-xs font-bold text-slate-300">
+                  </div>
+                <p className="mt-4 rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-950/50 dark:text-slate-300">
                   Por defecto queda desactivado. Si una entrada no trae `takeProfit`, este switch no cambia nada.
                 </p>
-              </div>
+                </div>
 
-              <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-4">
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50/90 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/40 dark:shadow-none">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.3em] text-emerald-400">Audio Alerts</p>
-                    <h2 className="text-xl font-black uppercase tracking-tight text-white">Profit Sound</h2>
-                    <p className="mt-2 text-xs text-slate-500">Plays when a new closed trade arrives with positive net pnl.</p>
+                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-emerald-500 dark:text-emerald-400">Audio Alerts</p>
+                    <h2 className="text-xl font-black uppercase tracking-tight text-slate-900 dark:text-white">Profit Sound</h2>
+                    <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-500">Plays when a new closed trade arrives with positive net pnl.</p>
                   </div>
                   <div className="flex items-center gap-3">
                     <button
@@ -2864,7 +2865,9 @@ export default function Dashboard() {
                   </p>
                 </div>
               </div>
+              </div>
 
+              <div className="xl:col-span-12">
               <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                 <div>
                   <p className="text-[10px] font-black uppercase tracking-[0.3em] text-amber-400">iOS Access Tokens</p>
@@ -2986,6 +2989,7 @@ export default function Dashboard() {
                 </div>
               </div>
             </div>
+          </div>
           </section>
         )}
 
