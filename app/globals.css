@@ -4,22 +4,63 @@
 @tailwind utilities;
 
 :root {
-  --foreground-rgb: 255, 255, 255;
-  --background-start-rgb: 2, 6, 23;
-  --background-end-rgb: 2, 6, 23;
+  color-scheme: light dark;
+  --foreground-rgb: 15, 23, 42;
+  --background-start-rgb: 241, 245, 249;
+  --background-end-rgb: 248, 250, 252;
+  --surface-rgb: 255, 255, 255;
+  --surface-muted-rgb: 248, 250, 252;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --foreground-rgb: 226, 232, 240;
+    --background-start-rgb: 2, 6, 23;
+    --background-end-rgb: 15, 23, 42;
+    --surface-rgb: 15, 23, 42;
+    --surface-muted-rgb: 2, 6, 23;
+  }
 }
 
 body {
   color: rgb(var(--foreground-rgb));
   background: linear-gradient(
-      to bottom,
-      transparent,
-      rgb(var(--background-end-rgb))
+      180deg,
+      rgba(var(--surface-rgb), 0.42),
+      rgba(var(--surface-muted-rgb), 0.92)
     )
     rgb(var(--background-start-rgb));
+  min-height: 100vh;
 }
 
 @layer components {
+  .tabler-shell {
+    @apply rounded-lg border border-slate-200/90 bg-white/90 shadow-sm dark:border-slate-800 dark:bg-slate-900/70;
+  }
+  .tabler-card {
+    @apply rounded-lg border border-slate-200/90 bg-slate-50/90 shadow-sm dark:border-slate-800 dark:bg-slate-950/50;
+  }
+  .tabler-subcard {
+    @apply rounded-md border border-slate-200 bg-white/90 dark:border-slate-800 dark:bg-slate-950/60;
+  }
+  .tabler-input {
+    @apply rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 outline-none transition-colors placeholder:text-slate-400 focus:border-sky-400 dark:border-slate-800 dark:bg-slate-950/70 dark:text-slate-100 dark:placeholder:text-slate-600;
+  }
+  .tabler-button {
+    @apply rounded-md border border-slate-200 bg-white px-3 py-2 text-[11px] font-black uppercase tracking-[0.16em] text-slate-600 transition-colors hover:border-sky-300 hover:text-sky-600 dark:border-slate-700 dark:bg-slate-950/60 dark:text-slate-300 dark:hover:border-sky-400 dark:hover:text-sky-200;
+  }
+  .tabler-note {
+    @apply rounded-md border border-slate-200 bg-white/80 px-3 py-2 text-sm font-medium text-slate-600 dark:border-slate-800 dark:bg-slate-950/60 dark:text-slate-300;
+  }
+  .tabler-title {
+    @apply text-lg font-black uppercase tracking-tight text-slate-900 dark:text-white;
+  }
+  .tabler-eyebrow {
+    @apply text-[10px] font-black uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400;
+  }
+  .tabler-muted {
+    @apply text-sm text-slate-500 dark:text-slate-400;
+  }
   .glass-card {
     @apply bg-slate-900/40 backdrop-blur-md border border-slate-800/60 rounded-xl transition-all duration-300;
   }

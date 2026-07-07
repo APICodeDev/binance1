@@ -40,6 +40,71 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+function HelpTooltip({
+  content,
+  className,
+  panelClassName,
+}: {
+  content: string;
+  className?: string;
+  panelClassName?: string;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div
+      className={cn("relative inline-flex", className)}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        onBlur={() => setOpen(false)}
+        className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-500 transition-colors hover:border-sky-400 hover:text-sky-600 dark:border-slate-700 dark:bg-slate-950/80 dark:text-slate-400 dark:hover:text-sky-200"
+        aria-label="More information"
+      >
+        <CircleHelp size={12} />
+      </button>
+      <div
+        className={cn(
+          "absolute left-0 top-7 z-30 w-72 rounded-lg border border-slate-200 bg-white/95 p-3 text-left text-xs leading-5 text-slate-600 shadow-xl transition-all dark:border-slate-700 dark:bg-slate-950/96 dark:text-slate-300",
+          open ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0",
+          panelClassName
+        )}
+      >
+        {content}
+      </div>
+    </div>
+  );
+}
+
+function HeadingWithTooltip({
+  title,
+  description,
+  eyebrow,
+  eyebrowClassName,
+  titleClassName,
+}: {
+  title: string;
+  description?: string;
+  eyebrow?: string;
+  eyebrowClassName?: string;
+  titleClassName?: string;
+}) {
+  return (
+    <div className="flex items-start gap-2">
+      <div className="min-w-0">
+        {eyebrow ? (
+          <p className={cn("tabler-eyebrow", eyebrowClassName)}>{eyebrow}</p>
+        ) : null}
+        <h3 className={cn("tabler-title", titleClassName)}>{title}</h3>
+      </div>
+      {description ? <HelpTooltip content={description} className="mt-0.5 shrink-0" /> : null}
+    </div>
+  );
+}
+
 const AVAILABLE_SYMBOLS = [
   'ADAUSDT',
   'ATOMUSD',
@@ -857,7 +922,6 @@ export default function Dashboard() {
   const [customAmount, setCustomAmount] = useState('');
   const [leverageEnabled, setLeverageEnabled] = useState(false);
   const [leverageValue, setLeverageValue] = useState('1');
-  const [showLeverageHelp, setShowLeverageHelp] = useState(false);
   const [isPhonePortrait, setIsPhonePortrait] = useState(false);
   const [tradeLogsExpanded, setTradeLogsExpanded] = useState(true);
   const [bookmapExpanded, setBookmapExpanded] = useState(true);
@@ -2283,7 +2347,7 @@ export default function Dashboard() {
       "min-h-screen transition-all duration-1000",
       tradingMode === 'live' ? "bg-rose-950/20" : "bg-transparent"
     )}>
-      <div className="mx-auto w-full max-w-[1720px] space-y-8 p-4 md:p-8 xl:px-10 2xl:px-12">
+      <div className="mx-auto w-full max-w-[1920px] space-y-5 p-2.5 md:p-3.5 xl:px-4 2xl:px-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <button
@@ -2367,7 +2431,7 @@ export default function Dashboard() {
         </div>
 
         {/* Header */}
-        <header className="flex flex-col gap-5 border-b border-slate-800 pb-8">
+        <header className="flex flex-col gap-4 border-b border-slate-200 pb-5 dark:border-slate-800">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="flex flex-col gap-4">
             <div className="flex items-center gap-4">
@@ -2535,180 +2599,152 @@ export default function Dashboard() {
         {authUser.role === 'admin' && currentView === 'admin' && (
           <section className="rounded-[1.75rem] border border-slate-200/80 bg-white/90 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/70 dark:shadow-slate-950/20 md:p-5">
             <div className="grid gap-4 xl:grid-cols-12">
-              <div className="xl:col-span-4 xl:self-start">
-                <div className="h-fit rounded-[1.25rem] border border-slate-200 bg-slate-50/90 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/40 dark:shadow-none">
+              <div className="xl:col-span-12">
+                <div className="tabler-card p-4">
                   <div className="flex items-start gap-3">
-                    <Zap size={18} className={cn("mt-1 shrink-0", leverageEnabled ? "text-amber-500 dark:text-amber-400" : "text-slate-400 dark:text-slate-500")} />
-                    <div className="flex min-w-0 flex-1 flex-col">
-                      <div className="flex items-center gap-2">
-                        <p className="text-[10px] font-black uppercase tracking-[0.24em] text-amber-500 dark:text-amber-400">Trade Sizing</p>
-                        <div className="relative">
-                          <button
-                            type="button"
-                            onClick={() => setShowLeverageHelp((current) => !current)}
-                            onBlur={() => setTimeout(() => setShowLeverageHelp(false), 120)}
-                            className="flex h-5 w-5 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-500 transition-colors hover:border-amber-400 hover:text-amber-500 dark:border-slate-700 dark:bg-slate-950/70 dark:text-slate-400 dark:hover:text-amber-300"
-                            aria-label="Leverage help"
-                          >
-                            <CircleHelp size={12} />
-                          </button>
-                          <div
-                            className={cn(
-                              "absolute left-0 top-7 z-20 w-64 rounded-2xl border border-slate-200 bg-white/95 p-4 text-left shadow-xl transition-all dark:border-slate-700 dark:bg-slate-950/95 dark:shadow-slate-950/60",
-                              showLeverageHelp ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
-                            )}
-                          >
-                            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-amber-500 dark:text-amber-300">How leverage works here</p>
-                            <p className="mt-2 text-xs leading-5 text-slate-600 dark:text-slate-300">
-                              Entry Amount is the exposure you want to open. Leverage changes the margin Bitget uses for that exposure.
-                            </p>
-                            <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">
-                              Example: if you want a 500 USDT position and your account has 100 USDT, use Entry Amount 500 and Leverage x5.
-                            </p>
+                    <ShieldCheck size={18} className="mt-1 shrink-0 text-cyan-500 dark:text-cyan-300" />
+                    <div className="min-w-0 flex-1">
+                      <HeadingWithTooltip
+                        eyebrow="Trade Protection"
+                        eyebrowClassName="text-cyan-500 dark:text-cyan-400"
+                        title="Protection & Sizing"
+                        description="Configura el stop inicial, el comportamiento del trailing y el apalancamiento operativo desde un unico bloque compacto, al estilo de un panel Tabler."
+                      />
+
+                      <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.9fr)]">
+                        <div className="tabler-subcard p-3">
+                          <div className="mb-2 flex items-center gap-2">
+                            <span className="tabler-eyebrow text-cyan-500 dark:text-cyan-400">Initial Stop</span>
+                            <HelpTooltip content="Si eliges Signal Stop First, la app respeta un stop valido venido por JSON. Si eliges Legacy Stop Only, siempre usara el porcentaje legacy configurado aqui." />
+                          </div>
+                          <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_136px_92px]">
+                            <button
+                              type="button"
+                              onClick={toggleApiStopMode}
+                              className={cn(
+                                "rounded-lg border px-4 py-2.5 text-[10px] font-black uppercase tracking-[0.16em] transition-colors",
+                                apiStopMode === 'signal'
+                                  ? "border-cyan-300 bg-cyan-300 text-slate-950"
+                                  : "border-slate-200 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-950/60 dark:text-slate-300"
+                              )}
+                            >
+                              {apiStopMode === 'signal' ? 'Signal Stop First' : 'Legacy Stop Only'}
+                            </button>
+                            <div className="tabler-input flex items-center gap-2">
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                value={apiLegacyStopPercent}
+                                onChange={(e) => {
+                                  setApiLegacyStopPercent(normalizePercentInput(e.target.value));
+                                  setApiLegacyStopPercentDirty(true);
+                                }}
+                                onBlur={(e) => void saveApiLegacyStopPercent(e.target.value)}
+                                className="w-full bg-transparent border-none p-0 m-0 font-black text-cyan-500 outline-none dark:text-cyan-300"
+                              />
+                              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">%</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => void saveApiLegacyStopPercent(apiLegacyStopPercent)}
+                              disabled={apiLegacyStopPercentSaving || parsePositivePercentInput(apiLegacyStopPercent) === null}
+                              className={cn(
+                                "rounded-lg border px-3 py-2.5 text-[10px] font-black uppercase tracking-[0.16em] transition-colors",
+                                apiLegacyStopPercentSaving || parsePositivePercentInput(apiLegacyStopPercent) === null
+                                  ? "border-slate-200 bg-slate-100 text-slate-400 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-600"
+                                  : "border-cyan-500/40 bg-cyan-500/10 text-cyan-600 hover:border-cyan-400 hover:text-cyan-700 dark:text-cyan-200 dark:hover:text-cyan-100"
+                              )}
+                            >
+                              {apiLegacyStopPercentSaving ? '...' : 'Save'}
+                            </button>
+                          </div>
+                          {apiLegacyStopPercentDirty && parsePositivePercentInput(apiLegacyStopPercent) !== null ? (
+                            <p className="mt-2 text-[11px] font-bold text-cyan-500 dark:text-cyan-300">Cambio pendiente de guardar.</p>
+                          ) : null}
+                          {apiLegacyStopPercentDirty && parsePositivePercentInput(apiLegacyStopPercent) === null ? (
+                            <p className="mt-2 text-[11px] font-bold text-amber-500 dark:text-amber-300">Usa un numero positivo.</p>
+                          ) : null}
+                        </div>
+
+                        <div className="tabler-subcard p-3">
+                          <div className="mb-2 flex items-center gap-2">
+                            <span className="tabler-eyebrow text-amber-500 dark:text-amber-400">Trade Sizing</span>
+                            <HelpTooltip content="Entry Amount representa exposicion. El apalancamiento solo cambia el margen consumido en Bitget para esa misma exposicion." />
+                          </div>
+                          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_116px]">
+                            <button
+                              type="button"
+                              onClick={toggleLeverage}
+                              className={cn(
+                                "rounded-lg border px-4 py-2.5 text-[10px] font-black uppercase tracking-[0.16em] transition-colors",
+                                leverageEnabled
+                                  ? "border-amber-400 bg-amber-400 text-slate-950"
+                                  : "border-slate-200 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-950/60 dark:text-slate-300"
+                              )}
+                            >
+                              {leverageEnabled ? 'Leverage On' : 'Leverage Off'}
+                            </button>
+                            <div className="tabler-input flex items-center gap-2">
+                              <span className="text-sm font-black text-slate-400 dark:text-slate-500">x</span>
+                              <input
+                                type="number"
+                                min="1"
+                                step="1"
+                                value={leverageValue}
+                                onChange={(e) => saveLeverageValue(e.target.value)}
+                                className="w-full bg-transparent border-none p-0 m-0 font-black text-amber-500 outline-none dark:text-amber-300"
+                              />
+                            </div>
                           </div>
                         </div>
                       </div>
-                      <h2 className="mt-1 text-xl font-black uppercase tracking-tight text-slate-900 dark:text-white">Leverage</h2>
-                      <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-500">Amount remains exposure. Leverage only changes the margin Bitget uses for that exposure.</p>
-                      <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_132px]">
-                        <button
-                          type="button"
-                          onClick={toggleLeverage}
-                          className={cn(
-                            "rounded-xl border px-4 py-3 text-[10px] font-black uppercase tracking-[0.18em] transition-colors",
-                            leverageEnabled
-                              ? "border-amber-400 bg-amber-400 text-slate-950"
-                              : "border-slate-300 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-400"
-                          )}
-                        >
-                          {leverageEnabled ? 'Leverage On' : 'Leverage Off'}
-                        </button>
-                        <div className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-950/50">
-                          <span className="text-sm font-black text-slate-400 dark:text-slate-500">x</span>
-                          <input
-                            type="number"
-                            min="1"
-                            step="1"
-                            value={leverageValue}
-                            onChange={(e) => saveLeverageValue(e.target.value)}
-                            className="w-full bg-transparent border-none text-sm font-black text-amber-500 outline-none p-0 m-0 dark:text-amber-400"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
 
-              <div className="xl:col-span-8">
-                <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50/90 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/40 dark:shadow-none md:p-5">
-                  <div className="flex items-start gap-3">
-                    <ShieldCheck size={18} className="mt-1 shrink-0 text-cyan-300" />
-                    <div className="flex min-w-0 flex-1 flex-col">
-                      <p className="text-[10px] font-black uppercase tracking-[0.24em] text-cyan-500 dark:text-cyan-400">Trade Protection</p>
-                      <h2 className="mt-1 text-xl font-black uppercase tracking-tight text-slate-900 dark:text-white">API Initial Stop</h2>
-                      <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-500">Decide whether the first SL should respect a valid JSON stop or always fall back to the legacy stop percentage configured here.</p>
-                      <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1.25fr)_160px_110px]">
-                        <button
-                          type="button"
-                          onClick={toggleApiStopMode}
-                          className={cn(
-                            "rounded-xl border px-4 py-3 text-[10px] font-black uppercase tracking-[0.18em] transition-colors",
-                            apiStopMode === 'signal'
-                              ? "border-cyan-300 bg-cyan-300 text-slate-950"
-                              : "border-slate-300 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-300"
-                          )}
-                        >
-                          {apiStopMode === 'signal' ? 'Signal Stop First' : 'Legacy Stop Only'}
-                        </button>
-                        <div className="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-950/50">
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={apiLegacyStopPercent}
-                            onChange={(e) => {
-                              setApiLegacyStopPercent(normalizePercentInput(e.target.value));
-                              setApiLegacyStopPercentDirty(true);
-                            }}
-                            onBlur={(e) => void saveApiLegacyStopPercent(e.target.value)}
-                            className="w-full bg-transparent border-none p-0 m-0 text-sm font-black text-cyan-500 outline-none dark:text-cyan-300"
-                          />
-                          <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">%</span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => void saveApiLegacyStopPercent(apiLegacyStopPercent)}
-                          disabled={apiLegacyStopPercentSaving || parsePositivePercentInput(apiLegacyStopPercent) === null}
-                          className={cn(
-                            "rounded-xl border px-4 py-3 text-[10px] font-black uppercase tracking-[0.18em] transition-colors",
-                            apiLegacyStopPercentSaving || parsePositivePercentInput(apiLegacyStopPercent) === null
-                              ? "border-slate-200 bg-slate-100 text-slate-400 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-600"
-                              : "border-cyan-500/40 bg-cyan-500/10 text-cyan-200 hover:border-cyan-300 hover:text-cyan-100"
-                          )}
-                        >
-                          {apiLegacyStopPercentSaving ? 'Saving...' : 'Save %'}
-                        </button>
-                      </div>
-                      <p className="mt-3 rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-950/50 dark:text-slate-300">
-                        {apiStopMode === 'signal'
-                          ? `Si el JSON trae Stop Loss valido se respeta como SL inicial. Si no llega, el sistema cae al ${apiLegacyStopPercent || '1.2'}% legacy.`
-                          : `Ignora el Stop Loss recibido por JSON y usa siempre el stop legacy del ${apiLegacyStopPercent || '1.2'}%.`}
-                      </p>
-                      {apiLegacyStopPercentDirty && parsePositivePercentInput(apiLegacyStopPercent) !== null ? (
-                        <p className="mt-2 text-[11px] font-bold text-cyan-300">
-                          Guardando automaticamente este porcentaje para las proximas operaciones...
-                        </p>
-                      ) : null}
-                      {apiLegacyStopPercentDirty && parsePositivePercentInput(apiLegacyStopPercent) === null ? (
-                        <p className="mt-2 text-[11px] font-bold text-amber-300">
-                          Introduce un numero positivo para guardar el porcentaje.
-                        </p>
-                      ) : null}
-
-                      <div className="mt-4 grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+                      <div className="mt-3 grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
                         {PROTECTION_SETTING_GROUPS.map((group) => (
-                          <div key={group.title} className="rounded-2xl border border-slate-200 bg-white/80 p-4 dark:border-slate-800 dark:bg-slate-950/50">
-                            <p className="text-[10px] font-black uppercase tracking-[0.22em] text-emerald-500 dark:text-emerald-300">{group.title}</p>
-                            <p className="mt-2 text-sm leading-5 text-slate-500 dark:text-slate-400">{group.description}</p>
-                            <div className="mt-4 space-y-2.5">
+                          <div key={group.title} className="tabler-subcard p-3">
+                            <div className="mb-2 flex items-center gap-2">
+                              <span className="tabler-eyebrow text-emerald-500 dark:text-emerald-300">{group.title}</span>
+                              <HelpTooltip content={group.note ? `${group.description} ${group.note}` : group.description} />
+                            </div>
+                            <div className="space-y-2">
                               {group.items.map((item) => {
                                 const invalid = parsePositivePercentInput(protectionSettings[item.key]) === null;
                                 const saving = savingProtectionKey === item.key;
                                 return (
-                                  <div key={item.key} className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50/90 p-3 dark:border-slate-800 dark:bg-slate-950/60 xl:grid-cols-[minmax(0,1fr)_132px_84px] xl:items-center">
+                                  <div key={item.key} className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50/90 p-2.5 dark:border-slate-800 dark:bg-slate-950/60 xl:grid-cols-[minmax(0,1fr)_112px_72px] xl:items-center">
                                     <span className="text-sm font-semibold leading-tight text-slate-700 dark:text-slate-200">{item.label}</span>
-                                    <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-800 dark:bg-slate-950/70">
-                                          <input
-                                            type="text"
-                                            inputMode="decimal"
-                                            value={protectionSettings[item.key]}
-                                            onChange={(e) => {
-                                              const nextValue = normalizePercentInput(e.target.value);
-                                              setProtectionSettings((current) => ({
-                                                ...current,
-                                                [item.key]: nextValue,
-                                              }));
-                                              setProtectionDirty((current) => ({
-                                                ...current,
-                                                [item.key]: true,
-                                              }));
-                                            }}
-                                            className="w-full bg-transparent border-none p-0 m-0 text-sm font-black text-emerald-500 outline-none dark:text-emerald-300"
-                                          />
-                                          <span className="text-xs font-black uppercase tracking-[0.18em] text-slate-400 dark:text-slate-500">%</span>
+                                    <div className="tabler-input flex items-center gap-2">
+                                      <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={protectionSettings[item.key]}
+                                        onChange={(e) => {
+                                          const nextValue = normalizePercentInput(e.target.value);
+                                          setProtectionSettings((current) => ({
+                                            ...current,
+                                            [item.key]: nextValue,
+                                          }));
+                                          setProtectionDirty((current) => ({
+                                            ...current,
+                                            [item.key]: true,
+                                          }));
+                                        }}
+                                        className="w-full bg-transparent border-none p-0 m-0 text-sm font-black text-emerald-500 outline-none dark:text-emerald-300"
+                                      />
+                                      <span className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-400 dark:text-slate-500">%</span>
                                     </div>
                                     <button
                                       type="button"
                                       onClick={() => void saveProtectionSetting(item.key)}
                                       disabled={saving || invalid}
                                       className={cn(
-                                        "rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] transition-colors",
+                                        "rounded-lg border px-2.5 py-2 text-[10px] font-black uppercase tracking-[0.16em] transition-colors",
                                         saving || invalid
                                           ? "border-slate-200 bg-slate-100 text-slate-400 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-600"
                                           : "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 hover:border-emerald-400 hover:text-emerald-700 dark:text-emerald-200 dark:hover:text-emerald-100"
                                       )}
                                     >
-                                      {saving ? 'Saving...' : 'Save'}
+                                      {saving ? '...' : 'Save'}
                                     </button>
                                     {invalid ? (
                                       <p className="text-[11px] font-bold text-amber-500 dark:text-amber-300 xl:col-span-3">Usa un numero positivo.</p>
@@ -2717,9 +2753,6 @@ export default function Dashboard() {
                                 );
                               })}
                             </div>
-                            {group.note ? (
-                              <p className="mt-3 text-[11px] font-bold text-slate-400 dark:text-slate-500">{group.note}</p>
-                            ) : null}
                           </div>
                         ))}
                       </div>
@@ -2729,16 +2762,17 @@ export default function Dashboard() {
               </div>
 
               <div className="xl:col-span-12">
-                <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50/90 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/40 dark:shadow-none">
+                <div className="tabler-card p-4">
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-violet-500 dark:text-violet-400">Bitget Account</p>
-                    <h2 className="text-xl font-black uppercase tracking-tight text-slate-900 dark:text-white">Account Overview</h2>
-                    <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-500">Live and demo summary based on the Bitget APIs available for balances, futures accounts and spot assets.</p>
-                  </div>
+                  <HeadingWithTooltip
+                    eyebrow="Bitget Account"
+                    eyebrowClassName="text-violet-500 dark:text-violet-400"
+                    title="Account Overview"
+                    description="Resumen live y demo basado en balances, cuentas de futuros y activos spot devueltos por las APIs de Bitget."
+                  />
                   <button
                     onClick={fetchAccountOverview}
-                    className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-[10px] font-black uppercase tracking-[0.18em] text-slate-600 transition-colors hover:border-violet-400/40 hover:text-violet-600 dark:border-slate-700 dark:bg-slate-950/50 dark:text-slate-300 dark:hover:text-violet-300"
+                    className="tabler-button"
                   >
                     Refresh balances
                   </button>
@@ -2764,13 +2798,14 @@ export default function Dashboard() {
               </div>
 
               <div className="grid gap-4 md:grid-cols-2 xl:col-span-12 xl:grid-cols-3">
-                <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50/90 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/40 dark:shadow-none">
+                <div className="tabler-card p-4">
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-amber-500 dark:text-amber-400">Trade Management</p>
-                    <h2 className="text-xl font-black uppercase tracking-tight text-slate-900 dark:text-white">Exhaustion Guard</h2>
-                    <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-500">Optional demo-safe exit layer. It closes a winning trade if it reached at least +1.0%, stopped making new highs for 90 minutes, and already gave back 35% of its best open profit.</p>
-                  </div>
+                  <HeadingWithTooltip
+                    eyebrow="Trade Management"
+                    eyebrowClassName="text-amber-500 dark:text-amber-400"
+                    title="Exhaustion Guard"
+                    description="Optional demo-safe exit layer. It closes a winning trade if it reached at least +1.0%, stopped making new highs for 90 minutes, and already gave back 35% of its best open profit."
+                  />
                   <button
                     type="button"
                     onClick={toggleExhaustionGuard}
@@ -2784,18 +2819,16 @@ export default function Dashboard() {
                     {exhaustionGuardEnabled ? 'Guard On' : 'Guard Off'}
                   </button>
                   </div>
-                <p className="mt-4 rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-950/50 dark:text-slate-300">
-                  Al apagarlo, el monitor vuelve al sistema actual de trailing y stop sin cierres extra por agotamiento.
-                </p>
                 </div>
 
-                <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50/90 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/40 dark:shadow-none">
+                <div className="tabler-card p-4">
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-cyan-500 dark:text-cyan-400">Trade Management</p>
-                    <h2 className="text-xl font-black uppercase tracking-tight text-slate-900 dark:text-white">Take Profit Auto-Close</h2>
-                    <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-500">Cuando llegue `takeProfit` en el JSON, el monitor podra cerrar automaticamente la operacion al tocarlo. Si esta apagado, la gestion sigue solo con stop y trailing.</p>
-                  </div>
+                  <HeadingWithTooltip
+                    eyebrow="Trade Management"
+                    eyebrowClassName="text-cyan-500 dark:text-cyan-400"
+                    title="Take Profit Auto-Close"
+                    description="Cuando llegue takeProfit en el JSON, el monitor podra cerrar automaticamente la operacion al tocarlo. Si esta apagado, la gestion sigue solo con stop y trailing."
+                  />
                   <button
                     type="button"
                     onClick={toggleTakeProfitAutoClose}
@@ -2809,18 +2842,16 @@ export default function Dashboard() {
                     {takeProfitAutoCloseEnabled ? 'TP On' : 'TP Off'}
                   </button>
                   </div>
-                <p className="mt-4 rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-950/50 dark:text-slate-300">
-                  Por defecto queda desactivado. Si una entrada no trae `takeProfit`, este switch no cambia nada.
-                </p>
                 </div>
 
-                <div className="rounded-[1.25rem] border border-slate-200 bg-slate-50/90 p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950/40 dark:shadow-none">
+                <div className="tabler-card p-4">
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.22em] text-emerald-500 dark:text-emerald-400">Audio Alerts</p>
-                    <h2 className="text-xl font-black uppercase tracking-tight text-slate-900 dark:text-white">Profit Sound</h2>
-                    <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-500">Plays when a new closed trade arrives with positive net pnl.</p>
-                  </div>
+                  <HeadingWithTooltip
+                    eyebrow="Audio Alerts"
+                    eyebrowClassName="text-emerald-500 dark:text-emerald-400"
+                    title="Profit Sound"
+                    description="Plays when a new closed trade arrives with positive net pnl."
+                  />
                   <div className="flex items-center gap-3">
                     <button
                       type="button"
@@ -2829,7 +2860,7 @@ export default function Dashboard() {
                         "rounded-xl border px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] transition-colors",
                         profitSoundEnabled
                           ? "border-emerald-400 bg-emerald-400 text-slate-950"
-                          : "border-slate-700 bg-slate-950/40 text-slate-400"
+                          : "border-slate-200 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-400"
                       )}
                     >
                       {profitSoundEnabled ? 'Sound On' : 'Sound Off'}
@@ -2847,39 +2878,43 @@ export default function Dashboard() {
                 </div>
 
                 <div className="mt-4">
-                  <label className="block text-[10px] font-black uppercase tracking-[0.25em] text-slate-500">
-                    Selected sound
-                  </label>
+                  <div className="flex items-center gap-2">
+                    <label className="block text-[10px] font-black uppercase tracking-[0.16em] text-slate-500 dark:text-slate-500">
+                      Selected sound
+                    </label>
+                    <HelpTooltip content="Carga mas archivos en /public/sounds y refresca el dashboard para que aparezcan en esta lista." />
+                  </div>
                   <select
                     value={profitSoundFile}
                     onChange={(e) => saveProfitSoundFile(e.target.value)}
-                    className="mt-2 w-full rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-4 text-sm font-black text-amber-300 outline-none"
+                    className="tabler-input mt-2 w-full text-amber-500 dark:text-amber-300"
                   >
                     <option value="">No sound selected</option>
                     {availableSounds.map((sound) => (
                       <option key={sound} value={sound}>{sound}</option>
                     ))}
                   </select>
-                  <p className="mt-2 text-[10px] font-bold uppercase tracking-[0.15em] text-slate-600">
-                    Add more files in /public/sounds and refresh the dashboard.
-                  </p>
                 </div>
               </div>
               </div>
 
               <div className="xl:col-span-12">
+              <div className="tabler-shell p-4">
+              <div className="flex flex-col gap-3">
               <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.3em] text-amber-400">iOS Access Tokens</p>
-                  <h2 className="text-xl font-black uppercase tracking-tight text-white">Mobile Token Control</h2>
-                </div>
+                <HeadingWithTooltip
+                  eyebrow="iOS Access Tokens"
+                  eyebrowClassName="text-amber-500 dark:text-amber-400"
+                  title="Mobile Token Control"
+                  description="Crea, revoca y revisa tokens de acceso para la app iPhone desde un bloque compacto, sin perder espacio util."
+                />
                 <p className="text-xs text-slate-500 uppercase tracking-[0.2em]">
                   {tokenLoading ? 'Loading tokens...' : `${apiTokens.filter((token) => token.isActive).length} active tokens`}
                 </p>
               </div>
 
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,320px)_1fr]">
-                <div className="space-y-3 rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-4">
+              <div className="grid gap-3 lg:grid-cols-[minmax(0,320px)_1fr]">
+                <div className="tabler-card space-y-3 p-3">
                   <label className="block text-[10px] font-black uppercase tracking-[0.25em] text-slate-500">
                     New iOS token name
                   </label>
@@ -2888,35 +2923,35 @@ export default function Dashboard() {
                     value={tokenName}
                     onChange={(e) => setTokenName(e.target.value)}
                     placeholder="iPhone principal"
-                    className="w-full rounded-2xl border border-slate-700 bg-slate-950/60 p-4 text-sm font-black text-slate-100 outline-none transition-colors placeholder:text-slate-700 focus:border-amber-400"
+                    className="tabler-input w-full text-slate-700 dark:text-slate-100"
                   />
                   <button
                     onClick={createApiToken}
                     disabled={tokenSubmitting}
-                    className="w-full rounded-2xl bg-amber-400 px-4 py-3 text-sm font-black uppercase tracking-[0.2em] text-slate-950 transition-colors hover:bg-amber-300 disabled:opacity-60"
+                    className="w-full rounded-md border border-amber-400 bg-amber-400 px-4 py-2.5 text-sm font-black uppercase tracking-[0.2em] text-slate-950 transition-colors hover:bg-amber-300 disabled:opacity-60"
                   >
                     {tokenSubmitting ? 'Creating...' : 'Create token'}
                   </button>
                   {tokenMessage && (
-                    <div className="rounded-2xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-xs font-bold text-slate-300">
+                    <div className="tabler-note text-xs font-bold">
                       {tokenMessage}
                     </div>
                   )}
                   {newTokenValue && (
-                    <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
+                    <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5">
                       <p className="text-[10px] font-black uppercase tracking-[0.25em] text-emerald-300">Copy now</p>
                       <p className="mt-2 break-all font-mono text-xs text-emerald-100">{newTokenValue}</p>
                     </div>
                   )}
                 </div>
 
-              <div className="overflow-hidden rounded-[1.5rem] border border-slate-800 bg-slate-950/30">
-                <div className="divide-y divide-slate-800 md:hidden">
+              <div className="tabler-card overflow-hidden p-0">
+                <div className="divide-y divide-slate-200 dark:divide-slate-800 md:hidden">
                   {apiTokens.map((token) => (
-                    <div key={token.id} className="px-4 py-4 space-y-3">
+                    <div key={token.id} className="space-y-2.5 px-3 py-3">
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <p className="font-black text-white">{token.name}</p>
+                          <p className="font-black text-slate-900 dark:text-white">{token.name}</p>
                           <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">
                             ...{token.lastFour} · {token.isActive ? 'Active' : 'Revoked'}
                           </p>
@@ -2924,7 +2959,7 @@ export default function Dashboard() {
                         {token.isActive ? (
                           <button
                             onClick={() => revokeApiToken(token.id)}
-                            className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-rose-300"
+                            className="rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-rose-600 dark:text-rose-300"
                           >
                             Revoke
                           </button>
@@ -2935,34 +2970,34 @@ export default function Dashboard() {
                       <div className="grid grid-cols-2 gap-3 text-xs">
                         <div>
                           <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-600">Created</p>
-                          <p className="text-slate-300">{new Date(token.createdAt).toLocaleString()}</p>
+                          <p className="text-slate-600 dark:text-slate-300">{new Date(token.createdAt).toLocaleString()}</p>
                         </div>
                         <div>
                           <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-600">Last used</p>
-                          <p className="text-slate-300">{token.lastUsedAt ? new Date(token.lastUsedAt).toLocaleString() : 'Never'}</p>
+                          <p className="text-slate-600 dark:text-slate-300">{token.lastUsedAt ? new Date(token.lastUsedAt).toLocaleString() : 'Never'}</p>
                         </div>
                       </div>
                     </div>
                   ))}
                 </div>
-                <div className="hidden grid-cols-[1.4fr_0.7fr_0.9fr_0.9fr_0.8fr] gap-4 border-b border-slate-800 px-4 py-3 text-[10px] font-black uppercase tracking-[0.25em] text-slate-500 md:grid">
+                <div className="hidden grid-cols-[1.4fr_0.7fr_0.9fr_0.9fr_0.8fr] gap-4 border-b border-slate-200 px-3 py-2.5 text-[10px] font-black uppercase tracking-[0.25em] text-slate-500 dark:border-slate-800 md:grid">
                   <span>Name</span>
                   <span>Ending</span>
                   <span>Created</span>
                     <span>Last used</span>
                     <span className="text-right">Action</span>
                   </div>
-                  <div className="divide-y divide-slate-800">
+                  <div className="divide-y divide-slate-200 dark:divide-slate-800">
                     {apiTokens.map((token) => (
-                      <div key={token.id} className="grid gap-3 px-4 py-4 md:grid-cols-[1.4fr_0.7fr_0.9fr_0.9fr_0.8fr] md:items-center">
+                      <div key={token.id} className="grid gap-3 px-3 py-3 md:grid-cols-[1.4fr_0.7fr_0.9fr_0.9fr_0.8fr] md:items-center">
                         <div>
-                          <p className="font-black text-white">{token.name}</p>
+                          <p className="font-black text-slate-900 dark:text-white">{token.name}</p>
                           <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">
                             {token.isActive ? 'Active token' : 'Revoked'}
                           </p>
                         </div>
-                        <div className="text-sm font-mono text-slate-300">...{token.lastFour}</div>
-                        <div className="text-xs text-slate-400">{new Date(token.createdAt).toLocaleString()}</div>
+                        <div className="text-sm font-mono text-slate-600 dark:text-slate-300">...{token.lastFour}</div>
+                        <div className="text-xs text-slate-500 dark:text-slate-400">{new Date(token.createdAt).toLocaleString()}</div>
                         <div className="text-xs text-slate-500">
                           {token.lastUsedAt ? new Date(token.lastUsedAt).toLocaleString() : 'Never'}
                         </div>
@@ -2970,7 +3005,7 @@ export default function Dashboard() {
                           {token.isActive ? (
                             <button
                               onClick={() => revokeApiToken(token.id)}
-                              className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-rose-300 transition-colors hover:bg-rose-500/20"
+                              className="rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-rose-600 transition-colors hover:bg-rose-500/20 dark:text-rose-300"
                             >
                               Revoke
                             </button>
@@ -2988,26 +3023,30 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
+              </div>
+            </div>
             </div>
           </div>
           </section>
         )}
 
         {authUser.role === 'admin' && currentView === 'admin' && (
-          <section className="rounded-[2rem] border border-slate-800 bg-slate-900/60 p-5 md:p-6 shadow-xl shadow-slate-950/20">
-            <div className="flex flex-col gap-5">
+          <section className="tabler-shell p-4">
+            <div className="flex flex-col gap-3">
               <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-400">Audit Trail</p>
-                  <h2 className="text-xl font-black uppercase tracking-tight text-white">Recent Critical Activity</h2>
-                </div>
+                <HeadingWithTooltip
+                  eyebrow="Audit Trail"
+                  eyebrowClassName="text-cyan-500 dark:text-cyan-400"
+                  title="Recent Critical Activity"
+                  description="Resumen de acciones sensibles del panel: tokens, sesiones, configuraciones y actividad administrativa reciente."
+                />
                 <div className="flex items-center gap-3">
                   <p className="text-xs text-slate-500 uppercase tracking-[0.2em]">
                     {auditLoading ? 'Loading activity...' : `${auditLogs.length} records`}
                   </p>
                   <button
                     onClick={fetchAuditLogs}
-                    className="rounded-xl border border-slate-700 bg-slate-950/50 px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-slate-300 transition-colors hover:border-cyan-400/40 hover:text-cyan-300"
+                    className="tabler-button"
                   >
                     Refresh
                   </button>
@@ -3015,27 +3054,27 @@ export default function Dashboard() {
               </div>
 
               {auditMessage && (
-                <div className="rounded-2xl border border-slate-800 bg-slate-950/50 px-4 py-3 text-xs font-bold text-slate-300">
+                <div className="tabler-note text-xs font-bold">
                   {auditMessage}
                 </div>
               )}
 
-              <div className="overflow-hidden rounded-[1.5rem] border border-slate-800 bg-slate-950/30">
-                <div className="divide-y divide-slate-800 md:hidden">
+              <div className="tabler-card overflow-hidden p-0">
+                <div className="divide-y divide-slate-200 dark:divide-slate-800 md:hidden">
                   {auditLogs.map((log) => (
-                    <div key={log.id} className="px-4 py-4 space-y-3">
+                    <div key={log.id} className="space-y-2.5 px-3 py-3">
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <p className="font-black text-white">{formatAuditAction(log.action)}</p>
+                          <p className="font-black text-slate-900 dark:text-white">{formatAuditAction(log.action)}</p>
                           <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">
                             {log.targetType || 'general'}{log.targetId ? ` #${log.targetId}` : ''}
                           </p>
                         </div>
-                        <span className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-400/80">
+                        <span className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-500 dark:text-amber-300/80">
                           {log.user?.role || 'system'}
                         </span>
                       </div>
-                      <div className="grid grid-cols-1 gap-2 text-xs text-slate-300">
+                      <div className="grid grid-cols-1 gap-2 text-xs text-slate-600 dark:text-slate-300">
                         <p>{new Date(log.createdAt).toLocaleString()}</p>
                         <p>{formatAuditActor(log)}</p>
                         <p>{formatAuditMetadata(log.metadata || null)}</p>
@@ -3051,35 +3090,35 @@ export default function Dashboard() {
                     </div>
                   )}
                 </div>
-                <div className="hidden grid-cols-[1fr_1.1fr_1.2fr_1.7fr] gap-4 border-b border-slate-800 px-4 py-3 text-[10px] font-black uppercase tracking-[0.25em] text-slate-500 md:grid">
+                <div className="hidden grid-cols-[1fr_1.1fr_1.2fr_1.7fr] gap-4 border-b border-slate-200 px-3 py-2.5 text-[10px] font-black uppercase tracking-[0.25em] text-slate-500 dark:border-slate-800 md:grid">
                   <span>When</span>
                   <span>Action</span>
                   <span>Actor</span>
                   <span>Details</span>
                 </div>
-                <div className="divide-y divide-slate-800">
+                <div className="divide-y divide-slate-200 dark:divide-slate-800">
                   {auditLogs.map((log) => (
-                    <div key={log.id} className="grid gap-3 px-4 py-4 md:grid-cols-[1fr_1.1fr_1.2fr_1.7fr] md:items-start">
+                    <div key={log.id} className="grid gap-3 px-3 py-3 md:grid-cols-[1fr_1.1fr_1.2fr_1.7fr] md:items-start">
                       <div>
-                        <p className="text-sm font-bold text-slate-200">{new Date(log.createdAt).toLocaleString()}</p>
+                        <p className="text-sm font-bold text-slate-700 dark:text-slate-200">{new Date(log.createdAt).toLocaleString()}</p>
                         <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-600">
                           {log.ipAddress || 'No IP'}
                         </p>
                       </div>
                       <div>
-                        <p className="font-black text-white">{formatAuditAction(log.action)}</p>
+                        <p className="font-black text-slate-900 dark:text-white">{formatAuditAction(log.action)}</p>
                         <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">
                           {log.targetType || 'general'}{log.targetId ? ` #${log.targetId}` : ''}
                         </p>
                       </div>
                       <div>
-                        <p className="font-bold text-slate-200">{formatAuditActor(log)}</p>
-                        <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-400/80">
+                        <p className="font-bold text-slate-700 dark:text-slate-200">{formatAuditActor(log)}</p>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-amber-500 dark:text-amber-300/80">
                           {log.user?.role || 'system'}
                         </p>
                       </div>
                       <div>
-                        <p className="text-sm text-slate-300">{formatAuditMetadata(log.metadata || null)}</p>
+                        <p className="text-sm text-slate-600 dark:text-slate-300">{formatAuditMetadata(log.metadata || null)}</p>
                         {log.userAgent && (
                           <p className="mt-1 line-clamp-1 text-[10px] font-bold uppercase tracking-[0.15em] text-slate-600">
                             {log.userAgent}
@@ -3100,7 +3139,7 @@ export default function Dashboard() {
         )}
 
         {currentView === 'dashboard' ? (
-        <main className="space-y-12">
+        <main className="space-y-5">
           {tradingMode === 'live' && (
             <motion.div 
               initial={{ scaleX: 0 }}
@@ -3445,13 +3484,14 @@ Closed By: ${getCloseOriginLabel(pos)}`;
           </section>
         </main>
         ) : currentView === 'bookmap' ? (
-          <main className="space-y-8">
-            <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-[2rem] border border-slate-800 bg-slate-900/40 p-6 shadow-xl shadow-slate-950/20">
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-300">Bookmap Lab</p>
-                <h2 className="mt-2 text-2xl font-black uppercase tracking-tight text-white">Liquidity And Heatmap Workspace</h2>
-                <p className="mt-2 text-sm text-slate-400">Dedicated space for orderflow, pre-signals and Heatmap paper tracking without mixing it with the main dashboard.</p>
-              </div>
+          <main className="space-y-5">
+            <section className="tabler-shell flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <HeadingWithTooltip
+                eyebrow="Bookmap Lab"
+                eyebrowClassName="text-cyan-500 dark:text-cyan-300"
+                title="Liquidity And Heatmap Workspace"
+                description="Espacio dedicado a orderflow, pre-signals y paper tracking Heatmap sin mezclarlo con el dashboard operativo principal."
+              />
             </section>
 
             <BookmapPanel
@@ -3471,16 +3511,17 @@ Closed By: ${getCloseOriginLabel(pos)}`;
             />
           </main>
         ) : currentView === 'stats' ? (
-          <main className="space-y-8">
-            <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-[2rem] border border-slate-800 bg-slate-900/40 p-6 shadow-xl shadow-slate-950/20">
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.3em] text-emerald-400">Statistics</p>
-                <h2 className="mt-2 text-2xl font-black uppercase tracking-tight text-white">Closed Positions Analytics</h2>
-                <p className="mt-2 text-sm text-slate-400">Separated between demo and live using all closed positions recorded so far.</p>
-              </div>
+          <main className="space-y-5">
+            <section className="tabler-shell flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <HeadingWithTooltip
+                eyebrow="Statistics"
+                eyebrowClassName="text-emerald-500 dark:text-emerald-400"
+                title="Closed Positions Analytics"
+                description="Analitica separada entre demo y live usando todas las operaciones cerradas registradas hasta ahora."
+              />
               <button
                 onClick={fetchStats}
-                className="rounded-xl border border-slate-700 bg-slate-950/50 px-4 py-3 text-[11px] font-black uppercase tracking-[0.2em] text-slate-300 transition-colors hover:border-emerald-400/40 hover:text-emerald-300"
+                className="tabler-button"
               >
                 Refresh stats
               </button>
@@ -3493,11 +3534,11 @@ Closed By: ${getCloseOriginLabel(pos)}`;
             )}
 
             {statsLoading && !statsData ? (
-              <section className="rounded-[2rem] border border-slate-800 bg-slate-900/40 p-8 text-center text-slate-400">
+              <section className="tabler-shell p-5 text-center text-slate-500 dark:text-slate-400">
                 Loading statistics...
               </section>
             ) : statsData ? (
-              <div className="grid gap-8 xl:grid-cols-2">
+              <div className="grid gap-4 xl:grid-cols-2">
                 <StatsModeSection title="Demo Statistics" mode="demo" stats={statsData.demo} />
                 <StatsModeSection title="Live Statistics" mode="live" stats={statsData.live} />
               </div>
@@ -3505,12 +3546,13 @@ Closed By: ${getCloseOriginLabel(pos)}`;
           </main>
         ) : (
           <main className="space-y-6">
-            <section className="rounded-[2rem] border border-slate-800 bg-slate-900/40 p-8 text-center shadow-xl shadow-slate-950/20">
-              <p className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-400">Admin View</p>
-              <h2 className="mt-3 text-2xl font-black uppercase tracking-tight text-white">Management Center</h2>
-              <p className="mt-3 text-sm text-slate-400">
-                Here you can manage iOS access tokens and review the audit trail without loading the main trading dashboard.
-              </p>
+            <section className="tabler-shell p-4">
+              <HeadingWithTooltip
+                eyebrow="Admin View"
+                eyebrowClassName="text-cyan-500 dark:text-cyan-400"
+                title="Management Center"
+                description="Desde aqui puedes gestionar tokens iOS y revisar el audit trail sin cargar el dashboard operativo principal."
+              />
             </section>
           </main>
         )}
@@ -4144,24 +4186,24 @@ function StatsModeSection({ title, mode, stats }: { title: string; mode: 'demo' 
   const currency = mode === 'live' ? 'USDC' : 'USDT';
 
   return (
-    <section className="rounded-[2rem] border border-slate-800 bg-slate-900/50 p-6 shadow-xl shadow-slate-950/20">
-      <div className="mb-6 flex items-start justify-between gap-4">
+    <section className="tabler-shell p-4">
+      <div className="mb-4 flex items-start justify-between gap-4">
         <div>
           <p className={cn(
             "text-[10px] font-black uppercase tracking-[0.3em]",
-            mode === 'live' ? "text-rose-400" : "text-emerald-400"
+            mode === 'live' ? "text-rose-500 dark:text-rose-400" : "text-emerald-500 dark:text-emerald-400"
           )}>
             {mode}
           </p>
-          <h3 className="mt-2 text-xl font-black uppercase tracking-tight text-white">{title}</h3>
+          <h3 className="mt-1.5 text-xl font-black uppercase tracking-tight text-slate-900 dark:text-white">{title}</h3>
         </div>
-        <div className="rounded-2xl border border-slate-800 bg-slate-950/40 px-4 py-3 text-right">
-          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Closed trades</p>
-          <p className="text-2xl font-black text-white">{stats.closedCount}</p>
+        <div className="tabler-subcard px-4 py-3 text-right">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 dark:text-slate-500">Closed trades</p>
+          <p className="text-2xl font-black text-slate-900 dark:text-white">{stats.closedCount}</p>
         </div>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <StatsCard
           title="Success vs Failure"
           chart={<DonutChart values={[stats.successCount, stats.failedCount]} colors={['#10b981', '#f43f5e']} />}
@@ -4195,7 +4237,7 @@ function StatsModeSection({ title, mode, stats }: { title: string; mode: 'demo' 
         />
       </div>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <SourceStatsCard
           title="Source effectiveness by usage"
           subtitle="Win rate based on how many times each source was used"
@@ -4216,7 +4258,7 @@ function StatsModeSection({ title, mode, stats }: { title: string; mode: 'demo' 
         />
       </div>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <BarStatsCard
           title="Trades by weekday"
           subtitle="Based on the opening date of each closed trade"
@@ -4232,7 +4274,7 @@ function StatsModeSection({ title, mode, stats }: { title: string; mode: 'demo' 
         />
       </div>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <MetricBarStatsCard
           title="Symbol effectiveness by winning trades"
           subtitle="Winning operations by symbol and success rate"
@@ -4261,11 +4303,11 @@ function StatsModeSection({ title, mode, stats }: { title: string; mode: 'demo' 
 
 function StatsCard({ title, chart, lines }: { title: string; chart: ReactNode; lines: string[] }) {
   return (
-    <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-5">
-      <p className="text-sm font-black uppercase tracking-[0.15em] text-white">{title}</p>
-      <div className="mt-4 flex flex-col items-center gap-4 sm:flex-row">
+    <div className="tabler-card p-4">
+      <p className="text-sm font-black uppercase tracking-[0.12em] text-slate-900 dark:text-white">{title}</p>
+      <div className="mt-3 flex flex-col items-center gap-3 sm:flex-row">
         {chart}
-        <div className="space-y-2 text-sm text-slate-300">
+        <div className="space-y-1.5 text-sm text-slate-600 dark:text-slate-300">
           {lines.map((line) => (
             <p key={line}>{line}</p>
           ))}
@@ -4285,19 +4327,21 @@ function SourceStatsCard({
   items: Array<{ label: string; percent: number; detail: string }>;
 }) {
   return (
-    <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-5">
-      <p className="text-sm font-black uppercase tracking-[0.15em] text-white">{title}</p>
-      <p className="mt-2 text-xs text-slate-500">{subtitle}</p>
-      <div className="mt-5 space-y-4">
+    <div className="tabler-card p-4">
+      <div className="flex items-center gap-2">
+        <p className="text-sm font-black uppercase tracking-[0.12em] text-slate-900 dark:text-white">{title}</p>
+        <HelpTooltip content={subtitle} />
+      </div>
+      <div className="mt-3 space-y-3">
         {items.length === 0 ? (
-          <p className="text-sm italic text-slate-500">No source data available yet.</p>
+          <p className="text-sm italic text-slate-500 dark:text-slate-500">No source data available yet.</p>
         ) : (
           items.map((item) => (
-            <div key={item.label} className="flex items-center gap-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4">
+            <div key={item.label} className="tabler-subcard flex items-center gap-3 p-3">
               <DonutChart values={[item.percent, Math.max(0, 100 - item.percent)]} colors={['#06b6d4', '#1f2937']} size={84} strokeWidth={12} centerLabel={`${item.percent.toFixed(0)}%`} />
               <div>
-                <p className="font-black text-white">{item.label}</p>
-                <p className="mt-1 text-xs text-slate-400">{item.detail}</p>
+                <p className="font-black text-slate-900 dark:text-white">{item.label}</p>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{item.detail}</p>
               </div>
             </div>
           ))
@@ -4323,23 +4367,25 @@ function BarStatsCard({
   const maxCount = Math.max(...items.map((item) => item.count), 1);
 
   return (
-    <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-5">
-      <p className="text-sm font-black uppercase tracking-[0.15em] text-white">{title}</p>
-      <p className="mt-2 text-xs text-slate-500">{subtitle}</p>
-      <div className={cn("mt-5 grid items-end gap-2", compact ? "grid-cols-12 xl:grid-cols-12" : "grid-cols-7")}>
+    <div className="tabler-card p-4">
+      <div className="flex items-center gap-2">
+        <p className="text-sm font-black uppercase tracking-[0.12em] text-slate-900 dark:text-white">{title}</p>
+        <HelpTooltip content={subtitle} />
+      </div>
+      <div className={cn("mt-3 grid items-end gap-2", compact ? "grid-cols-12 xl:grid-cols-12" : "grid-cols-7")}>
         {items.map((item) => {
           const heightPercent = Math.max(6, (item.count / maxCount) * 100);
 
           return (
             <div key={item.label} className="flex min-w-0 flex-col items-center gap-2">
-              <span className="text-[10px] font-black text-slate-400">{item.count}</span>
-              <div className="flex h-40 w-full items-end justify-center rounded-2xl border border-slate-800 bg-slate-900/40 px-1 py-2">
+              <span className="text-[10px] font-black text-slate-500 dark:text-slate-400">{item.count}</span>
+              <div className="flex h-36 w-full items-end justify-center rounded-lg border border-slate-200 bg-white/80 px-1 py-2 dark:border-slate-800 dark:bg-slate-950/60">
                 <div
                   className={cn("w-full rounded-xl transition-all", barColor)}
                   style={{ height: `${heightPercent}%` }}
                 />
               </div>
-              <span className={cn("text-[10px] font-black uppercase tracking-[0.15em] text-slate-500", compact && "tracking-[0.05em]")}>
+              <span className={cn("text-[10px] font-black uppercase tracking-[0.12em] text-slate-500 dark:text-slate-500", compact && "tracking-[0.05em]")}>
                 {item.label}
               </span>
             </div>
@@ -4364,42 +4410,42 @@ function AccountOverviewCard({
   const futuresRows = modeData.futures.usdt;
 
   return (
-    <div className="rounded-[1.5rem] border border-slate-800 bg-slate-900/40 p-5">
+    <div className="tabler-card p-4">
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className={cn("text-[10px] font-black uppercase tracking-[0.3em]", accent)}>{title}</p>
-          <h3 className="mt-2 text-lg font-black uppercase tracking-tight text-white">Bitget Balances</h3>
+          <h3 className="mt-1 text-lg font-black uppercase tracking-tight text-slate-900 dark:text-white">Bitget Balances</h3>
         </div>
         <div className="text-right">
-          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Approx Total</p>
-          <p className="text-xl font-black text-white">{totalUsdt.toFixed(2)} USDT</p>
-          <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-600">{totalBtc.toFixed(8)} BTC</p>
+          <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500 dark:text-slate-500">Approx Total</p>
+          <p className="text-xl font-black text-slate-900 dark:text-white">{totalUsdt.toFixed(2)} USDT</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-600">{totalBtc.toFixed(8)} BTC</p>
         </div>
       </div>
 
-      <div className="mt-5 grid gap-3 sm:grid-cols-2">
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
         {modeData.summary.map((item) => (
-          <div key={item.accountType} className="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
-            <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">{item.accountType}</p>
-            <p className="mt-2 text-lg font-black text-white">{item.usdtBalance.toFixed(2)} USDT</p>
-            <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-600">{item.btcBalance.toFixed(8)} BTC</p>
+          <div key={item.accountType} className="tabler-subcard p-3">
+            <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500 dark:text-slate-500">{item.accountType}</p>
+            <p className="mt-1 text-lg font-black text-slate-900 dark:text-white">{item.usdtBalance.toFixed(2)} USDT</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-600">{item.btcBalance.toFixed(8)} BTC</p>
           </div>
         ))}
       </div>
 
-      <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
-        <p className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-500">Futures Accounts · USDT Only</p>
+      <div className="mt-3 tabler-subcard p-3">
+        <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500 dark:text-slate-500">Futures Accounts · USDT Only</p>
         {futuresRows.length === 0 ? (
-          <p className="mt-3 text-sm italic text-slate-500">No USDT futures balance data returned.</p>
+          <p className="mt-3 text-sm italic text-slate-500 dark:text-slate-500">No USDT futures balance data returned.</p>
         ) : (
-          <div className="mt-4 space-y-3">
+          <div className="mt-3 space-y-3">
             {futuresRows.map((row, index) => (
-              <div key={`${row.marginCoin}-${index}`} className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+              <div key={`${row.marginCoin}-${index}`} className="rounded-lg border border-slate-200 bg-white/80 p-3 dark:border-slate-800 dark:bg-slate-950/60">
                 <div className="flex items-center justify-between gap-3">
-                  <p className="font-black text-white">{row.marginCoin}</p>
-                  <p className="text-sm font-black text-slate-200">{row.accountEquity.toFixed(2)} equity</p>
+                  <p className="font-black text-slate-900 dark:text-white">{row.marginCoin}</p>
+                  <p className="text-sm font-black text-slate-700 dark:text-slate-200">{row.accountEquity.toFixed(2)} equity</p>
                 </div>
-                <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-400">
+                <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-500 dark:text-slate-400">
                   <p>Available: {row.available.toFixed(2)}</p>
                   <p>Locked: {row.locked.toFixed(2)}</p>
                   <p>Unrealized: {row.unrealizedPnl.toFixed(2)}</p>
@@ -4411,16 +4457,16 @@ function AccountOverviewCard({
         )}
       </div>
 
-      <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
-        <p className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-500">Spot Assets</p>
+      <div className="mt-3 tabler-subcard p-3">
+        <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500 dark:text-slate-500">Spot Assets</p>
         {modeData.spotAssets.length === 0 ? (
-          <p className="mt-3 text-sm italic text-slate-500">No spot assets returned.</p>
+          <p className="mt-3 text-sm italic text-slate-500 dark:text-slate-500">No spot assets returned.</p>
         ) : (
-          <div className="mt-4 grid gap-2">
+          <div className="mt-3 grid gap-2">
             {modeData.spotAssets.map((asset) => (
-              <div key={asset.coin} className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2 text-sm">
-                <span className="font-black text-white">{asset.coin}</span>
-                <span className="text-slate-300">{asset.total.toFixed(6)}</span>
+              <div key={asset.coin} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white/80 px-3 py-2 text-sm dark:border-slate-800 dark:bg-slate-950/60">
+                <span className="font-black text-slate-900 dark:text-white">{asset.coin}</span>
+                <span className="text-slate-600 dark:text-slate-300">{asset.total.toFixed(6)}</span>
               </div>
             ))}
           </div>
@@ -4448,12 +4494,14 @@ function MetricBarStatsCard({
   const maxValue = Math.max(...data.map((item) => Math.max(0, item.value)), 1);
 
   return (
-    <div className="rounded-[1.5rem] border border-slate-800 bg-slate-950/40 p-5">
-      <p className="text-sm font-black uppercase tracking-[0.15em] text-white">{title}</p>
-      <p className="mt-2 text-xs text-slate-500">{subtitle}</p>
-      <div className="mt-5 space-y-4">
+    <div className="tabler-card p-4">
+      <div className="flex items-center gap-2">
+        <p className="text-sm font-black uppercase tracking-[0.12em] text-slate-900 dark:text-white">{title}</p>
+        <HelpTooltip content={subtitle} />
+      </div>
+      <div className="mt-3 space-y-3">
         {data.length === 0 ? (
-          <p className="text-sm italic text-slate-500">No symbol data available yet.</p>
+          <p className="text-sm italic text-slate-500 dark:text-slate-500">No symbol data available yet.</p>
         ) : (
           data.map((item) => {
             const widthPercent = Math.max(6, (Math.max(0, item.value) / maxValue) * 100);
@@ -4462,16 +4510,16 @@ function MetricBarStatsCard({
             return (
               <div key={item.label} className="space-y-2">
                 <div className="flex items-center justify-between gap-3">
-                  <p className="font-black text-white">{item.label}</p>
-                  <p className="text-xs font-black text-slate-300">{formattedValue}</p>
+                  <p className="font-black text-slate-900 dark:text-white">{item.label}</p>
+                  <p className="text-xs font-black text-slate-600 dark:text-slate-300">{formattedValue}</p>
                 </div>
-                <div className="h-3 overflow-hidden rounded-full border border-slate-800 bg-slate-900/60">
+                <div className="h-3 overflow-hidden rounded-full border border-slate-200 bg-white/80 dark:border-slate-800 dark:bg-slate-950/60">
                   <div
                     className={cn("h-full rounded-full transition-all", barColor)}
                     style={{ width: `${widthPercent}%` }}
                   />
                 </div>
-                <p className="text-[11px] text-slate-500">{item.detail}</p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-500">{item.detail}</p>
               </div>
             );
           })
@@ -4649,17 +4697,15 @@ function HeatmapChart({ data }: { data: BookmapSummary | null }) {
   };
 
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
+    <div className="tabler-card p-3">
       <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-sm font-black uppercase tracking-[0.2em] text-white">Heatmap</p>
-          <p className="mt-1 text-[11px] text-slate-500">
-            Brillo = liquidez resting. La linea blanca sigue el precio medio y la barra lateral muestra donde esta ahora la liquidez mas fuerte.
-          </p>
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-black uppercase tracking-[0.2em] text-slate-900 dark:text-white">Heatmap</p>
+          <HelpTooltip content="Brillo = liquidez resting. La linea blanca sigue el precio medio y la barra lateral muestra donde esta ahora la liquidez mas fuerte." />
         </div>
         <div className="text-right">
           <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Range</p>
-          <p className="text-xs font-black text-slate-300">{rows[0].toFixed(4)} / {rows[rows.length - 1].toFixed(4)}</p>
+          <p className="text-xs font-black text-slate-700 dark:text-slate-300">{rows[0].toFixed(4)} / {rows[rows.length - 1].toFixed(4)}</p>
         </div>
       </div>
 
@@ -4672,7 +4718,7 @@ function HeatmapChart({ data }: { data: BookmapSummary | null }) {
           ))}
         </div>
 
-        <div className="relative overflow-hidden rounded-xl border border-slate-800 bg-slate-950/70">
+        <div className="relative overflow-hidden rounded-md border border-slate-200 bg-slate-950/70 dark:border-slate-800">
           <div
             className="pointer-events-none absolute inset-0 z-[1] grid"
             style={{
@@ -4799,7 +4845,7 @@ function HeatmapChart({ data }: { data: BookmapSummary | null }) {
           </div>
         </div>
 
-        <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-2">
+        <div className="rounded-md border border-slate-200 bg-white/90 p-2 dark:border-slate-800 dark:bg-slate-950/60">
           <p className="mb-2 text-center text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Now</p>
           <div className="grid h-[380px]" style={{ gridTemplateRows: `repeat(${rows.length}, minmax(0, 1fr))` }}>
             {rows.map((price, rowIndex) => {
@@ -4889,21 +4935,21 @@ function BookmapPanel({
   paperMessage: string | null;
 }) {
   return (
-    <section className="rounded-[2rem] border border-cyan-900/50 bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.14),_transparent_30%),linear-gradient(180deg,rgba(2,6,23,0.96),rgba(2,6,23,0.88))] p-6 shadow-2xl shadow-slate-950/40">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <p className="text-[10px] font-black uppercase tracking-[0.35em] text-cyan-300">Bookmap Lab</p>
-          <h2 className="mt-2 text-2xl font-black uppercase tracking-tight text-white">Cross-Exchange Liquidity Radar</h2>
-          <p className="mt-2 max-w-2xl text-sm text-slate-400">
-            Bybit y Binance alimentan el mapa de liquidez. Bitget queda expuesto como referencia del venue de ejecucion.
-          </p>
-        </div>
+    <section className="tabler-shell p-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <HeadingWithTooltip
+          eyebrow="Bookmap Lab"
+          eyebrowClassName="text-cyan-500 dark:text-cyan-300"
+          title="Cross-Exchange Liquidity Radar"
+          description="Bybit y Binance alimentan el mapa de liquidez. Bitget queda expuesto como referencia del venue de ejecucion."
+          titleClassName="text-xl"
+        />
 
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
             onClick={onToggleExpanded}
-            className="inline-flex items-center gap-2 rounded-2xl border border-slate-700 bg-slate-950/80 px-4 py-3 text-xs font-black uppercase tracking-[0.2em] text-slate-200 transition-colors hover:border-cyan-400 hover:text-white"
+            className="tabler-button inline-flex items-center gap-2"
           >
             {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             {expanded ? 'Hide' : 'Show'}
@@ -4911,14 +4957,14 @@ function BookmapPanel({
           <select
             value={symbol}
             onChange={(event) => onSymbolChange(event.target.value)}
-            className="rounded-2xl border border-slate-700 bg-slate-950/80 px-4 py-3 text-sm font-black uppercase tracking-[0.15em] text-white outline-none transition-colors hover:border-cyan-400"
+            className="tabler-input text-sm font-black uppercase tracking-[0.15em]"
           >
             {AVAILABLE_SYMBOLS.map((item) => (
               <option key={item} value={item}>{item}</option>
             ))}
           </select>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3">
+          <div className="tabler-subcard px-4 py-3">
             <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Signal Bias</p>
             <p className={cn(
               "mt-1 text-sm font-black uppercase",
@@ -4935,20 +4981,23 @@ function BookmapPanel({
       </div>
 
       {message && (
-        <div className="mt-5 rounded-2xl border border-rose-800/40 bg-rose-950/30 px-4 py-3 text-sm text-rose-300">
+        <div className="mt-3 rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2.5 text-sm text-rose-600 dark:text-rose-300">
           {message}
         </div>
       )}
 
       {expanded ? (
-      <div className="mt-6 grid gap-4">
-        <div className="grid gap-4 2xl:grid-cols-2">
-          <div className="rounded-2xl border border-cyan-900/40 bg-cyan-950/10 p-4">
+      <div className="mt-3 grid gap-3">
+        <div className="grid gap-3 2xl:grid-cols-2">
+          <div className="tabler-card p-3">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-500">Liquidity Setup</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-500">Liquidity Setup</p>
+                  <HelpTooltip content="Evalua barrido, reversal y economia del recorrido hasta la siguiente zona relevante para decidir si el setup es ejecutable." />
+                </div>
                 <h3 className={cn(
-                  "mt-2 text-xl font-black uppercase",
+                  "mt-1.5 text-xl font-black uppercase",
                   data?.liquiditySetup.decision.state === 'EXECUTABLE'
                     ? 'text-emerald-300'
                     : data?.liquiditySetup.decision.state === 'VALID' || data?.liquiditySetup.decision.state === 'CANDIDATE'
@@ -4963,33 +5012,26 @@ function BookmapPanel({
                       ? 'Short Sweep Reversal'
                       : 'No Valid Sweep Setup'}
                 </h3>
-                <p className="mt-2 text-sm text-slate-300">
-                  {data?.liquiditySetup.decision.state === 'EXECUTABLE'
-                    ? 'El barrido, el giro y la economia del trade ya permiten tratarlo como setup ejecutable.'
-                    : data?.liquiditySetup.decision.state === 'REJECTED'
-                      ? 'La idea esta descartada por falta de recorrido, reversal flojo o camino sucio hacia la siguiente liquidez.'
-                      : 'El setup existe, pero aun necesita mas confirmacion antes de convertirse en entrada.'}
-                </p>
               </div>
 
               <div className="grid grid-cols-2 gap-3 lg:min-w-[340px]">
-                <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+                <div className="tabler-subcard px-3 py-2">
                   <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">State</p>
                   <p className="mt-1 text-lg font-black text-white">{data?.liquiditySetup.decision.state || '-'}</p>
                 </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+                <div className="tabler-subcard px-3 py-2">
                   <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Probability</p>
                   <p className="mt-1 text-lg font-black text-cyan-300">
                     {data ? `${(data.liquiditySetup.score.probabilityToTarget * 100).toFixed(0)}%` : '-'}
                   </p>
                 </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+                <div className="tabler-subcard px-3 py-2">
                   <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Target Move</p>
                   <p className="mt-1 text-sm font-black text-white">
                     {data?.liquiditySetup.economics.targetMovePercent ? `${data.liquiditySetup.economics.targetMovePercent.toFixed(2)}%` : '-'}
                   </p>
                 </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+                <div className="tabler-subcard px-3 py-2">
                   <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Final Score</p>
                   <p className="mt-1 text-sm font-black text-white">
                     {data?.liquiditySetup.score.finalScore?.toFixed(1) || '-'}
@@ -4998,35 +5040,35 @@ function BookmapPanel({
               </div>
             </div>
 
-            <div className="mt-4 grid gap-3 md:grid-cols-4">
-              <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+            <div className="mt-3 grid gap-3 md:grid-cols-4">
+              <div className="tabler-subcard px-3 py-3">
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Sweep</p>
                 <p className="mt-1 text-sm font-black text-white">{data?.liquiditySetup.score.sweepScore?.toFixed(0) || '-'}</p>
               </div>
-              <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+              <div className="tabler-subcard px-3 py-3">
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Reversal</p>
                 <p className="mt-1 text-sm font-black text-white">{data?.liquiditySetup.score.reversalScore?.toFixed(0) || '-'}</p>
               </div>
-              <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+              <div className="tabler-subcard px-3 py-3">
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Target</p>
                 <p className="mt-1 text-sm font-black text-white">{data?.liquiditySetup.score.targetScore?.toFixed(0) || '-'}</p>
               </div>
-              <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+              <div className="tabler-subcard px-3 py-3">
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Economics</p>
                 <p className="mt-1 text-sm font-black text-white">{data?.liquiditySetup.score.economicsScore?.toFixed(0) || '-'}</p>
               </div>
             </div>
 
-            <div className="mt-4 grid gap-3 md:grid-cols-3">
-              <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              <div className="tabler-subcard px-3 py-3">
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Sweeped Zone</p>
                 <p className="mt-1 text-sm font-black text-white">{data?.liquiditySetup.sweep.sweptZonePrice?.toFixed(4) || '-'}</p>
               </div>
-              <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+              <div className="tabler-subcard px-3 py-3">
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Target Zone</p>
                 <p className="mt-1 text-sm font-black text-white">{data?.liquiditySetup.target.targetZonePrice?.toFixed(4) || '-'}</p>
               </div>
-              <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+              <div className="tabler-subcard px-3 py-3">
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Reward / Risk</p>
                 <p className="mt-1 text-sm font-black text-white">{data?.liquiditySetup.economics.rewardRisk?.toFixed(2) || '-'}</p>
               </div>
@@ -5061,18 +5103,21 @@ function BookmapPanel({
           </div>
 
           <div className={cn(
-            "rounded-2xl border p-4",
+            "rounded-lg border p-3",
             data?.preSignal.actionable
               ? data.preSignal.bias === 'long'
-                ? 'border-emerald-700/50 bg-emerald-950/20'
-                : 'border-rose-700/50 bg-rose-950/20'
-              : 'border-slate-800 bg-slate-950/60'
+                ? 'border-emerald-500/35 bg-emerald-500/10'
+                : 'border-rose-500/35 bg-rose-500/10'
+              : 'border-slate-200 bg-slate-50/90 dark:border-slate-800 dark:bg-slate-950/60'
           )}>
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-500">Pre-Signal</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-[10px] font-black uppercase tracking-[0.25em] text-slate-500">Pre-Signal</p>
+                  <HelpTooltip content="Resume la microestructura mas reciente para decidir si merece mandar una entrada condicionada o seguir esperando confluencia." />
+                </div>
                 <h3 className={cn(
-                  "mt-2 text-xl font-black uppercase",
+                  "mt-1.5 text-xl font-black uppercase",
                   data?.preSignal.bias === 'long'
                     ? 'text-emerald-300'
                     : data?.preSignal.bias === 'short'
@@ -5083,43 +5128,38 @@ function BookmapPanel({
                     ? `${data.preSignal.bias.toUpperCase()} ${data.preSignal.mode}`
                     : 'Watching setup'}
                 </h3>
-                <p className="mt-2 text-sm text-slate-300">
-                  {data?.preSignal.actionable
-                    ? 'La microestructura ya permite preparar una entrada condicionada.'
-                    : 'Aun no hay suficiente confluencia para tratarlo como setup ejecutable.'}
-                </p>
               </div>
 
               <div className="grid grid-cols-2 gap-3 lg:min-w-[320px]">
-                <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+                <div className="tabler-subcard px-3 py-2">
                   <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Confidence</p>
                   <p className="mt-1 text-lg font-black text-cyan-300">{data ? `${(data.preSignal.confidence * 100).toFixed(0)}%` : '-'}</p>
                 </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+                <div className="tabler-subcard px-3 py-2">
                   <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Mode</p>
                   <p className="mt-1 text-lg font-black text-white">{data?.preSignal.mode || '-'}</p>
                 </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+                <div className="tabler-subcard px-3 py-2">
                   <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Entry</p>
                   <p className="mt-1 text-sm font-black text-white">{data?.preSignal.entryPrice?.toFixed(4) || '-'}</p>
                 </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2">
+                <div className="tabler-subcard px-3 py-2">
                   <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">R/R</p>
                   <p className="mt-1 text-sm font-black text-white">{data?.preSignal.rewardRisk?.toFixed(2) || '-'}</p>
                 </div>
               </div>
             </div>
 
-            <div className="mt-4 grid gap-3 md:grid-cols-3">
-              <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              <div className="tabler-subcard px-3 py-3">
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Stop</p>
                 <p className="mt-1 text-sm font-black text-rose-300">{data?.preSignal.stopPrice?.toFixed(4) || '-'}</p>
               </div>
-              <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+              <div className="tabler-subcard px-3 py-3">
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Target</p>
                 <p className="mt-1 text-sm font-black text-emerald-300">{data?.preSignal.targetPrice?.toFixed(4) || '-'}</p>
               </div>
-              <div className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-3">
+              <div className="tabler-subcard px-3 py-3">
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Invalidation</p>
                 <p className="mt-1 text-xs font-bold text-slate-300">{data?.preSignal.invalidation || '-'}</p>
               </div>
@@ -5170,16 +5210,14 @@ function BookmapPanel({
               >
                 {creatingPaperSignal ? 'Tracking...' : 'Track on Paper'}
               </button>
-              <p className="text-xs text-slate-400">
-                La ejecucion usa `Entry` con `origin: Heatmap`, asi que sigue respetando el bloqueo global de nuevas entradas.
-              </p>
+              <HelpTooltip content="La ejecucion usa Entry con origin: Heatmap, asi que sigue respetando el bloqueo global de nuevas entradas." />
             </div>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-3 2xl:col-span-2">
-            <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+          <div className="grid gap-3 md:grid-cols-3 2xl:col-span-2">
+            <div className="tabler-card p-3">
               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Composite Mid</p>
-              <p className="mt-2 text-2xl font-black text-white">
+              <p className="mt-2 text-2xl font-black text-slate-900 dark:text-white">
                 {data?.composite.mid ? data.composite.mid.toFixed(4) : '-'}
               </p>
               <p className="mt-1 text-[11px] text-slate-500">
@@ -5187,7 +5225,7 @@ function BookmapPanel({
               </p>
             </div>
 
-            <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+            <div className="tabler-card p-3">
               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Tape Imbalance</p>
               <p className={cn(
                 "mt-2 text-2xl font-black",
@@ -5200,7 +5238,7 @@ function BookmapPanel({
               </p>
             </div>
 
-            <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+            <div className="tabler-card p-3">
               <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Trigger Confidence</p>
               <p className="mt-2 text-2xl font-black text-cyan-300">
                 {data ? `${(data.trigger.confidence * 100).toFixed(0)}%` : '-'}
@@ -5215,10 +5253,12 @@ function BookmapPanel({
             <HeatmapChart data={data} />
           </div>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+          <div className="tabler-card p-3">
             <div className="flex items-center justify-between gap-3">
-              <p className="text-sm font-black uppercase tracking-[0.2em] text-white">Absorption</p>
-              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Tape against resting liquidity</p>
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-black uppercase tracking-[0.2em] text-slate-900 dark:text-white">Absorption</p>
+                <HelpTooltip content="Lectura de cinta contra liquidez resting para detectar absorcion alcista o bajista." />
+              </div>
             </div>
             <div className="mt-4 space-y-3">
               {data?.absorptionSignals.length ? data.absorptionSignals.map((signal, index) => (
@@ -5245,11 +5285,11 @@ function BookmapPanel({
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+          <div className="tabler-card p-3">
             <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-black uppercase tracking-[0.2em] text-white">Paper Tracking</p>
-                <p className="mt-1 text-[11px] text-slate-500">Seguimiento teorico de senales Heatmap sin enviar orden real.</p>
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-black uppercase tracking-[0.2em] text-slate-900 dark:text-white">Paper Tracking</p>
+                <HelpTooltip content="Seguimiento teorico de senales Heatmap sin enviar orden real." />
               </div>
               <div className="text-right">
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Closed PnL</p>
@@ -5323,11 +5363,11 @@ function BookmapPanel({
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 2xl:col-span-2">
+          <div className="tabler-card p-3 2xl:col-span-2">
             <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-black uppercase tracking-[0.2em] text-white">Paper Analytics</p>
-                <p className="mt-1 text-[11px] text-slate-500">Metricas especificas del comportamiento de las pre-senales Heatmap.</p>
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-black uppercase tracking-[0.2em] text-slate-900 dark:text-white">Paper Analytics</p>
+                <HelpTooltip content="Metricas especificas del comportamiento de las pre-senales Heatmap." />
               </div>
             </div>
             <div className="mt-4 grid gap-3 md:grid-cols-4">
@@ -5433,10 +5473,10 @@ function BookmapPanel({
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2 2xl:col-span-2">
-            <div className="rounded-2xl border border-emerald-900/40 bg-emerald-950/10 p-4">
+            <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/10 p-3">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm font-black uppercase tracking-[0.2em] text-emerald-300">Nearest Buy Wall</p>
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">El resto ya se ve en el heatmap</p>
+                <HelpTooltip content="El resto de niveles relevantes ya se ve directamente en el heatmap principal." />
               </div>
               <div className="mt-4 space-y-3">
                 {data?.zones.supports.length ? data.zones.supports.slice(0, 1).map((zone) => (
@@ -5455,10 +5495,10 @@ function BookmapPanel({
               </div>
             </div>
 
-            <div className="rounded-2xl border border-rose-900/40 bg-rose-950/10 p-4">
+            <div className="rounded-lg border border-rose-500/25 bg-rose-500/10 p-3">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm font-black uppercase tracking-[0.2em] text-rose-300">Nearest Sell Wall</p>
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">El resto ya se ve en el heatmap</p>
+                <HelpTooltip content="El resto de niveles relevantes ya se ve directamente en el heatmap principal." />
               </div>
               <div className="mt-4 space-y-3">
                 {data?.zones.resistances.length ? data.zones.resistances.slice(0, 1).map((zone) => (
@@ -5480,8 +5520,11 @@ function BookmapPanel({
         </div>
 
         <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-            <p className="text-sm font-black uppercase tracking-[0.2em] text-white">Venue Snapshot</p>
+          <div className="tabler-card p-3">
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-black uppercase tracking-[0.2em] text-slate-900 dark:text-white">Venue Snapshot</p>
+              <HelpTooltip content="Estado rapido de cada venue conectado: frescura, bid/ask, spread y latencia aparente." />
+            </div>
             <div className="mt-4 space-y-3">
               {data?.exchanges.length ? data.exchanges.map((exchange) => (
                 <div key={exchange.exchange} className="rounded-2xl border border-slate-800 bg-slate-900/40 p-3">
@@ -5509,9 +5552,12 @@ function BookmapPanel({
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-            <p className="text-sm font-black uppercase tracking-[0.2em] text-white">Trigger Notes</p>
-            <p className="mt-3 text-sm leading-6 text-slate-300">
+          <div className="tabler-card p-3">
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-black uppercase tracking-[0.2em] text-slate-900 dark:text-white">Trigger Notes</p>
+              <HelpTooltip content="Motivo principal del sesgo actual y nivel de confianza de la confluencia detectada." />
+            </div>
+            <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
               {data?.trigger.reason || 'Waiting for a first confirmed confluence between zone and tape.'}
             </p>
             <div className="mt-4 h-3 overflow-hidden rounded-full border border-slate-800 bg-slate-900/60">
@@ -5529,8 +5575,11 @@ function BookmapPanel({
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-            <p className="text-sm font-black uppercase tracking-[0.2em] text-white">Recent Tape</p>
+          <div className="tabler-card p-3">
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-black uppercase tracking-[0.2em] text-slate-900 dark:text-white">Recent Tape</p>
+              <HelpTooltip content="Ultimos prints consolidados para ver agresion reciente y direccion del flujo." />
+            </div>
             <div className="mt-4 space-y-2">
               {data?.tape.recentTrades.length ? data.tape.recentTrades.slice(-8).reverse().map((trade, index) => (
                 <div key={`${trade.exchange}-${trade.timestamp}-${index}`} className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/40 px-3 py-2 text-xs">
