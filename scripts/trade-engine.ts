@@ -29,6 +29,11 @@ import {
   normalizePositionManagementMode,
   resolveBitgetCloseExecution,
 } from '@/lib/positions';
+import {
+  PROTECTION_SETTING_DEFINITIONS,
+  resolveProtectionThresholdSettingsFromMap,
+  type ProtectionThresholdSettings,
+} from '@/lib/protectionSettings';
 
 type TradingMode = 'demo' | 'live';
 
@@ -76,6 +81,7 @@ type PositionMarketUpdate = {
 type EngineSettings = {
   exhaustionGuardEnabled: boolean;
   takeProfitAutoCloseEnabled: boolean;
+  protection: ProtectionThresholdSettings;
 };
 
 const HOST = process.env.TRADE_ENGINE_HOST || '127.0.0.1';
@@ -112,6 +118,7 @@ let lastWarning: string | null = null;
 let engineSettings: EngineSettings = {
   exhaustionGuardEnabled: true,
   takeProfitAutoCloseEnabled: false,
+  protection: resolveProtectionThresholdSettingsFromMap({}),
 };
 
 const makeMarketKey = (tradingMode: TradingMode, symbol: string) => `${tradingMode}:${symbol.toUpperCase()}`;
@@ -128,13 +135,43 @@ const emitEngineEvent = (event: string, payload: unknown) => {
   }
 };
 
-const getSelfManagedTrailingStep = (marketMovePercent: number) => {
-  if (marketMovePercent < 1.25) {
+const getSelfManagedTrailingStep = (marketMovePercent: number, settings: ProtectionThresholdSettings) => {
+  if (marketMovePercent < settings.selfTrailingActivationPercent) {
     return null;
   }
 
-  const lockedPercent = Math.floor((marketMovePercent - 0.25) + 1e-9);
-  return lockedPercent >= 1 ? lockedPercent : null;
+  const stepsCrossed = Math.floor(
+    ((marketMovePercent - settings.selfTrailingActivationPercent) / settings.selfTrailingStepPercent) + 1e-9
+  );
+  const firstLockedPercent = Math.max(
+    settings.selfBreakEvenActivationPercent,
+    settings.selfTrailingActivationPercent - 0.25
+  );
+  const lockedPercent = firstLockedPercent + (stepsCrossed * settings.selfTrailingStepPercent);
+  return lockedPercent >= settings.selfBreakEvenActivationPercent ? lockedPercent : null;
+};
+
+const getAutoTrailingStopPrice = (
+  entryPrice: number,
+  marketMovePercent: number,
+  side: 'buy' | 'sell',
+  settings: ProtectionThresholdSettings
+) => {
+  if (marketMovePercent < settings.autoTrailingActivationPercent) {
+    return null;
+  }
+
+  const stepsCrossed = Math.floor(
+    ((marketMovePercent - settings.autoTrailingActivationPercent) / settings.autoTrailingStepPercent) + 1e-9
+  );
+  const crossedStep = settings.autoTrailingActivationPercent + (stepsCrossed * settings.autoTrailingStepPercent);
+  const crossedPrice = side === 'buy'
+    ? entryPrice * (1 + crossedStep / 100)
+    : entryPrice * (1 - crossedStep / 100);
+
+  return side === 'buy'
+    ? crossedPrice * (1 - settings.autoTrailingStepPercent / 100)
+    : crossedPrice * (1 + settings.autoTrailingStepPercent / 100);
 };
 
 const getPositionCommission = (position: Position) => {
@@ -240,6 +277,7 @@ const computeCandidateStopLoss = (position: Position, currentPrice: number, adap
   const effectiveSelfManaged = trailingEnabled && (!autoManaged || fixedManaged || trendManaged);
   const breakEvenOnlyEnabled = breakEvenEnabled && !trailingEnabled;
   const commission = getPositionCommission(position);
+  const protection = engineSettings.protection;
   const marketMovePercent = position.positionType === 'buy'
     ? ((currentPrice - position.entryPrice) / position.entryPrice) * 100
     : ((position.entryPrice - currentPrice) / position.entryPrice) * 100;
@@ -247,12 +285,12 @@ const computeCandidateStopLoss = (position: Position, currentPrice: number, adap
   const effectiveMovePercent = Math.max(marketMovePercent, historicalMaxProfitPercent);
   if (trendManaged && !trailingEnabled) {
     if (position.positionType === 'buy') {
-      return effectiveMovePercent > 1
+      return effectiveMovePercent >= protection.trendBreakEvenActivationPercent
         ? position.entryPrice * (1 + commission) / (1 - commission)
         : null;
     }
 
-    return effectiveMovePercent > 1
+    return effectiveMovePercent >= protection.trendBreakEvenActivationPercent
       ? position.entryPrice * (1 - commission) / (1 + commission)
       : null;
   }
@@ -276,27 +314,25 @@ const computeCandidateStopLoss = (position: Position, currentPrice: number, adap
 
   if (position.positionType === 'buy') {
     if (effectiveSelfManaged) {
-      const trailingStep = getSelfManagedTrailingStep(effectiveMovePercent);
+      const trailingStep = getSelfManagedTrailingStep(effectiveMovePercent, protection);
       if (trailingStep !== null) {
         return position.entryPrice * (1 + (trailingStep / 100));
       }
-      if (effectiveMovePercent >= 0.5) {
+      if (effectiveMovePercent >= protection.selfBreakEvenActivationPercent) {
         return position.entryPrice * (1 + commission) / (1 - commission);
       }
       return null;
     }
 
-    if ((breakEvenOnlyEnabled || stratManaged || selfManaged || fixedManaged) && effectiveMovePercent >= 0.5) {
+    if ((breakEvenOnlyEnabled || stratManaged || selfManaged || fixedManaged) && effectiveMovePercent >= protection.selfBreakEvenActivationPercent) {
       return position.entryPrice * (1 + commission) / (1 - commission);
     }
 
-    if (autoManaged && trailingEnabled && effectiveMovePercent >= 1) {
-      const crossedStep = Math.floor(effectiveMovePercent / 0.5) * 0.5;
-      const crossedPrice = position.entryPrice * (1 + crossedStep / 100);
-      return crossedPrice * (1 - 0.5 / 100);
+    if (autoManaged && trailingEnabled) {
+      return getAutoTrailingStopPrice(position.entryPrice, effectiveMovePercent, 'buy', protection);
     }
 
-    if (autoManaged && breakEvenEnabled && effectiveMovePercent >= 0.5) {
+    if (autoManaged && breakEvenEnabled && effectiveMovePercent >= protection.autoBreakEvenActivationPercent) {
       return position.entryPrice * (1 + commission) / (1 - commission);
     }
 
@@ -304,27 +340,25 @@ const computeCandidateStopLoss = (position: Position, currentPrice: number, adap
   }
 
   if (effectiveSelfManaged) {
-    const trailingStep = getSelfManagedTrailingStep(effectiveMovePercent);
+    const trailingStep = getSelfManagedTrailingStep(effectiveMovePercent, protection);
     if (trailingStep !== null) {
       return position.entryPrice * (1 - (trailingStep / 100));
     }
-    if (effectiveMovePercent >= 0.5) {
+    if (effectiveMovePercent >= protection.selfBreakEvenActivationPercent) {
       return position.entryPrice * (1 - commission) / (1 + commission);
     }
     return null;
   }
 
-  if ((breakEvenOnlyEnabled || stratManaged || selfManaged || fixedManaged) && effectiveMovePercent >= 0.5) {
+  if ((breakEvenOnlyEnabled || stratManaged || selfManaged || fixedManaged) && effectiveMovePercent >= protection.selfBreakEvenActivationPercent) {
     return position.entryPrice * (1 - commission) / (1 + commission);
   }
 
-  if (autoManaged && trailingEnabled && effectiveMovePercent >= 1) {
-    const crossedStep = Math.floor(effectiveMovePercent / 0.5) * 0.5;
-    const crossedPrice = position.entryPrice * (1 - crossedStep / 100);
-    return crossedPrice * (1 + 0.5 / 100);
+  if (autoManaged && trailingEnabled) {
+    return getAutoTrailingStopPrice(position.entryPrice, effectiveMovePercent, 'sell', protection);
   }
 
-  if (autoManaged && breakEvenEnabled && effectiveMovePercent >= 0.5) {
+  if (autoManaged && breakEvenEnabled && effectiveMovePercent >= protection.autoBreakEvenActivationPercent) {
     return position.entryPrice * (1 - commission) / (1 + commission);
   }
 
@@ -601,14 +635,27 @@ const reloadOpenPositions = async () => {
 };
 
 const reloadSettings = async () => {
-  const [exhaustionGuardSetting, takeProfitAutoCloseSetting] = await Promise.all([
+  const [exhaustionGuardSetting, takeProfitAutoCloseSetting, protectionSettingsRows] = await Promise.all([
     prisma.setting.findUnique({ where: { key: 'exhaustion_guard_enabled' } }),
     prisma.setting.findUnique({ where: { key: 'take_profit_auto_close_enabled' } }),
+    prisma.setting.findMany({
+      where: {
+        key: {
+          in: PROTECTION_SETTING_DEFINITIONS.map((definition) => definition.key),
+        },
+      },
+    }),
   ]);
 
   engineSettings = {
     exhaustionGuardEnabled: exhaustionGuardSetting?.value !== '0',
     takeProfitAutoCloseEnabled: takeProfitAutoCloseSetting?.value === '1',
+    protection: resolveProtectionThresholdSettingsFromMap(
+      protectionSettingsRows.reduce<Record<string, string>>((acc, row) => {
+        acc[row.key] = row.value;
+        return acc;
+      }, {})
+    ),
   };
 
   lastSettingsReloadAt = Date.now();

@@ -129,6 +129,27 @@ struct AdminView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            Divider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("BreakEven y Trailing")
+                    .font(.headline)
+
+                protectionRow(title: "Auto Breakeven %", key: "auto_break_even_activation_percent", value: $appModel.autoBreakEvenActivationPercent)
+                protectionRow(title: "Auto Primer Trailing %", key: "auto_trailing_activation_percent", value: $appModel.autoTrailingActivationPercent)
+                protectionRow(title: "Auto Siguientes %", key: "auto_trailing_step_percent", value: $appModel.autoTrailingStepPercent)
+
+                protectionRow(title: "Self/Strat/Fixed Breakeven %", key: "self_break_even_activation_percent", value: $appModel.selfBreakEvenActivationPercent)
+                protectionRow(title: "Self Primer Trailing %", key: "self_trailing_activation_percent", value: $appModel.selfTrailingActivationPercent)
+                protectionRow(title: "Self Siguientes %", key: "self_trailing_step_percent", value: $appModel.selfTrailingStepPercent)
+
+                protectionRow(title: "Trend Breakeven %", key: "trend_break_even_activation_percent", value: $appModel.trendBreakEvenActivationPercent)
+
+                Text("Trend con trailing activo reutiliza los valores de Self / Strat / Fixed.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Toggle("Profit Sound", isOn: Binding(
                 get: { appModel.profitSoundEnabled },
                 set: { newValue in
@@ -144,6 +165,36 @@ struct AdminView: View {
         .padding()
         .background(Color.white.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private func protectionRow(title: String, key: String, value: Binding<String>) -> some View {
+        LabeledContent(title) {
+            HStack(spacing: 8) {
+                TextField("%", text: value)
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .onSubmit {
+                        Task {
+                            await appModel.saveProtectionPercent(
+                                key: key,
+                                currentValue: value.wrappedValue,
+                                assign: { value.wrappedValue = $0 }
+                            )
+                        }
+                    }
+
+                Button("Save") {
+                    Task {
+                        await appModel.saveProtectionPercent(
+                            key: key,
+                            currentValue: value.wrappedValue,
+                            assign: { value.wrappedValue = $0 }
+                        )
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
+        }
     }
 
     private var backgroundCard: some View {

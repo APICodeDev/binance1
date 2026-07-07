@@ -16,6 +16,12 @@ import {
   normalizePositionManagementMode,
   resolveBitgetCloseExecution,
 } from '@/lib/positions';
+import {
+  buildProtectionThresholdSettingsSnapshot,
+  PROTECTION_SETTING_DEFINITIONS,
+  resolveProtectionThresholdSettingsFromMap,
+  type ProtectionThresholdSettings,
+} from '@/lib/protectionSettings';
 import { attachTakeProfitUpgradeMeta } from '@/lib/positionSignals';
 import { notifyPositiveClose } from '@/lib/ntfy';
 import { notifyAllActiveDevices } from '@/lib/pushNotifications';
@@ -73,6 +79,7 @@ const DASHBOARD_SETTING_KEYS = [
   'exhaustion_guard_enabled',
   'take_profit_auto_close_enabled',
   'reverse_on_opposite_signal_enabled',
+  ...PROTECTION_SETTING_DEFINITIONS.map((definition) => definition.key),
 ] as const;
 
 type DashboardMode = 'demo' | 'live';
@@ -132,6 +139,7 @@ async function buildDashboardSnapshot(mode: DashboardMode) {
       exhaustion_guard_enabled: settingsMap.exhaustion_guard_enabled || '1',
       take_profit_auto_close_enabled: settingsMap.take_profit_auto_close_enabled || '0',
       reverse_on_opposite_signal_enabled: settingsMap.reverse_on_opposite_signal_enabled || '1',
+      ...buildProtectionThresholdSettingsSnapshot(resolveProtectionThresholdSettingsFromMap(settingsMap)),
     },
   };
 }
@@ -156,16 +164,29 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
   }
 
   const positions = await prisma.position.findMany({ where: { status: 'open' } });
-  const [exhaustionGuardSetting, takeProfitAutoCloseSetting] = await Promise.all([
+  const [exhaustionGuardSetting, takeProfitAutoCloseSetting, protectionSettingsRows] = await Promise.all([
     prisma.setting.findUnique({
       where: { key: 'exhaustion_guard_enabled' },
     }),
     prisma.setting.findUnique({
       where: { key: 'take_profit_auto_close_enabled' },
     }),
+    prisma.setting.findMany({
+      where: {
+        key: {
+          in: PROTECTION_SETTING_DEFINITIONS.map((definition) => definition.key),
+        },
+      },
+    }),
   ]);
   const exhaustionGuardEnabled = exhaustionGuardSetting?.value !== '0';
   const takeProfitAutoCloseEnabled = takeProfitAutoCloseSetting?.value === '1';
+  const protectionSettings = resolveProtectionThresholdSettingsFromMap(
+    protectionSettingsRows.reduce<Record<string, string>>((acc, row) => {
+      acc[row.key] = row.value;
+      return acc;
+    }, {})
+  );
 
   if (positions.length === 0) {
     return ok({ results: [], snapshot: await buildDashboardSnapshot(dashboardMode) }, 'No open positions to monitor.');
@@ -212,13 +233,43 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     });
   };
 
-  const getSelfManagedTrailingStep = (marketMovePercent: number) => {
-    if (marketMovePercent < 1.25) {
+  const getSelfManagedTrailingStep = (marketMovePercent: number, settings: ProtectionThresholdSettings) => {
+    if (marketMovePercent < settings.selfTrailingActivationPercent) {
       return null;
     }
 
-    const lockedPercent = Math.floor((marketMovePercent - 0.25) + 1e-9);
-    return lockedPercent >= 1 ? lockedPercent : null;
+    const stepsCrossed = Math.floor(
+      ((marketMovePercent - settings.selfTrailingActivationPercent) / settings.selfTrailingStepPercent) + 1e-9
+    );
+    const firstLockedPercent = Math.max(
+      settings.selfBreakEvenActivationPercent,
+      settings.selfTrailingActivationPercent - 0.25
+    );
+    const lockedPercent = firstLockedPercent + (stepsCrossed * settings.selfTrailingStepPercent);
+    return lockedPercent >= settings.selfBreakEvenActivationPercent ? lockedPercent : null;
+  };
+
+  const getAutoTrailingStopPrice = (
+    entryPrice: number,
+    marketMovePercent: number,
+    side: 'buy' | 'sell',
+    settings: ProtectionThresholdSettings
+  ) => {
+    if (marketMovePercent < settings.autoTrailingActivationPercent) {
+      return null;
+    }
+
+    const stepsCrossed = Math.floor(
+      ((marketMovePercent - settings.autoTrailingActivationPercent) / settings.autoTrailingStepPercent) + 1e-9
+    );
+    const crossedStep = settings.autoTrailingActivationPercent + (stepsCrossed * settings.autoTrailingStepPercent);
+    const crossedPrice = side === 'buy'
+      ? entryPrice * (1 + crossedStep / 100)
+      : entryPrice * (1 - crossedStep / 100);
+
+    return side === 'buy'
+      ? crossedPrice * (1 - settings.autoTrailingStepPercent / 100)
+      : crossedPrice * (1 + settings.autoTrailingStepPercent / 100);
   };
 
   const getAdaptiveContextForPosition = async (pos: any, mode: 'demo' | 'live') => {
@@ -449,7 +500,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     }
 
     if (!exhaustionTriggered && pos.positionType === 'buy') {
-      if (trendManaged && effectiveMovePercent > 1) {
+      if (trendManaged && effectiveMovePercent >= protectionSettings.trendBreakEvenActivationPercent) {
         const targetSlPrice = pos.entryPrice * (1 + entryComm) / (1 - comm);
         if (targetSlPrice > pos.stopLoss) {
           const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
@@ -475,7 +526,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
           results.push(`SL_UPDATE (${mode}): ${symbol} adaptive break-even -> ${adaptiveProtection.stopPrice}`);
         }
       } else if (effectiveSelfManaged) {
-        const trailingStep = getSelfManagedTrailingStep(marketMovePercent);
+        const trailingStep = getSelfManagedTrailingStep(marketMovePercent, protectionSettings);
         if (trailingStep !== null) {
           const targetSlPrice = pos.entryPrice * (1 + (trailingStep / 100));
           if (targetSlPrice > pos.stopLoss) {
@@ -485,7 +536,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
               results.push(`SL_UPDATE (${mode}): ${symbol} self trailing -> ${targetSlPrice}`);
             }
           }
-        } else if (marketMovePercent >= 0.5) {
+        } else if (marketMovePercent >= protectionSettings.selfBreakEvenActivationPercent) {
           const targetSlPrice = pos.entryPrice * (1 + entryComm) / (1 - comm);
           if (targetSlPrice > pos.stopLoss) {
             const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
@@ -495,7 +546,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
             }
           }
         }
-      } else if (breakEvenOnlyEnabled && marketMovePercent >= 0.5) {
+      } else if (breakEvenOnlyEnabled && marketMovePercent >= protectionSettings.selfBreakEvenActivationPercent) {
         const targetSlPrice = pos.entryPrice * (1 + entryComm) / (1 - comm);
         if (targetSlPrice > pos.stopLoss) {
           const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
@@ -506,18 +557,16 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
             results.push(`SL_SYNC_WARNING (${mode}): ${symbol} breakeven -> ${slResp.message}`);
           }
         }
-      } else if (autoManaged && trailingEnabled && marketMovePercent >= 1) {
-        const crossedStep = Math.floor(marketMovePercent / 0.5) * 0.5;
-        const crossedPrice = pos.entryPrice * (1 + crossedStep / 100);
-        const targetSlPrice = crossedPrice * (1 - 0.5 / 100);
-        if (targetSlPrice > pos.stopLoss) {
+      } else if (autoManaged && trailingEnabled) {
+        const targetSlPrice = getAutoTrailingStopPrice(pos.entryPrice, marketMovePercent, 'buy', protectionSettings);
+        if (typeof targetSlPrice === 'number' && targetSlPrice > pos.stopLoss) {
           const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
           if (slResp.ok) {
             newSl = targetSlPrice;
             results.push(`SL_UPDATE (${mode}): ${symbol} trailing -> ${targetSlPrice}`);
           }
         }
-      } else if (autoManaged && breakEvenEnabled && marketMovePercent >= 0.5) {
+      } else if (autoManaged && breakEvenEnabled && marketMovePercent >= protectionSettings.autoBreakEvenActivationPercent) {
         const targetSlPrice = pos.entryPrice * (1 + entryComm) / (1 - comm);
         if (targetSlPrice > pos.stopLoss) {
           const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
@@ -547,7 +596,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
         }
       }
     } else if (!exhaustionTriggered) { // short
-      if (trendManaged && effectiveMovePercent > 1) {
+      if (trendManaged && effectiveMovePercent >= protectionSettings.trendBreakEvenActivationPercent) {
         const targetSlPrice = pos.entryPrice * (1 - entryComm) / (1 + comm);
         if (targetSlPrice < pos.stopLoss) {
           const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
@@ -573,7 +622,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
           results.push(`SL_UPDATE (${mode}): ${symbol} adaptive break-even -> ${adaptiveProtection.stopPrice}`);
         }
       } else if (effectiveSelfManaged) {
-        const trailingStep = getSelfManagedTrailingStep(marketMovePercent);
+        const trailingStep = getSelfManagedTrailingStep(marketMovePercent, protectionSettings);
         if (trailingStep !== null) {
           const targetSlPrice = pos.entryPrice * (1 - (trailingStep / 100));
           if (targetSlPrice < pos.stopLoss) {
@@ -583,7 +632,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
               results.push(`SL_UPDATE (${mode}): ${symbol} self trailing -> ${targetSlPrice}`);
             }
           }
-        } else if (marketMovePercent >= 0.5) {
+        } else if (marketMovePercent >= protectionSettings.selfBreakEvenActivationPercent) {
           const targetSlPrice = pos.entryPrice * (1 - entryComm) / (1 + comm);
           if (targetSlPrice < pos.stopLoss) {
             const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
@@ -593,7 +642,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
             }
           }
         }
-      } else if (breakEvenOnlyEnabled && marketMovePercent >= 0.5) {
+      } else if (breakEvenOnlyEnabled && marketMovePercent >= protectionSettings.selfBreakEvenActivationPercent) {
         const targetSlPrice = pos.entryPrice * (1 - entryComm) / (1 + comm);
         if (targetSlPrice < pos.stopLoss) {
           const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
@@ -604,18 +653,16 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
             results.push(`SL_SYNC_WARNING (${mode}): ${symbol} breakeven -> ${slResp.message}`);
           }
         }
-      } else if (autoManaged && trailingEnabled && marketMovePercent >= 1) {
-        const crossedStep = Math.floor(marketMovePercent / 0.5) * 0.5;
-        const crossedPrice = pos.entryPrice * (1 - crossedStep / 100);
-        const targetSlPrice = crossedPrice * (1 + 0.5 / 100);
-        if (targetSlPrice < pos.stopLoss) {
+      } else if (autoManaged && trailingEnabled) {
+        const targetSlPrice = getAutoTrailingStopPrice(pos.entryPrice, marketMovePercent, 'sell', protectionSettings);
+        if (typeof targetSlPrice === 'number' && targetSlPrice < pos.stopLoss) {
           const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
           if (slResp.ok) {
             newSl = targetSlPrice;
             results.push(`SL_UPDATE (${mode}): ${symbol} trailing -> ${targetSlPrice}`);
           }
         }
-      } else if (autoManaged && breakEvenEnabled && marketMovePercent >= 0.5) {
+      } else if (autoManaged && breakEvenEnabled && marketMovePercent >= protectionSettings.autoBreakEvenActivationPercent) {
         const targetSlPrice = pos.entryPrice * (1 - entryComm) / (1 + comm);
         if (targetSlPrice < pos.stopLoss) {
           const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);

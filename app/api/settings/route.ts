@@ -5,12 +5,15 @@ import { ok } from '@/lib/apiResponse';
 import { requireAuth, requireRole } from '@/lib/auth';
 import { writeAuditLog } from '@/lib/audit';
 import { prisma } from '@/lib/db';
+import {
+  buildProtectionThresholdSettingsSnapshot,
+  normalizePercentString,
+  parsePositivePercentSetting,
+  PROTECTION_SETTING_DEFINITIONS,
+  resolveProtectionThresholdSettingsFromMap,
+} from '@/lib/protectionSettings';
 
 const DEFAULT_API_LEGACY_STOP_PERCENT = '1.2';
-
-function normalizePercentString(value: unknown) {
-  return String(value ?? '').trim().replace(',', '.');
-}
 
 function resolveStoredLegacyStopPercent(rawValue?: string | null) {
   const parsed = Number.parseFloat(normalizePercentString(rawValue));
@@ -39,6 +42,19 @@ export async function GET(req: NextRequest) {
   const exhaustionGuardEnabled = await prisma.setting.findUnique({ where: { key: 'exhaustion_guard_enabled' } });
   const takeProfitAutoCloseEnabled = await prisma.setting.findUnique({ where: { key: 'take_profit_auto_close_enabled' } });
   const reverseOnOppositeSignalEnabled = await prisma.setting.findUnique({ where: { key: 'reverse_on_opposite_signal_enabled' } });
+  const protectionSettingsRows = await prisma.setting.findMany({
+    where: {
+      key: {
+        in: PROTECTION_SETTING_DEFINITIONS.map((definition) => definition.key),
+      },
+    },
+  });
+  const protectionSettings = resolveProtectionThresholdSettingsFromMap(
+    protectionSettingsRows.reduce<Record<string, string>>((acc, row) => {
+      acc[row.key] = row.value;
+      return acc;
+    }, {})
+  );
   
   return NextResponse.json({ 
     bot_enabled: botEnabled?.value || '1',
@@ -54,7 +70,8 @@ export async function GET(req: NextRequest) {
     api_legacy_stop_percent: resolveStoredLegacyStopPercent(apiLegacyStopPercent?.value),
     exhaustion_guard_enabled: exhaustionGuardEnabled?.value || '1',
     take_profit_auto_close_enabled: takeProfitAutoCloseEnabled?.value || '0',
-    reverse_on_opposite_signal_enabled: reverseOnOppositeSignalEnabled?.value || '1'
+    reverse_on_opposite_signal_enabled: reverseOnOppositeSignalEnabled?.value || '1',
+    ...buildProtectionThresholdSettingsSnapshot(protectionSettings),
   });
 }
 
@@ -76,6 +93,22 @@ export async function POST(req: NextRequest) {
     body.api_legacy_stop_percent = parsed.toString();
   }
 
+  for (const definition of PROTECTION_SETTING_DEFINITIONS) {
+    if (body[definition.key] === undefined) {
+      continue;
+    }
+
+    const parsed = parsePositivePercentSetting(body[definition.key]);
+    if (parsed === null) {
+      return NextResponse.json(
+        { error: true, message: `${definition.key} must be a positive number.` },
+        { status: 400 }
+      );
+    }
+
+    body[definition.key] = parsed.toString();
+  }
+
   if (body.trading_mode === 'live') {
     const roleCheck = await requireRole(req, ['admin']);
     if (!roleCheck.ok) {
@@ -95,7 +128,11 @@ export async function POST(req: NextRequest) {
     { key: 'api_legacy_stop_percent', value: body.api_legacy_stop_percent },
     { key: 'exhaustion_guard_enabled', value: body.exhaustion_guard_enabled },
     { key: 'take_profit_auto_close_enabled', value: body.take_profit_auto_close_enabled },
-    { key: 'reverse_on_opposite_signal_enabled', value: body.reverse_on_opposite_signal_enabled }
+    { key: 'reverse_on_opposite_signal_enabled', value: body.reverse_on_opposite_signal_enabled },
+    ...PROTECTION_SETTING_DEFINITIONS.map((definition) => ({
+      key: definition.key,
+      value: body[definition.key],
+    })),
   ];
 
   for (const setting of settingsToUpdate) {

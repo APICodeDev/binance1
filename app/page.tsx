@@ -287,7 +287,27 @@ interface DashboardSettingsSnapshot {
   exhaustion_guard_enabled: string;
   take_profit_auto_close_enabled: string;
   reverse_on_opposite_signal_enabled: string;
+  auto_break_even_activation_percent: string;
+  auto_trailing_activation_percent: string;
+  auto_trailing_step_percent: string;
+  self_break_even_activation_percent: string;
+  self_trailing_activation_percent: string;
+  self_trailing_step_percent: string;
+  trend_break_even_activation_percent: string;
 }
+
+type ProtectionSettingsForm = Pick<
+  DashboardSettingsSnapshot,
+  | 'auto_break_even_activation_percent'
+  | 'auto_trailing_activation_percent'
+  | 'auto_trailing_step_percent'
+  | 'self_break_even_activation_percent'
+  | 'self_trailing_activation_percent'
+  | 'self_trailing_step_percent'
+  | 'trend_break_even_activation_percent'
+>;
+
+type ProtectionSettingsDirtyState = Record<keyof ProtectionSettingsForm, boolean>;
 
 interface DashboardSnapshotPayload {
   open: Position[];
@@ -320,8 +340,63 @@ interface MonitorResponsePayload {
 interface LiveSettingsReloadPayload {
   exhaustionGuardEnabled: boolean;
   takeProfitAutoCloseEnabled: boolean;
+  protection?: Partial<Record<keyof ProtectionSettingsForm, number>>;
   at: number;
 }
+
+const DEFAULT_PROTECTION_SETTINGS_FORM: ProtectionSettingsForm = {
+  auto_break_even_activation_percent: '0.5',
+  auto_trailing_activation_percent: '1',
+  auto_trailing_step_percent: '0.5',
+  self_break_even_activation_percent: '0.5',
+  self_trailing_activation_percent: '1.25',
+  self_trailing_step_percent: '1',
+  trend_break_even_activation_percent: '1',
+};
+
+const EMPTY_PROTECTION_DIRTY_STATE: ProtectionSettingsDirtyState = {
+  auto_break_even_activation_percent: false,
+  auto_trailing_activation_percent: false,
+  auto_trailing_step_percent: false,
+  self_break_even_activation_percent: false,
+  self_trailing_activation_percent: false,
+  self_trailing_step_percent: false,
+  trend_break_even_activation_percent: false,
+};
+
+const PROTECTION_SETTING_GROUPS: Array<{
+  title: string;
+  description: string;
+  note?: string;
+  items: Array<{ key: keyof ProtectionSettingsForm; label: string }>;
+}> = [
+  {
+    title: 'Auto',
+    description: 'Gestion automatica: porcentaje de breakeven, primer trailing y distancia entre siguientes avances del trailing.',
+    items: [
+      { key: 'auto_break_even_activation_percent', label: 'Breakeven %' },
+      { key: 'auto_trailing_activation_percent', label: 'Primer trailing %' },
+      { key: 'auto_trailing_step_percent', label: 'Siguientes trailing %' },
+    ],
+  },
+  {
+    title: 'Self / Strat / Fixed',
+    description: 'Umbrales usados por Self, Strat y Fixed para activar el breakeven; si hay trailing activo en Self o Strat, tambien usa estos valores.',
+    items: [
+      { key: 'self_break_even_activation_percent', label: 'Breakeven %' },
+      { key: 'self_trailing_activation_percent', label: 'Primer trailing %' },
+      { key: 'self_trailing_step_percent', label: 'Siguientes trailing %' },
+    ],
+  },
+  {
+    title: 'Trend',
+    description: 'Solo aplica cuando Trend trabaja sin trailing. Si Trend lleva trailing activo, usa la configuracion de Self.',
+    note: 'Trend con trailing activo reutiliza Self / Strat / Fixed.',
+    items: [
+      { key: 'trend_break_even_activation_percent', label: 'Breakeven %' },
+    ],
+  },
+];
 
 interface LivePositionMarketUpdatePayload {
   positionId: number;
@@ -795,6 +870,10 @@ export default function Dashboard() {
   const [exhaustionGuardEnabled, setExhaustionGuardEnabled] = useState(false);
   const [takeProfitAutoCloseEnabled, setTakeProfitAutoCloseEnabled] = useState(false);
   const [reverseOnOppositeSignalEnabled, setReverseOnOppositeSignalEnabled] = useState(true);
+  const [protectionSettings, setProtectionSettings] = useState<ProtectionSettingsForm>(DEFAULT_PROTECTION_SETTINGS_FORM);
+  const [savedProtectionSettings, setSavedProtectionSettings] = useState<ProtectionSettingsForm>(DEFAULT_PROTECTION_SETTINGS_FORM);
+  const [protectionDirty, setProtectionDirty] = useState<ProtectionSettingsDirtyState>(EMPTY_PROTECTION_DIRTY_STATE);
+  const [savingProtectionKey, setSavingProtectionKey] = useState<keyof ProtectionSettingsForm | null>(null);
   const [availableSounds, setAvailableSounds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -1110,6 +1189,25 @@ export default function Dashboard() {
     setExhaustionGuardEnabled(settings.exhaustion_guard_enabled === '1');
     setTakeProfitAutoCloseEnabled(settings.take_profit_auto_close_enabled === '1');
     setReverseOnOppositeSignalEnabled(settings.reverse_on_opposite_signal_enabled !== '0');
+    const incomingProtectionSettings = {
+      auto_break_even_activation_percent: settings.auto_break_even_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.auto_break_even_activation_percent,
+      auto_trailing_activation_percent: settings.auto_trailing_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.auto_trailing_activation_percent,
+      auto_trailing_step_percent: settings.auto_trailing_step_percent || DEFAULT_PROTECTION_SETTINGS_FORM.auto_trailing_step_percent,
+      self_break_even_activation_percent: settings.self_break_even_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.self_break_even_activation_percent,
+      self_trailing_activation_percent: settings.self_trailing_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.self_trailing_activation_percent,
+      self_trailing_step_percent: settings.self_trailing_step_percent || DEFAULT_PROTECTION_SETTINGS_FORM.self_trailing_step_percent,
+      trend_break_even_activation_percent: settings.trend_break_even_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.trend_break_even_activation_percent,
+    };
+    setSavedProtectionSettings(incomingProtectionSettings);
+    setProtectionSettings((current) => {
+      const next = { ...current };
+      for (const key of Object.keys(incomingProtectionSettings) as Array<keyof ProtectionSettingsForm>) {
+        if (!protectionDirty[key]) {
+          next[key] = incomingProtectionSettings[key];
+        }
+      }
+      return next;
+    });
 
     if (settings.last_entry_error) {
       try {
@@ -1137,7 +1235,7 @@ export default function Dashboard() {
     }
 
     setLastSyncAt(new Date().toISOString());
-  }, [apiLegacyStopPercentDirty]);
+  }, [apiLegacyStopPercentDirty, protectionDirty]);
 
   useEffect(() => {
     openPositionIdsRef.current = openPositions
@@ -1149,8 +1247,29 @@ export default function Dashboard() {
   const applyLiveSettingsReload = useCallback((payload: LiveSettingsReloadPayload) => {
     setExhaustionGuardEnabled(payload.exhaustionGuardEnabled);
     setTakeProfitAutoCloseEnabled(payload.takeProfitAutoCloseEnabled);
+    if (payload.protection) {
+      const protectionSnapshot = payload.protection;
+      setSavedProtectionSettings((current) => {
+        const next = { ...current };
+        for (const [key, value] of Object.entries(protectionSnapshot)) {
+          if (typeof value === 'number') {
+            next[key as keyof ProtectionSettingsForm] = value.toString();
+          }
+        }
+        return next;
+      });
+      setProtectionSettings((current) => {
+        const next = { ...current };
+        for (const [key, value] of Object.entries(protectionSnapshot)) {
+          if (typeof value === 'number' && !protectionDirty[key as keyof ProtectionSettingsForm]) {
+            next[key as keyof ProtectionSettingsForm] = value.toString();
+          }
+        }
+        return next;
+      });
+    }
     setLastSyncAt(new Date(payload.at).toISOString());
-  }, []);
+  }, [protectionDirty]);
 
   const applyLivePositionMarketUpdate = useCallback((payload: LivePositionMarketUpdatePayload) => {
     if (payload.tradingMode !== tradingMode) {
@@ -1214,6 +1333,13 @@ export default function Dashboard() {
           exhaustion_guard_enabled: settings.exhaustion_guard_enabled || '1',
           take_profit_auto_close_enabled: settings.take_profit_auto_close_enabled || '0',
           reverse_on_opposite_signal_enabled: settings.reverse_on_opposite_signal_enabled || '1',
+          auto_break_even_activation_percent: settings.auto_break_even_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.auto_break_even_activation_percent,
+          auto_trailing_activation_percent: settings.auto_trailing_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.auto_trailing_activation_percent,
+          auto_trailing_step_percent: settings.auto_trailing_step_percent || DEFAULT_PROTECTION_SETTINGS_FORM.auto_trailing_step_percent,
+          self_break_even_activation_percent: settings.self_break_even_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.self_break_even_activation_percent,
+          self_trailing_activation_percent: settings.self_trailing_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.self_trailing_activation_percent,
+          self_trailing_step_percent: settings.self_trailing_step_percent || DEFAULT_PROTECTION_SETTINGS_FORM.self_trailing_step_percent,
+          trend_break_even_activation_percent: settings.trend_break_even_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.trend_break_even_activation_percent,
         },
       });
     } catch (error) {
@@ -1785,6 +1911,50 @@ export default function Dashboard() {
 
     return () => window.clearTimeout(timeoutId);
   }, [apiLegacyStopPercent, apiLegacyStopPercentDirty]);
+
+  useEffect(() => {
+    if (currentView === 'admin') {
+      return;
+    }
+
+    const hasDirtyProtectionValues = Object.values(protectionDirty).some(Boolean);
+    if (!hasDirtyProtectionValues) {
+      return;
+    }
+
+    setProtectionSettings(savedProtectionSettings);
+    setProtectionDirty(EMPTY_PROTECTION_DIRTY_STATE);
+  }, [currentView, protectionDirty, savedProtectionSettings]);
+
+  const saveProtectionSetting = async (key: keyof ProtectionSettingsForm) => {
+    const value = protectionSettings[key];
+    const parsed = parsePositivePercentInput(value);
+    if (parsed === null) {
+      setErrorPopup('Introduce un numero positivo para guardar ese porcentaje.');
+      return;
+    }
+
+    try {
+      setSavingProtectionKey(key);
+      await apiClient.updateSettings({ [key]: parsed.toString() });
+      setProtectionSettings((current) => ({
+        ...current,
+        [key]: parsed.toString(),
+      }));
+      setSavedProtectionSettings((current) => ({
+        ...current,
+        [key]: parsed.toString(),
+      }));
+      setProtectionDirty((current) => ({
+        ...current,
+        [key]: false,
+      }));
+    } catch (error) {
+      setErrorPopup(getApiErrorMessage(error, 'Unable to update protection settings.'));
+    } finally {
+      setSavingProtectionKey(null);
+    }
+  };
 
   const submitNewPosition = async () => {
     try {
@@ -2492,6 +2662,69 @@ export default function Dashboard() {
                           Introduce un numero positivo para guardar el porcentaje.
                         </p>
                       ) : null}
+
+                      <div className="mt-4 grid gap-4 xl:grid-cols-3">
+                        {PROTECTION_SETTING_GROUPS.map((group) => (
+                          <div key={group.title} className="rounded-2xl border border-slate-800 bg-slate-950/50 p-4">
+                            <p className="text-[10px] font-black uppercase tracking-[0.25em] text-emerald-300">{group.title}</p>
+                            <p className="mt-2 text-xs text-slate-400">{group.description}</p>
+                            <div className="mt-4 space-y-3">
+                              {group.items.map((item) => {
+                                const invalid = parsePositivePercentInput(protectionSettings[item.key]) === null;
+                                const saving = savingProtectionKey === item.key;
+                                return (
+                                  <div key={item.key} className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                                    <div className="flex items-center justify-between gap-3">
+                                      <span className="text-xs font-bold text-slate-200">{item.label}</span>
+                                      <div className="flex items-center gap-2">
+                                        <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2">
+                                          <input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={protectionSettings[item.key]}
+                                            onChange={(e) => {
+                                              const nextValue = normalizePercentInput(e.target.value);
+                                              setProtectionSettings((current) => ({
+                                                ...current,
+                                                [item.key]: nextValue,
+                                              }));
+                                              setProtectionDirty((current) => ({
+                                                ...current,
+                                                [item.key]: true,
+                                              }));
+                                            }}
+                                            className="w-16 bg-transparent border-none p-0 m-0 text-sm font-black text-emerald-300 outline-none"
+                                          />
+                                          <span className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">%</span>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => void saveProtectionSetting(item.key)}
+                                          disabled={saving || invalid}
+                                          className={cn(
+                                            "rounded-xl border px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] transition-colors",
+                                            saving || invalid
+                                              ? "border-slate-800 bg-slate-950/40 text-slate-600"
+                                              : "border-emerald-500/40 bg-emerald-500/10 text-emerald-200 hover:border-emerald-300 hover:text-emerald-100"
+                                          )}
+                                        >
+                                          {saving ? 'Saving...' : 'Save'}
+                                        </button>
+                                      </div>
+                                    </div>
+                                    {invalid ? (
+                                      <p className="mt-2 text-[11px] font-bold text-amber-300">Usa un numero positivo.</p>
+                                    ) : null}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            {group.note ? (
+                              <p className="mt-3 text-[11px] font-bold text-slate-500">{group.note}</p>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </div>

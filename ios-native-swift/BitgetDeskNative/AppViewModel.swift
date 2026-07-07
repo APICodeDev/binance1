@@ -182,6 +182,13 @@ final class AppViewModel: ObservableObject {
     @Published var apiLegacyStopPercent = "1.2"
     @Published var exhaustionGuardEnabled = true
     @Published var takeProfitAutoCloseEnabled = false
+    @Published var autoBreakEvenActivationPercent = "0.5"
+    @Published var autoTrailingActivationPercent = "1"
+    @Published var autoTrailingStepPercent = "0.5"
+    @Published var selfBreakEvenActivationPercent = "0.5"
+    @Published var selfTrailingActivationPercent = "1.25"
+    @Published var selfTrailingStepPercent = "1"
+    @Published var trendBreakEvenActivationPercent = "1"
     @Published var openPositions: [Position] = []
     @Published var closedPositions: [Position] = []
     @Published var totalPnl: Double = 0
@@ -530,6 +537,13 @@ final class AppViewModel: ObservableObject {
             apiLegacyStopPercent = settings.api_legacy_stop_percent
             exhaustionGuardEnabled = settings.exhaustion_guard_enabled != "0"
             takeProfitAutoCloseEnabled = settings.take_profit_auto_close_enabled == "1"
+            autoBreakEvenActivationPercent = settings.auto_break_even_activation_percent
+            autoTrailingActivationPercent = settings.auto_trailing_activation_percent
+            autoTrailingStepPercent = settings.auto_trailing_step_percent
+            selfBreakEvenActivationPercent = settings.self_break_even_activation_percent
+            selfTrailingActivationPercent = settings.self_trailing_activation_percent
+            selfTrailingStepPercent = settings.self_trailing_step_percent
+            trendBreakEvenActivationPercent = settings.trend_break_even_activation_percent
             profitSoundEnabled = settings.profit_sound_enabled == "1"
             profitSoundFile = settings.profit_sound_file
             syncWidgetSnapshot()
@@ -633,6 +647,18 @@ final class AppViewModel: ObservableObject {
 
         apiLegacyStopPercent = String(parsed)
         await updateSetting(key: "api_legacy_stop_percent", value: String(parsed))
+    }
+
+    func saveProtectionPercent(key: String, currentValue: String, assign: @escaping (String) -> Void) async {
+        let normalized = currentValue.replacingOccurrences(of: ",", with: ".").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let parsed = Double(normalized), parsed > 0 else {
+            errorMessage = "Protection percent must be a positive number."
+            return
+        }
+
+        let value = String(parsed)
+        assign(value)
+        await updateSetting(key: key, value: value)
     }
 
     func runMonitor() async {
