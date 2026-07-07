@@ -91,7 +91,7 @@ export function isBaseTrailingEnabled(value: unknown) {
   }
 
   const managementMode = normalizePositionManagementMode(value);
-  return managementMode === 'auto' || managementMode === 'self' || managementMode === 'strat';
+  return managementMode === 'auto' || managementMode === 'self' || managementMode === 'strat' || managementMode === 'trend';
 }
 
 export function getManualTrailingOverride(position: ProtectionConfigPosition) {

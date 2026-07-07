@@ -769,8 +769,8 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
               ? 'Breakeven activo'
               : 'SL/TP fijos')
           : trendManaged
-            ? `OK_TREND (${mode}): #${pos.id} ${symbol} | Price: ${currentPrice} | PnL: ${profitPercent.toFixed(2)}% | Breakeven > 1%`
-          : `OK (${mode}): #${pos.id} ${symbol} | Price: ${currentPrice} | PnL: ${profitPercent.toFixed(2)}%`
+            ? `OK_TREND (${mode}): #${pos.id} ${symbol} | Price: ${currentPrice} | PnL: ${profitPercent.toFixed(2)}% | ${trailingEnabled ? 'Trailing activo' : 'Breakeven > 1%'}`
+            : `OK (${mode}): #${pos.id} ${symbol} | Price: ${currentPrice} | PnL: ${profitPercent.toFixed(2)}%`
       );
     }
   }

@@ -1349,6 +1349,7 @@ async function executeEntry(
     }
 
     const takeProfitManagedOnExchange = shouldPlaceNativeTakeProfit && !initialTakeProfitPending && bitgetOrderSuccess(tpResponse);
+    const defaultTrailingEnabledOnOpen = stratManaged || trendManaged;
 
     const createdPosition = await prisma.position.create({
       data: {
@@ -1366,7 +1367,7 @@ async function executeEntry(
         origin,
         timeframe,
         stratBreakEvenEnabled: stratManaged,
-        stratTrailingEnabled: stratManaged,
+        stratTrailingEnabled: defaultTrailingEnabledOnOpen,
         commission: (executionMode === 'maker' ? makerFeeRate : takerFeeRate) as any,
         pricePrecision,
       },
@@ -1435,7 +1436,7 @@ async function executeEntry(
         initialTakeProfitOrderPlaced: takeProfitManagedOnExchange,
         initialTakeProfitExchangeManaged: takeProfitManagedOnExchange,
         stratBreakEvenEnabledOnOpen: stratManaged,
-        stratTrailingEnabledOnOpen: stratManaged,
+        stratTrailingEnabledOnOpen: defaultTrailingEnabledOnOpen,
         initialTakeProfitPending,
         initialTakeProfitAttempts,
         initialStopAttempts,
@@ -1535,7 +1536,7 @@ async function executeEntry(
       },
       stratControls: {
         breakEvenEnabled: stratManaged,
-        trailingEnabled: stratManaged,
+        trailingEnabled: defaultTrailingEnabledOnOpen,
       },
     });
   } catch (error: any) {

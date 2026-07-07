@@ -726,7 +726,7 @@ function isBaseTrailingEnabledForPosition(position: Pick<Position, 'managementMo
   }
 
   const normalized = normalizeManagementMode(position.managementMode);
-  return normalized === 'auto' || normalized === 'self' || normalized === 'strat';
+  return normalized === 'auto' || normalized === 'self' || normalized === 'strat' || normalized === 'trend';
 }
 
 function isBreakEvenEffectivelyEnabledForPosition(position: Pick<Position, 'managementMode' | 'stratBreakEvenEnabled' | 'manualBreakEvenEnabled' | 'manualTrailingOverride' | 'stratTrailingEnabled'>) {
