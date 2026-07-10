@@ -150,9 +150,10 @@ struct AdminView: View {
                     }
                 ))
 
+                protectionRow(title: "Trend Trailing %", key: "trend_trailing_percent", value: $appModel.trendTrailingPercent)
                 protectionRow(title: "Trend Breakeven %", key: "trend_break_even_activation_percent", value: $appModel.trendBreakEvenActivationPercent)
 
-                Text("Trend con trailing activo reutiliza los valores de Self / Strat / Fixed. Si apagas el breakeven de Trend, solo actuara el trailing en las operaciones que lo tengan activo.")
+                Text("Trend usa su propio trailing global desde Admin. Si apagas el breakeven de Trend, solo actuara el trailing en las operaciones que lo tengan activo.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -45,7 +45,7 @@ struct PositionCardView: View {
             }
 
             if isTrendManaged {
-                Text("Trend: usa el SL del webhook si es valido; si no, cae al legacy. Trailing activo por defecto y configurable por operacion. Sin TP automatico.")
+                Text("Trend: usa el SL del webhook si es valido; si no, cae al legacy. Trailing activo por defecto, configurable por operacion y con valor global \(appModel.trendTrailingPercent)%. Sin TP automatico.")
                     .font(.caption.bold())
                     .foregroundStyle(.cyan)
                     .padding(.horizontal, 12)

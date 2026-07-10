@@ -1,5 +1,6 @@
 export const PROTECTION_SETTING_DEFINITIONS = [
   { key: 'trend_break_even_enabled', defaultValue: '1' },
+  { key: 'trend_trailing_percent', defaultValue: '0.5' },
   { key: 'auto_break_even_activation_percent', defaultValue: '0.5' },
   { key: 'auto_trailing_activation_percent', defaultValue: '1' },
   { key: 'auto_trailing_step_percent', defaultValue: '0.5' },
@@ -13,6 +14,7 @@ export type ProtectionSettingKey = typeof PROTECTION_SETTING_DEFINITIONS[number]
 
 export type ProtectionThresholdSettings = {
   trendBreakEvenEnabled: boolean;
+  trendTrailingPercent: number;
   autoBreakEvenActivationPercent: number;
   autoTrailingActivationPercent: number;
   autoTrailingStepPercent: number;
@@ -24,6 +26,7 @@ export type ProtectionThresholdSettings = {
 
 const PROTECTION_SETTING_KEY_MAP: Record<ProtectionSettingKey, keyof ProtectionThresholdSettings> = {
   trend_break_even_enabled: 'trendBreakEvenEnabled',
+  trend_trailing_percent: 'trendTrailingPercent',
   auto_break_even_activation_percent: 'autoBreakEvenActivationPercent',
   auto_trailing_activation_percent: 'autoTrailingActivationPercent',
   auto_trailing_step_percent: 'autoTrailingStepPercent',
@@ -35,6 +38,7 @@ const PROTECTION_SETTING_KEY_MAP: Record<ProtectionSettingKey, keyof ProtectionT
 
 export const DEFAULT_PROTECTION_THRESHOLD_SETTINGS: ProtectionThresholdSettings = {
   trendBreakEvenEnabled: true,
+  trendTrailingPercent: 0.5,
   autoBreakEvenActivationPercent: 0.5,
   autoTrailingActivationPercent: 1,
   autoTrailingStepPercent: 0.5,
@@ -86,6 +90,7 @@ export function resolveProtectionThresholdSettingsFromMap(
 export function buildProtectionThresholdSettingsSnapshot(settings: ProtectionThresholdSettings) {
   return {
     trend_break_even_enabled: settings.trendBreakEvenEnabled ? '1' : '0',
+    trend_trailing_percent: settings.trendTrailingPercent.toString(),
     auto_break_even_activation_percent: settings.autoBreakEvenActivationPercent.toString(),
     auto_trailing_activation_percent: settings.autoTrailingActivationPercent.toString(),
     auto_trailing_step_percent: settings.autoTrailingStepPercent.toString(),

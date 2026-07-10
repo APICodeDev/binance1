@@ -151,6 +151,27 @@ const getSelfManagedTrailingStep = (marketMovePercent: number, settings: Protect
   return lockedPercent >= settings.selfBreakEvenActivationPercent ? lockedPercent : null;
 };
 
+const getTrendTrailingStopPrice = (
+  entryPrice: number,
+  marketMovePercent: number,
+  side: 'buy' | 'sell',
+  settings: ProtectionThresholdSettings
+) => {
+  if (marketMovePercent < settings.trendTrailingPercent) {
+    return null;
+  }
+
+  const stepsCrossed = Math.floor((marketMovePercent / settings.trendTrailingPercent) + 1e-9);
+  const crossedStep = stepsCrossed * settings.trendTrailingPercent;
+  const crossedPrice = side === 'buy'
+    ? entryPrice * (1 + crossedStep / 100)
+    : entryPrice * (1 - crossedStep / 100);
+
+  return side === 'buy'
+    ? crossedPrice * (1 - settings.trendTrailingPercent / 100)
+    : crossedPrice * (1 + settings.trendTrailingPercent / 100);
+};
+
 const getAutoTrailingStopPrice = (
   entryPrice: number,
   marketMovePercent: number,
@@ -277,7 +298,7 @@ const computeCandidateStopLoss = (position: Position, currentPrice: number, adap
   const selfManaged = managementMode === 'self' && !fixedManaged;
   const stratManaged = managementMode === 'strat';
   const autoManaged = managementMode === 'auto';
-  const effectiveSelfManaged = trailingEnabled && (!autoManaged || fixedManaged || trendManaged);
+  const effectiveSelfManaged = trailingEnabled && (!autoManaged || fixedManaged) && !trendManaged;
   const breakEvenOnlyEnabled = breakEvenEnabled && !trailingEnabled;
   const commission = getPositionCommission(position);
   const protection = engineSettings.protection;
@@ -307,15 +328,19 @@ const computeCandidateStopLoss = (position: Position, currentPrice: number, adap
     context: adaptiveContext,
   });
 
-  if (adaptiveProtection && trailingEnabled) {
+  if (adaptiveProtection && trailingEnabled && !trendManaged) {
     return adaptiveProtection.stopPrice;
   }
 
-  if (adaptiveProtection && breakEvenEnabled && adaptiveProtection.reason === 'break_even') {
+  if (adaptiveProtection && breakEvenEnabled && adaptiveProtection.reason === 'break_even' && !trendManaged) {
     return adaptiveProtection.stopPrice;
   }
 
   if (position.positionType === 'buy') {
+    if (trendManaged && trailingEnabled) {
+      return getTrendTrailingStopPrice(position.entryPrice, effectiveMovePercent, 'buy', protection);
+    }
+
     if (effectiveSelfManaged) {
       const trailingStep = getSelfManagedTrailingStep(effectiveMovePercent, protection);
       if (trailingStep !== null) {
@@ -340,6 +365,10 @@ const computeCandidateStopLoss = (position: Position, currentPrice: number, adap
     }
 
     return null;
+  }
+
+  if (trendManaged && trailingEnabled) {
+    return getTrendTrailingStopPrice(position.entryPrice, effectiveMovePercent, 'sell', protection);
   }
 
   if (effectiveSelfManaged) {

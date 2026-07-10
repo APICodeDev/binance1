@@ -79,6 +79,7 @@ struct SettingsPayload: Codable {
     let exhaustion_guard_enabled: String
     let take_profit_auto_close_enabled: String
     let trend_break_even_enabled: String
+    let trend_trailing_percent: String
     let auto_break_even_activation_percent: String
     let auto_trailing_activation_percent: String
     let auto_trailing_step_percent: String

@@ -353,6 +353,7 @@ interface DashboardSettingsSnapshot {
   take_profit_auto_close_enabled: string;
   reverse_on_opposite_signal_enabled: string;
   trend_break_even_enabled: string;
+  trend_trailing_percent: string;
   auto_break_even_activation_percent: string;
   auto_trailing_activation_percent: string;
   auto_trailing_step_percent: string;
@@ -364,6 +365,7 @@ interface DashboardSettingsSnapshot {
 
 type ProtectionSettingsForm = Pick<
   DashboardSettingsSnapshot,
+  | 'trend_trailing_percent'
   | 'auto_break_even_activation_percent'
   | 'auto_trailing_activation_percent'
   | 'auto_trailing_step_percent'
@@ -411,6 +413,7 @@ interface LiveSettingsReloadPayload {
 }
 
 const DEFAULT_PROTECTION_SETTINGS_FORM: ProtectionSettingsForm = {
+  trend_trailing_percent: '0.5',
   auto_break_even_activation_percent: '0.5',
   auto_trailing_activation_percent: '1',
   auto_trailing_step_percent: '0.5',
@@ -421,6 +424,7 @@ const DEFAULT_PROTECTION_SETTINGS_FORM: ProtectionSettingsForm = {
 };
 
 const EMPTY_PROTECTION_DIRTY_STATE: ProtectionSettingsDirtyState = {
+  trend_trailing_percent: false,
   auto_break_even_activation_percent: false,
   auto_trailing_activation_percent: false,
   auto_trailing_step_percent: false,
@@ -456,9 +460,10 @@ const PROTECTION_SETTING_GROUPS: Array<{
   },
   {
     title: 'Trend',
-    description: 'Permite activar o desactivar el breakeven base de Trend. Si Trend lleva trailing activo, usa la configuracion de Self.',
-    note: 'Trend con trailing activo reutiliza Self / Strat / Fixed.',
+    description: 'Trend usa su propio trailing global y su breakeven solo cuando el trailing este apagado en esa operacion.',
+    note: 'El trailing de Trend arranca con el valor configurado aqui y por defecto queda en 0.5%.',
     items: [
+      { key: 'trend_trailing_percent', label: 'Trailing %' },
       { key: 'trend_break_even_activation_percent', label: 'Breakeven %' },
     ],
   },
@@ -1257,6 +1262,7 @@ export default function Dashboard() {
     setReverseOnOppositeSignalEnabled(settings.reverse_on_opposite_signal_enabled !== '0');
     setTrendBreakEvenEnabled(settings.trend_break_even_enabled !== '0');
     const incomingProtectionSettings = {
+      trend_trailing_percent: settings.trend_trailing_percent || DEFAULT_PROTECTION_SETTINGS_FORM.trend_trailing_percent,
       auto_break_even_activation_percent: settings.auto_break_even_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.auto_break_even_activation_percent,
       auto_trailing_activation_percent: settings.auto_trailing_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.auto_trailing_activation_percent,
       auto_trailing_step_percent: settings.auto_trailing_step_percent || DEFAULT_PROTECTION_SETTINGS_FORM.auto_trailing_step_percent,
@@ -1401,6 +1407,7 @@ export default function Dashboard() {
           take_profit_auto_close_enabled: settings.take_profit_auto_close_enabled || '0',
           reverse_on_opposite_signal_enabled: settings.reverse_on_opposite_signal_enabled || '1',
           trend_break_even_enabled: settings.trend_break_even_enabled || '1',
+          trend_trailing_percent: settings.trend_trailing_percent || DEFAULT_PROTECTION_SETTINGS_FORM.trend_trailing_percent,
           auto_break_even_activation_percent: settings.auto_break_even_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.auto_break_even_activation_percent,
           auto_trailing_activation_percent: settings.auto_trailing_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.auto_trailing_activation_percent,
           auto_trailing_step_percent: settings.auto_trailing_step_percent || DEFAULT_PROTECTION_SETTINGS_FORM.auto_trailing_step_percent,
@@ -2764,7 +2771,7 @@ export default function Dashboard() {
                         <div className="flex items-center justify-between gap-3">
                           <div>
                             <p className="text-sm font-semibold leading-tight text-slate-700 dark:text-slate-200">Trend Breakeven Enabled</p>
-                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Activa o desactiva el breakeven base de Trend cuando esa posicion no lleva trailing.</p>
+                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Activa o desactiva el breakeven base de Trend cuando esa posicion no lleva trailing. El trailing de Trend se configura arriba.</p>
                           </div>
                           <button
                             type="button"
@@ -3927,7 +3934,7 @@ function PositionCard({
           ? 'Strat Auto + BreakEven'
           : 'Strat Legacy')
     : trendManaged
-      ? 'Trend Signal/Legacy + BreakEven >1%'
+      ? (trailingEnabled ? 'Trend Signal/Legacy + Trend Trailing' : 'Trend Signal/Legacy + Trend BreakEven')
     : (stopAdjustedByApp ? 'Adapted By App' : `Legacy ${LEGACY_STOP_PERCENT}% Default`);
   const protectionModeLabel = trailingEnabled
     ? 'Breakeven + Trailing'

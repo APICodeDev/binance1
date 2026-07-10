@@ -249,6 +249,27 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     return lockedPercent >= settings.selfBreakEvenActivationPercent ? lockedPercent : null;
   };
 
+  const getTrendTrailingStopPrice = (
+    entryPrice: number,
+    marketMovePercent: number,
+    side: 'buy' | 'sell',
+    settings: ProtectionThresholdSettings
+  ) => {
+    if (marketMovePercent < settings.trendTrailingPercent) {
+      return null;
+    }
+
+    const stepsCrossed = Math.floor((marketMovePercent / settings.trendTrailingPercent) + 1e-9);
+    const crossedStep = stepsCrossed * settings.trendTrailingPercent;
+    const crossedPrice = side === 'buy'
+      ? entryPrice * (1 + crossedStep / 100)
+      : entryPrice * (1 - crossedStep / 100);
+
+    return side === 'buy'
+      ? crossedPrice * (1 - settings.trendTrailingPercent / 100)
+      : crossedPrice * (1 + settings.trendTrailingPercent / 100);
+  };
+
   const getAutoTrailingStopPrice = (
     entryPrice: number,
     marketMovePercent: number,
@@ -308,7 +329,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       trendBreakEvenEnabled: protectionSettings.trendBreakEvenEnabled,
     });
     const trailingEnabled = isTrailingEffectivelyEnabled(pos as any);
-    const effectiveSelfManaged = trailingEnabled && (fixedManaged || selfManaged || stratManaged || trendManaged);
+    const effectiveSelfManaged = trailingEnabled && (fixedManaged || selfManaged || stratManaged) && !trendManaged;
     const breakEvenOnlyEnabled = breakEvenEnabled && !trailingEnabled;
     const autoManaged = managementMode === 'auto';
     const realMap = mode === 'live' ? liveMap : demoMap;
@@ -516,17 +537,26 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
         }
       } else if (autoManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice >= takeProfit) {
         takeProfitTriggered = true;
-      } else if (adaptiveProtection && trailingEnabled && adaptiveProtection.stopPrice > pos.stopLoss) {
+      } else if (!trendManaged && adaptiveProtection && trailingEnabled && adaptiveProtection.stopPrice > pos.stopLoss) {
         const slResp = await syncStopOrder(symbol, positionContext.closeSide, adaptiveProtection.stopPrice, pos.quantity, mode, positionContext.closeTradeSide);
         if (slResp.ok) {
           newSl = adaptiveProtection.stopPrice;
           results.push(`SL_UPDATE (${mode}): ${symbol} adaptive ${adaptiveProtection.reason} -> ${adaptiveProtection.stopPrice}`);
         }
-      } else if (adaptiveProtection && breakEvenEnabled && adaptiveProtection.reason === 'break_even' && adaptiveProtection.stopPrice > pos.stopLoss) {
+      } else if (!trendManaged && adaptiveProtection && breakEvenEnabled && adaptiveProtection.reason === 'break_even' && adaptiveProtection.stopPrice > pos.stopLoss) {
         const slResp = await syncStopOrder(symbol, positionContext.closeSide, adaptiveProtection.stopPrice, pos.quantity, mode, positionContext.closeTradeSide);
         if (slResp.ok) {
           newSl = adaptiveProtection.stopPrice;
           results.push(`SL_UPDATE (${mode}): ${symbol} adaptive break-even -> ${adaptiveProtection.stopPrice}`);
+        }
+      } else if (trendManaged && trailingEnabled) {
+        const targetSlPrice = getTrendTrailingStopPrice(pos.entryPrice, marketMovePercent, 'buy', protectionSettings);
+        if (typeof targetSlPrice === 'number' && targetSlPrice > pos.stopLoss) {
+          const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
+          if (slResp.ok) {
+            newSl = targetSlPrice;
+            results.push(`SL_UPDATE (${mode}): ${symbol} trend trailing -> ${targetSlPrice}`);
+          }
         }
       } else if (effectiveSelfManaged) {
         const trailingStep = getSelfManagedTrailingStep(marketMovePercent, protectionSettings);
@@ -612,17 +642,26 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
         }
       } else if (autoManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice <= takeProfit) {
         takeProfitTriggered = true;
-      } else if (adaptiveProtection && trailingEnabled && adaptiveProtection.stopPrice < pos.stopLoss) {
+      } else if (!trendManaged && adaptiveProtection && trailingEnabled && adaptiveProtection.stopPrice < pos.stopLoss) {
         const slResp = await syncStopOrder(symbol, positionContext.closeSide, adaptiveProtection.stopPrice, pos.quantity, mode, positionContext.closeTradeSide);
         if (slResp.ok) {
           newSl = adaptiveProtection.stopPrice;
           results.push(`SL_UPDATE (${mode}): ${symbol} adaptive ${adaptiveProtection.reason} -> ${adaptiveProtection.stopPrice}`);
         }
-      } else if (adaptiveProtection && breakEvenEnabled && adaptiveProtection.reason === 'break_even' && adaptiveProtection.stopPrice < pos.stopLoss) {
+      } else if (!trendManaged && adaptiveProtection && breakEvenEnabled && adaptiveProtection.reason === 'break_even' && adaptiveProtection.stopPrice < pos.stopLoss) {
         const slResp = await syncStopOrder(symbol, positionContext.closeSide, adaptiveProtection.stopPrice, pos.quantity, mode, positionContext.closeTradeSide);
         if (slResp.ok) {
           newSl = adaptiveProtection.stopPrice;
           results.push(`SL_UPDATE (${mode}): ${symbol} adaptive break-even -> ${adaptiveProtection.stopPrice}`);
+        }
+      } else if (trendManaged && trailingEnabled) {
+        const targetSlPrice = getTrendTrailingStopPrice(pos.entryPrice, marketMovePercent, 'sell', protectionSettings);
+        if (typeof targetSlPrice === 'number' && targetSlPrice < pos.stopLoss) {
+          const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
+          if (slResp.ok) {
+            newSl = targetSlPrice;
+            results.push(`SL_UPDATE (${mode}): ${symbol} trend trailing -> ${targetSlPrice}`);
+          }
         }
       } else if (effectiveSelfManaged) {
         const trailingStep = getSelfManagedTrailingStep(marketMovePercent, protectionSettings);
@@ -819,7 +858,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
               ? 'Breakeven activo'
               : 'SL/TP fijos')
           : trendManaged
-            ? `OK_TREND (${mode}): #${pos.id} ${symbol} | Price: ${currentPrice} | PnL: ${profitPercent.toFixed(2)}% | ${trailingEnabled ? 'Trailing activo' : (breakEvenEnabled ? `Breakeven > ${protectionSettings.trendBreakEvenActivationPercent}%` : 'Breakeven OFF')}`
+            ? `OK_TREND (${mode}): #${pos.id} ${symbol} | Price: ${currentPrice} | PnL: ${profitPercent.toFixed(2)}% | ${trailingEnabled ? `Trailing ${protectionSettings.trendTrailingPercent}%` : (breakEvenEnabled ? `Breakeven > ${protectionSettings.trendBreakEvenActivationPercent}%` : 'Breakeven OFF')}`
             : `OK (${mode}): #${pos.id} ${symbol} | Price: ${currentPrice} | PnL: ${profitPercent.toFixed(2)}%`
       );
     }

@@ -183,6 +183,7 @@ final class AppViewModel: ObservableObject {
     @Published var exhaustionGuardEnabled = true
     @Published var takeProfitAutoCloseEnabled = false
     @Published var trendBreakEvenEnabled = true
+    @Published var trendTrailingPercent = "0.5"
     @Published var autoBreakEvenActivationPercent = "0.5"
     @Published var autoTrailingActivationPercent = "1"
     @Published var autoTrailingStepPercent = "0.5"
@@ -539,6 +540,7 @@ final class AppViewModel: ObservableObject {
             exhaustionGuardEnabled = settings.exhaustion_guard_enabled != "0"
             takeProfitAutoCloseEnabled = settings.take_profit_auto_close_enabled == "1"
             trendBreakEvenEnabled = settings.trend_break_even_enabled != "0"
+            trendTrailingPercent = settings.trend_trailing_percent
             autoBreakEvenActivationPercent = settings.auto_break_even_activation_percent
             autoTrailingActivationPercent = settings.auto_trailing_activation_percent
             autoTrailingStepPercent = settings.auto_trailing_step_percent
