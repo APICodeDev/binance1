@@ -267,7 +267,10 @@ const loadAdaptiveContextForPosition = async (position: Position) => {
 
 const computeCandidateStopLoss = (position: Position, currentPrice: number, adaptiveContext: AdaptiveProtectionContext | null) => {
   const managementMode = normalizePositionManagementMode(position.managementMode);
-  const breakEvenEnabled = isBreakEvenEffectivelyEnabled(position as any);
+  const breakEvenEnabled = isBreakEvenEffectivelyEnabled({
+    ...(position as any),
+    trendBreakEvenEnabled: engineSettings.protection.trendBreakEvenEnabled,
+  });
   const trailingEnabled = isTrailingEffectivelyEnabled(position as any);
   const fixedManaged = isFixedPriceManagementMode(position.managementMode);
   const trendManaged = managementMode === 'trend';
@@ -283,7 +286,7 @@ const computeCandidateStopLoss = (position: Position, currentPrice: number, adap
     : ((position.entryPrice - currentPrice) / position.entryPrice) * 100;
   const historicalMaxProfitPercent = Math.max(0, Number((position as any).maxProfitPercent || 0));
   const effectiveMovePercent = Math.max(marketMovePercent, historicalMaxProfitPercent);
-  if (trendManaged && !trailingEnabled) {
+  if (trendManaged && !trailingEnabled && breakEvenEnabled) {
     if (position.positionType === 'buy') {
       return effectiveMovePercent >= protection.trendBreakEvenActivationPercent
         ? position.entryPrice * (1 + commission) / (1 - commission)
@@ -410,7 +413,10 @@ const buildPositionMarketUpdate = (
     candidateStopLoss,
     canImproveStop,
     managementMode: normalizePositionManagementMode(position.managementMode),
-    breakEvenEnabled: isBreakEvenEffectivelyEnabled(position as any),
+    breakEvenEnabled: isBreakEvenEffectivelyEnabled({
+      ...(position as any),
+      trendBreakEvenEnabled: engineSettings.protection.trendBreakEvenEnabled,
+    }),
     trailingEnabled: isTrailingEffectivelyEnabled(position as any),
     eventTimestamp: snapshot.timestamp,
   };
@@ -1253,7 +1259,10 @@ const server = http.createServer(async (req, res) => {
         symbol: position.symbol,
         tradingMode: (position as any).tradingMode || 'demo',
         managementMode: normalizePositionManagementMode(position.managementMode),
-        breakEvenEnabled: isBreakEvenEffectivelyEnabled(position as any),
+        breakEvenEnabled: isBreakEvenEffectivelyEnabled({
+          ...(position as any),
+          trendBreakEvenEnabled: engineSettings.protection.trendBreakEvenEnabled,
+        }),
         trailingEnabled: isTrailingEffectivelyEnabled(position as any),
         stopLoss: position.stopLoss,
         takeProfit: position.takeProfit,

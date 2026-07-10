@@ -143,9 +143,16 @@ struct AdminView: View {
                 protectionRow(title: "Self Primer Trailing %", key: "self_trailing_activation_percent", value: $appModel.selfTrailingActivationPercent)
                 protectionRow(title: "Self Siguientes %", key: "self_trailing_step_percent", value: $appModel.selfTrailingStepPercent)
 
+                Toggle("Trend Breakeven Enabled", isOn: Binding(
+                    get: { appModel.trendBreakEvenEnabled },
+                    set: { newValue in
+                        Task { await appModel.updateSetting(key: "trend_break_even_enabled", value: newValue ? "1" : "0") }
+                    }
+                ))
+
                 protectionRow(title: "Trend Breakeven %", key: "trend_break_even_activation_percent", value: $appModel.trendBreakEvenActivationPercent)
 
-                Text("Trend con trailing activo reutiliza los valores de Self / Strat / Fixed.")
+                Text("Trend con trailing activo reutiliza los valores de Self / Strat / Fixed. Si apagas el breakeven de Trend, solo actuara el trailing en las operaciones que lo tengan activo.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

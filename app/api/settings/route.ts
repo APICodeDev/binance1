@@ -8,6 +8,7 @@ import { prisma } from '@/lib/db';
 import {
   buildProtectionThresholdSettingsSnapshot,
   normalizePercentString,
+  parseBooleanSetting,
   parsePositivePercentSetting,
   PROTECTION_SETTING_DEFINITIONS,
   resolveProtectionThresholdSettingsFromMap,
@@ -93,7 +94,15 @@ export async function POST(req: NextRequest) {
     body.api_legacy_stop_percent = parsed.toString();
   }
 
+  if (body.trend_break_even_enabled !== undefined) {
+    body.trend_break_even_enabled = parseBooleanSetting(body.trend_break_even_enabled) ? '1' : '0';
+  }
+
   for (const definition of PROTECTION_SETTING_DEFINITIONS) {
+    if (definition.key === 'trend_break_even_enabled') {
+      continue;
+    }
+
     if (body[definition.key] === undefined) {
       continue;
     }

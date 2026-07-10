@@ -352,6 +352,7 @@ interface DashboardSettingsSnapshot {
   exhaustion_guard_enabled: string;
   take_profit_auto_close_enabled: string;
   reverse_on_opposite_signal_enabled: string;
+  trend_break_even_enabled: string;
   auto_break_even_activation_percent: string;
   auto_trailing_activation_percent: string;
   auto_trailing_step_percent: string;
@@ -455,7 +456,7 @@ const PROTECTION_SETTING_GROUPS: Array<{
   },
   {
     title: 'Trend',
-    description: 'Solo aplica cuando Trend trabaja sin trailing. Si Trend lleva trailing activo, usa la configuracion de Self.',
+    description: 'Permite activar o desactivar el breakeven base de Trend. Si Trend lleva trailing activo, usa la configuracion de Self.',
     note: 'Trend con trailing activo reutiliza Self / Strat / Fixed.',
     items: [
       { key: 'trend_break_even_activation_percent', label: 'Breakeven %' },
@@ -934,6 +935,7 @@ export default function Dashboard() {
   const [exhaustionGuardEnabled, setExhaustionGuardEnabled] = useState(false);
   const [takeProfitAutoCloseEnabled, setTakeProfitAutoCloseEnabled] = useState(false);
   const [reverseOnOppositeSignalEnabled, setReverseOnOppositeSignalEnabled] = useState(true);
+  const [trendBreakEvenEnabled, setTrendBreakEvenEnabled] = useState(true);
   const [protectionSettings, setProtectionSettings] = useState<ProtectionSettingsForm>(DEFAULT_PROTECTION_SETTINGS_FORM);
   const [savedProtectionSettings, setSavedProtectionSettings] = useState<ProtectionSettingsForm>(DEFAULT_PROTECTION_SETTINGS_FORM);
   const [protectionDirty, setProtectionDirty] = useState<ProtectionSettingsDirtyState>(EMPTY_PROTECTION_DIRTY_STATE);
@@ -1253,6 +1255,7 @@ export default function Dashboard() {
     setExhaustionGuardEnabled(settings.exhaustion_guard_enabled === '1');
     setTakeProfitAutoCloseEnabled(settings.take_profit_auto_close_enabled === '1');
     setReverseOnOppositeSignalEnabled(settings.reverse_on_opposite_signal_enabled !== '0');
+    setTrendBreakEvenEnabled(settings.trend_break_even_enabled !== '0');
     const incomingProtectionSettings = {
       auto_break_even_activation_percent: settings.auto_break_even_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.auto_break_even_activation_percent,
       auto_trailing_activation_percent: settings.auto_trailing_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.auto_trailing_activation_percent,
@@ -1397,6 +1400,7 @@ export default function Dashboard() {
           exhaustion_guard_enabled: settings.exhaustion_guard_enabled || '1',
           take_profit_auto_close_enabled: settings.take_profit_auto_close_enabled || '0',
           reverse_on_opposite_signal_enabled: settings.reverse_on_opposite_signal_enabled || '1',
+          trend_break_even_enabled: settings.trend_break_even_enabled || '1',
           auto_break_even_activation_percent: settings.auto_break_even_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.auto_break_even_activation_percent,
           auto_trailing_activation_percent: settings.auto_trailing_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.auto_trailing_activation_percent,
           auto_trailing_step_percent: settings.auto_trailing_step_percent || DEFAULT_PROTECTION_SETTINGS_FORM.auto_trailing_step_percent,
@@ -2755,6 +2759,34 @@ export default function Dashboard() {
                             </div>
                           </div>
                         ))}
+                      </div>
+                      <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/90 p-3 dark:border-slate-800 dark:bg-slate-950/60">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold leading-tight text-slate-700 dark:text-slate-200">Trend Breakeven Enabled</p>
+                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Activa o desactiva el breakeven base de Trend cuando esa posicion no lleva trailing.</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const nextValue = !trendBreakEvenEnabled;
+                              try {
+                                await apiClient.updateSettings({ trend_break_even_enabled: nextValue ? '1' : '0' });
+                                setTrendBreakEvenEnabled(nextValue);
+                              } catch {
+                                setErrorPopup('No se pudo actualizar Trend Breakeven.');
+                              }
+                            }}
+                            className={cn(
+                              "rounded-lg border px-3 py-2 text-[10px] font-black uppercase tracking-[0.16em] transition-colors",
+                              trendBreakEvenEnabled
+                                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 hover:border-emerald-400 hover:text-emerald-700 dark:text-emerald-200 dark:hover:text-emerald-100"
+                                : "border-slate-300 bg-white text-slate-600 hover:border-slate-400 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-300"
+                            )}
+                          >
+                            {trendBreakEvenEnabled ? 'On' : 'Off'}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>

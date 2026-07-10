@@ -71,15 +71,20 @@ export function isSelfManagedPosition(value: unknown) {
 
 type ProtectionConfigPosition = {
   managementMode?: string | null;
+  trendBreakEvenEnabled?: boolean | null;
   stratBreakEvenEnabled?: boolean | null;
   stratTrailingEnabled?: boolean | null;
   manualBreakEvenEnabled?: boolean | null;
   manualTrailingOverride?: boolean | null;
 };
 
-export function isBaseBreakEvenEnabled(value: unknown) {
+export function isBaseBreakEvenEnabled(value: unknown, trendBreakEvenEnabled = true) {
   if (isFixedPriceManagementMode(value)) {
     return false;
+  }
+
+  if (normalizePositionManagementMode(value) === 'trend') {
+    return trendBreakEvenEnabled;
   }
 
   return true;
@@ -101,7 +106,7 @@ export function getManualTrailingOverride(position: ProtectionConfigPosition) {
 }
 
 export function isBreakEvenEffectivelyEnabled(position: ProtectionConfigPosition) {
-  return isBaseBreakEvenEnabled(position.managementMode) ||
+  return isBaseBreakEvenEnabled(position.managementMode, position.trendBreakEvenEnabled ?? true) ||
     Boolean(position.manualBreakEvenEnabled) ||
     Boolean(position.stratBreakEvenEnabled) ||
     isTrailingEffectivelyEnabled(position);

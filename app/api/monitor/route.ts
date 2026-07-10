@@ -303,7 +303,10 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     const selfManaged = managementMode === 'self';
     const stratManaged = managementMode === 'strat';
     const trendManaged = managementMode === 'trend';
-    const breakEvenEnabled = isBreakEvenEffectivelyEnabled(pos as any);
+    const breakEvenEnabled = isBreakEvenEffectivelyEnabled({
+      ...(pos as any),
+      trendBreakEvenEnabled: protectionSettings.trendBreakEvenEnabled,
+    });
     const trailingEnabled = isTrailingEffectivelyEnabled(pos as any);
     const effectiveSelfManaged = trailingEnabled && (fixedManaged || selfManaged || stratManaged || trendManaged);
     const breakEvenOnlyEnabled = breakEvenEnabled && !trailingEnabled;
@@ -500,7 +503,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     }
 
     if (!exhaustionTriggered && pos.positionType === 'buy') {
-      if (trendManaged && effectiveMovePercent >= protectionSettings.trendBreakEvenActivationPercent) {
+      if (trendManaged && breakEvenEnabled && effectiveMovePercent >= protectionSettings.trendBreakEvenActivationPercent) {
         const targetSlPrice = pos.entryPrice * (1 + entryComm) / (1 - comm);
         if (targetSlPrice > pos.stopLoss) {
           const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
@@ -596,7 +599,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
         }
       }
     } else if (!exhaustionTriggered) { // short
-      if (trendManaged && effectiveMovePercent >= protectionSettings.trendBreakEvenActivationPercent) {
+      if (trendManaged && breakEvenEnabled && effectiveMovePercent >= protectionSettings.trendBreakEvenActivationPercent) {
         const targetSlPrice = pos.entryPrice * (1 - entryComm) / (1 + comm);
         if (targetSlPrice < pos.stopLoss) {
           const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
@@ -816,7 +819,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
               ? 'Breakeven activo'
               : 'SL/TP fijos')
           : trendManaged
-            ? `OK_TREND (${mode}): #${pos.id} ${symbol} | Price: ${currentPrice} | PnL: ${profitPercent.toFixed(2)}% | ${trailingEnabled ? 'Trailing activo' : 'Breakeven > 1%'}`
+            ? `OK_TREND (${mode}): #${pos.id} ${symbol} | Price: ${currentPrice} | PnL: ${profitPercent.toFixed(2)}% | ${trailingEnabled ? 'Trailing activo' : (breakEvenEnabled ? `Breakeven > ${protectionSettings.trendBreakEvenActivationPercent}%` : 'Breakeven OFF')}`
             : `OK (${mode}): #${pos.id} ${symbol} | Price: ${currentPrice} | PnL: ${profitPercent.toFixed(2)}%`
       );
     }
