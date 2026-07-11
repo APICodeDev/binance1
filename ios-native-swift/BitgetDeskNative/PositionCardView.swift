@@ -10,7 +10,9 @@ struct PositionCardView: View {
         let isStrategyManaged = position.isStrategyManaged
         let isTrendManaged = position.normalizedManagementMode == "trend"
         let configuredLegacyStopPercent = Double(appModel.apiLegacyStopPercent) ?? 1.2
-        let stopDelta = position.entryPrice == 0 ? 0 : ((position.stopLoss - position.entryPrice) / position.entryPrice) * 100
+        let nativeTrailingEstimatedStop = estimatedNativeTrailingStop
+        let displayStopLoss = nativeTrailingEstimatedStop ?? position.stopLoss
+        let stopDelta = position.entryPrice == 0 ? 0 : ((displayStopLoss - position.entryPrice) / position.entryPrice) * 100
         let legacyDistance = abs(abs(isBuy ? -stopDelta : stopDelta) - configuredLegacyStopPercent) < 0.05
         let fillDeltaPercent = signedFillDeltaPercent
         let fillDeltaColor: Color = fillDeltaPercent >= 0 ? .cyan : .orange
@@ -55,6 +57,17 @@ struct PositionCardView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
 
+            if position.normalizedManagementMode == "self", position.nativeTrailingEnabled == true {
+                Text("Self: usa trailing nativo de Bitget. La app muestra un SL estimado segun callback y maximo favorable.")
+                    .font(.caption.bold())
+                    .foregroundStyle(.green)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.green.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+
             HStack {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Entry")
@@ -76,15 +89,24 @@ struct PositionCardView: View {
                     Text("Stop")
                         .font(.caption2.bold())
                         .foregroundStyle(.secondary)
-                    Text(AppFormatters.price(position.stopLoss, precision: position.pricePrecision))
+                    Text(AppFormatters.price(displayStopLoss, precision: position.pricePrecision))
                         .font(.headline.monospacedDigit())
                         .foregroundStyle(position.profitLossFiat >= 0 ? .green : .red)
                     Text("\(stopDelta >= 0 ? "+" : "")\(String(format: "%.2f", stopDelta))% vs entry")
                         .font(.caption.bold())
-                        .foregroundStyle(legacyDistance ? Color.secondary : Color.cyan)
-                    Text(isStrategyManaged ? "Legacy \(String(format: "%.2f", configuredLegacyStopPercent))% Fixed For Strat" : (legacyDistance ? "Legacy \(String(format: "%.2f", configuredLegacyStopPercent))% Default" : "Adapted By App"))
+                        .foregroundStyle(position.nativeTrailingEnabled == true ? Color.green : (legacyDistance ? Color.secondary : Color.cyan))
+                    Text(position.nativeTrailingEnabled == true
+                         ? "Bitget Native Trailing (Approx)"
+                         : (isStrategyManaged ? "Legacy \(String(format: "%.2f", configuredLegacyStopPercent))% Fixed For Strat" : (legacyDistance ? "Legacy \(String(format: "%.2f", configuredLegacyStopPercent))% Default" : "Adapted By App")))
                         .font(.caption2.bold())
-                        .foregroundStyle(isStrategyManaged ? Color.orange : (legacyDistance ? Color.secondary : Color.cyan))
+                        .foregroundStyle(position.nativeTrailingEnabled == true ? Color.green : (isStrategyManaged ? Color.orange : (legacyDistance ? Color.secondary : Color.cyan)))
+                    if position.nativeTrailingEnabled == true,
+                       let callback = position.nativeTrailingCallbackPercent,
+                       let activation = position.nativeTrailingActivationPercent {
+                        Text("CB \(String(format: "%.2f", callback))% · ACT \(String(format: "%.2f", activation))%")
+                            .font(.caption2.bold())
+                            .foregroundStyle(.green)
+                    }
                     if !isStrategyManaged, let takeProfit = position.takeProfit, takeProfit > 0 {
                         Text("TP \(AppFormatters.price(takeProfit, precision: position.pricePrecision))")
                             .font(.caption.bold())
@@ -131,6 +153,31 @@ struct PositionCardView: View {
 
         let rawPercent = ((position.entryPrice - requestedEntryPrice) / requestedEntryPrice) * 100
         return position.positionType == "sell" ? rawPercent : -rawPercent
+    }
+
+    private var estimatedNativeTrailingStop: Double? {
+        if let estimated = position.estimatedStopLoss, estimated > 0 {
+            return estimated
+        }
+        guard position.normalizedManagementMode == "self",
+              position.nativeTrailingEnabled == true,
+              let callback = position.nativeTrailingCallbackPercent, callback > 0,
+              let activation = position.nativeTrailingActivationPercent, activation > 0,
+              let maxProfitPercent = position.maxProfitPercent,
+              maxProfitPercent >= activation else {
+            return nil
+        }
+
+        let trackedPrice = position.positionType == "buy"
+            ? position.entryPrice * (1 + (maxProfitPercent / 100))
+            : position.entryPrice * (1 - (maxProfitPercent / 100))
+        let estimated = position.positionType == "buy"
+            ? trackedPrice * (1 - (callback / 100))
+            : trackedPrice * (1 + (callback / 100))
+        guard estimated > 0 else { return nil }
+        return position.positionType == "buy"
+            ? max(position.stopLoss, estimated)
+            : min(position.stopLoss, estimated)
     }
 
     private var resolvedTakeProfitTargetPercent: Double? {

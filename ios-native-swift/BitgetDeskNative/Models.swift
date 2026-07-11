@@ -29,9 +29,22 @@ struct Position: Codable, Identifiable {
     let timeframe: String?
     let commission: Double?
     let pricePrecision: Int?
+    let maxProfitPercent: Double?
+    let maxProfitAt: String?
     let requestedTakeProfitPercent: Double?
     let requestedTakeProfitInputSource: String?
     let takeProfitTargetPercent: Double?
+    let protectionOwner: String?
+    let nativeTrailingEnabled: Bool?
+    let nativeTrailingPlacedAt: String?
+    let nativeTrailingOrderId: String?
+    let nativeTrailingClientOid: String?
+    let nativeTrailingCallbackPercent: Double?
+    let nativeTrailingActivationPercent: Double?
+    let nativeTrailingTriggerType: String?
+    let nativeTrailingFallbackMode: String?
+    let nativeTrailingApproximate: Bool?
+    let estimatedStopLoss: Double?
 
     var normalizedManagementMode: String {
         let raw = (managementMode ?? "auto").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -86,6 +99,11 @@ struct SettingsPayload: Codable {
     let self_break_even_activation_percent: String
     let self_trailing_activation_percent: String
     let self_trailing_step_percent: String
+    let self_native_trailing_enabled: String
+    let self_native_trailing_callback_percent: String
+    let self_native_trailing_activation_percent: String
+    let self_native_trailing_trigger_type: String
+    let self_native_trailing_fallback_mode: String
     let trend_break_even_activation_percent: String
 }
 

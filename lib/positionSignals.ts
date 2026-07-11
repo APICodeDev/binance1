@@ -22,9 +22,23 @@ type TakeProfitUpgradeMeta = {
   takeProfitTargetPercent: number | null;
 };
 
+type ProtectionRuntimeMeta = {
+  protectionOwner: 'app' | 'bitget';
+  nativeTrailingEnabled: boolean;
+  nativeTrailingPlacedAt: string | null;
+  nativeTrailingOrderId: string | null;
+  nativeTrailingClientOid: string | null;
+  nativeTrailingCallbackPercent: number | null;
+  nativeTrailingActivationPercent: number | null;
+  nativeTrailingTriggerType: 'fill_price' | 'mark_price' | null;
+  nativeTrailingFallbackMode: 'abort' | 'fallback_to_app' | null;
+  nativeTrailingApproximate: boolean;
+};
+
 const POSITION_OPEN_ACTION = 'position.open';
 const TAKE_PROFIT_UPGRADE_ACTION = 'position.tp_upgraded_from_signal';
 const TAKE_PROFIT_PENDING_ACTION = 'position.open.tp_pending';
+const POSITION_NATIVE_TRAILING_FAILED_ACTION = 'position.open.native_trailing_failed';
 
 const parseOptionalNumber = (value: unknown) => {
   const parsed = Number.parseFloat(String(value ?? ''));
@@ -176,4 +190,111 @@ export async function attachTakeProfitUpgradeMeta<T extends PositionWithId>(posi
       takeProfitTargetPercent,
     };
   });
+}
+
+export async function attachPositionProtectionMeta<T extends { id: number }>(positions: T[]): Promise<Array<T & ProtectionRuntimeMeta>> {
+  if (positions.length === 0) {
+    return positions.map((position) => ({
+      ...position,
+      protectionOwner: 'app',
+      nativeTrailingEnabled: false,
+      nativeTrailingPlacedAt: null,
+      nativeTrailingOrderId: null,
+      nativeTrailingClientOid: null,
+      nativeTrailingCallbackPercent: null,
+      nativeTrailingActivationPercent: null,
+      nativeTrailingTriggerType: null,
+      nativeTrailingFallbackMode: null,
+      nativeTrailingApproximate: false,
+    }));
+  }
+
+  const ids = positions.map((position) => String(position.id));
+  const logs = await prisma.auditLog.findMany({
+    where: {
+      action: { in: [POSITION_OPEN_ACTION, POSITION_NATIVE_TRAILING_FAILED_ACTION] },
+      targetType: 'position',
+      targetId: { in: ids },
+    },
+    orderBy: { createdAt: 'asc' },
+    select: {
+      action: true,
+      targetId: true,
+      createdAt: true,
+      metadata: true,
+    },
+  });
+
+  const summaryByPositionId = new Map<number, ProtectionRuntimeMeta>();
+
+  for (const log of logs) {
+    const positionId = Number.parseInt(String(log.targetId || ''), 10);
+    if (!Number.isFinite(positionId)) {
+      continue;
+    }
+
+    const metadata = log.metadata && typeof log.metadata === 'object' ? log.metadata as Record<string, unknown> : {};
+    const previous = summaryByPositionId.get(positionId) || {
+      protectionOwner: 'app' as const,
+      nativeTrailingEnabled: false,
+      nativeTrailingPlacedAt: null,
+      nativeTrailingOrderId: null,
+      nativeTrailingClientOid: null,
+      nativeTrailingCallbackPercent: null,
+      nativeTrailingActivationPercent: null,
+      nativeTrailingTriggerType: null,
+      nativeTrailingFallbackMode: null,
+      nativeTrailingApproximate: false,
+    };
+
+    if (log.action === POSITION_NATIVE_TRAILING_FAILED_ACTION) {
+      summaryByPositionId.set(positionId, {
+        ...previous,
+        nativeTrailingFallbackMode: parseOptionalString(metadata.nativeTrailingFallbackMode) as 'abort' | 'fallback_to_app' | null,
+      });
+      continue;
+    }
+
+    const nativeTrailingEnabled = Boolean(metadata.nativeTrailingEnabledOnOpen);
+    const nativeTrailingTriggerType = parseOptionalString(metadata.nativeTrailingTriggerType);
+    const protectionOwner = nativeTrailingEnabled ? 'bitget' as const : 'app' as const;
+    summaryByPositionId.set(positionId, {
+      protectionOwner,
+      nativeTrailingEnabled,
+      nativeTrailingPlacedAt: nativeTrailingEnabled ? log.createdAt.toISOString() : null,
+      nativeTrailingOrderId: parseOptionalString(metadata.nativeTrailingOrderId),
+      nativeTrailingClientOid: parseOptionalString(metadata.nativeTrailingClientOid),
+      nativeTrailingCallbackPercent: parseOptionalNumber(metadata.nativeTrailingCallbackPercent),
+      nativeTrailingActivationPercent: parseOptionalNumber(metadata.nativeTrailingActivationPercent),
+      nativeTrailingTriggerType: (
+        nativeTrailingTriggerType === 'fill_price' || nativeTrailingTriggerType === 'mark_price'
+          ? nativeTrailingTriggerType
+          : null
+      ),
+      nativeTrailingFallbackMode: parseOptionalString(metadata.nativeTrailingFallbackMode) as 'abort' | 'fallback_to_app' | null,
+      nativeTrailingApproximate: nativeTrailingEnabled,
+    });
+  }
+
+  return positions.map((position) => {
+    const meta = summaryByPositionId.get(position.id);
+    return {
+      ...position,
+      protectionOwner: meta?.protectionOwner || 'app',
+      nativeTrailingEnabled: meta?.nativeTrailingEnabled || false,
+      nativeTrailingPlacedAt: meta?.nativeTrailingPlacedAt || null,
+      nativeTrailingOrderId: meta?.nativeTrailingOrderId || null,
+      nativeTrailingClientOid: meta?.nativeTrailingClientOid || null,
+      nativeTrailingCallbackPercent: meta?.nativeTrailingCallbackPercent ?? null,
+      nativeTrailingActivationPercent: meta?.nativeTrailingActivationPercent ?? null,
+      nativeTrailingTriggerType: meta?.nativeTrailingTriggerType || null,
+      nativeTrailingFallbackMode: meta?.nativeTrailingFallbackMode || null,
+      nativeTrailingApproximate: meta?.nativeTrailingApproximate || false,
+    };
+  });
+}
+
+export async function attachPositionRuntimeMeta<T extends PositionWithId>(positions: T[]) {
+  const positionsWithTakeProfit = await attachTakeProfitUpgradeMeta(positions);
+  return attachPositionProtectionMeta(positionsWithTakeProfit);
 }

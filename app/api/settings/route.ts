@@ -7,9 +7,9 @@ import { writeAuditLog } from '@/lib/audit';
 import { prisma } from '@/lib/db';
 import {
   buildProtectionThresholdSettingsSnapshot,
+  normalizeProtectionSettingValue,
   normalizePercentString,
   parseBooleanSetting,
-  parsePositivePercentSetting,
   PROTECTION_SETTING_DEFINITIONS,
   resolveProtectionThresholdSettingsFromMap,
 } from '@/lib/protectionSettings';
@@ -99,23 +99,24 @@ export async function POST(req: NextRequest) {
   }
 
   for (const definition of PROTECTION_SETTING_DEFINITIONS) {
-    if (definition.key === 'trend_break_even_enabled') {
-      continue;
-    }
-
     if (body[definition.key] === undefined) {
       continue;
     }
 
-    const parsed = parsePositivePercentSetting(body[definition.key]);
-    if (parsed === null) {
+    const normalized = normalizeProtectionSettingValue(definition, body[definition.key]);
+    if (normalized === null) {
       return NextResponse.json(
-        { error: true, message: `${definition.key} must be a positive number.` },
+        {
+          error: true,
+          message: definition.kind === 'percent'
+            ? `${definition.key} must be a positive number.`
+            : `${definition.key} has an invalid value.`,
+        },
         { status: 400 }
       );
     }
 
-    body[definition.key] = parsed.toString();
+    body[definition.key] = normalized;
   }
 
   if (body.trading_mode === 'live') {

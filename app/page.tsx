@@ -171,6 +171,17 @@ interface Position {
   requestedTakeProfitPercent?: number | null;
   requestedTakeProfitInputSource?: string | null;
   takeProfitTargetPercent?: number | null;
+  protectionOwner?: 'app' | 'bitget';
+  nativeTrailingEnabled?: boolean;
+  nativeTrailingPlacedAt?: string | null;
+  nativeTrailingOrderId?: string | null;
+  nativeTrailingClientOid?: string | null;
+  nativeTrailingCallbackPercent?: number | null;
+  nativeTrailingActivationPercent?: number | null;
+  nativeTrailingTriggerType?: 'fill_price' | 'mark_price' | null;
+  nativeTrailingFallbackMode?: 'abort' | 'fallback_to_app' | null;
+  nativeTrailingApproximate?: boolean;
+  estimatedStopLoss?: number | null;
   stratBreakEvenEnabled?: boolean;
   stratTrailingEnabled?: boolean;
   manualBreakEvenEnabled?: boolean;
@@ -360,6 +371,11 @@ interface DashboardSettingsSnapshot {
   self_break_even_activation_percent: string;
   self_trailing_activation_percent: string;
   self_trailing_step_percent: string;
+  self_native_trailing_enabled: string;
+  self_native_trailing_callback_percent: string;
+  self_native_trailing_activation_percent: string;
+  self_native_trailing_trigger_type: 'fill_price' | 'mark_price';
+  self_native_trailing_fallback_mode: 'abort' | 'fallback_to_app';
   trend_break_even_activation_percent: string;
 }
 
@@ -372,6 +388,8 @@ type ProtectionSettingsForm = Pick<
   | 'self_break_even_activation_percent'
   | 'self_trailing_activation_percent'
   | 'self_trailing_step_percent'
+  | 'self_native_trailing_callback_percent'
+  | 'self_native_trailing_activation_percent'
   | 'trend_break_even_activation_percent'
 >;
 
@@ -420,6 +438,8 @@ const DEFAULT_PROTECTION_SETTINGS_FORM: ProtectionSettingsForm = {
   self_break_even_activation_percent: '0.5',
   self_trailing_activation_percent: '1.25',
   self_trailing_step_percent: '1',
+  self_native_trailing_callback_percent: '0.5',
+  self_native_trailing_activation_percent: '1.25',
   trend_break_even_activation_percent: '1',
 };
 
@@ -431,6 +451,8 @@ const EMPTY_PROTECTION_DIRTY_STATE: ProtectionSettingsDirtyState = {
   self_break_even_activation_percent: false,
   self_trailing_activation_percent: false,
   self_trailing_step_percent: false,
+  self_native_trailing_callback_percent: false,
+  self_native_trailing_activation_percent: false,
   trend_break_even_activation_percent: false,
 };
 
@@ -450,12 +472,20 @@ const PROTECTION_SETTING_GROUPS: Array<{
     ],
   },
   {
-    title: 'Self / Strat / Fixed',
-    description: 'Umbrales usados por Self, Strat y Fixed para activar el breakeven; si hay trailing activo en Self o Strat, tambien usa estos valores.',
+    title: 'Self App Fallback / Strat / Fixed',
+    description: 'Umbrales locales de la app. En Self solo se usan si el trailing nativo esta apagado o si Bitget cae al fallback de app.',
     items: [
       { key: 'self_break_even_activation_percent', label: 'Breakeven %' },
       { key: 'self_trailing_activation_percent', label: 'Primer trailing %' },
       { key: 'self_trailing_step_percent', label: 'Siguientes trailing %' },
+    ],
+  },
+  {
+    title: 'Self Native',
+    description: 'Parametros del trailing nativo de Bitget para posiciones Self.',
+    items: [
+      { key: 'self_native_trailing_activation_percent', label: 'Activacion %' },
+      { key: 'self_native_trailing_callback_percent', label: 'Callback %' },
     ],
   },
   {
@@ -480,10 +510,12 @@ interface LivePositionMarketUpdatePayload {
   stopLoss: number;
   takeProfit: number | null;
   candidateStopLoss: number | null;
+  estimatedStopLoss: number | null;
   canImproveStop: boolean;
   managementMode: 'auto' | 'self' | 'strat' | 'trend';
   breakEvenEnabled: boolean;
   trailingEnabled: boolean;
+  trailingSource: 'app' | 'bitget' | 'none';
   eventTimestamp: number;
 }
 
@@ -890,6 +922,42 @@ function isTrailingEffectivelyEnabledForPosition(position: Pick<Position, 'manag
   return isBaseTrailingEnabledForPosition(position) || Boolean(position.stratTrailingEnabled);
 }
 
+function isNativeTrailingManagedByExchangeForPosition(position: Pick<Position, 'managementMode' | 'nativeTrailingEnabled'>) {
+  return normalizeManagementMode(position.managementMode) === 'self' && Boolean(position.nativeTrailingEnabled);
+}
+
+function getEstimatedNativeTrailingStopForPosition(position: Pick<Position, 'managementMode' | 'positionType' | 'entryPrice' | 'stopLoss' | 'maxProfitPercent' | 'nativeTrailingEnabled' | 'nativeTrailingCallbackPercent' | 'nativeTrailingActivationPercent' | 'estimatedStopLoss'>) {
+  if (typeof position.estimatedStopLoss === 'number' && Number.isFinite(position.estimatedStopLoss) && position.estimatedStopLoss > 0) {
+    return position.estimatedStopLoss;
+  }
+
+  if (!isNativeTrailingManagedByExchangeForPosition(position)) {
+    return null;
+  }
+
+  const callbackPercent = Number(position.nativeTrailingCallbackPercent || 0);
+  const activationPercent = Number(position.nativeTrailingActivationPercent || 0);
+  const maxProfitPercent = Math.max(0, Number(position.maxProfitPercent || 0));
+  if (!(callbackPercent > 0) || !(activationPercent > 0) || !(maxProfitPercent >= activationPercent)) {
+    return null;
+  }
+
+  const trackedPrice = position.positionType === 'buy'
+    ? position.entryPrice * (1 + (maxProfitPercent / 100))
+    : position.entryPrice * (1 - (maxProfitPercent / 100));
+  const estimated = position.positionType === 'buy'
+    ? trackedPrice * (1 - (callbackPercent / 100))
+    : trackedPrice * (1 + (callbackPercent / 100));
+
+  if (!Number.isFinite(estimated) || estimated <= 0) {
+    return null;
+  }
+
+  return position.positionType === 'buy'
+    ? Math.max(position.stopLoss, estimated)
+    : Math.min(position.stopLoss, estimated);
+}
+
 function getFallbackCommissionRate(tradingMode: 'demo' | 'live') {
   return tradingMode === 'live' ? 0.0004 : 0.0002;
 }
@@ -941,6 +1009,9 @@ export default function Dashboard() {
   const [takeProfitAutoCloseEnabled, setTakeProfitAutoCloseEnabled] = useState(false);
   const [reverseOnOppositeSignalEnabled, setReverseOnOppositeSignalEnabled] = useState(true);
   const [trendBreakEvenEnabled, setTrendBreakEvenEnabled] = useState(true);
+  const [selfNativeTrailingEnabled, setSelfNativeTrailingEnabled] = useState(false);
+  const [selfNativeTrailingTriggerType, setSelfNativeTrailingTriggerType] = useState<'fill_price' | 'mark_price'>('fill_price');
+  const [selfNativeTrailingFallbackMode, setSelfNativeTrailingFallbackMode] = useState<'abort' | 'fallback_to_app'>('abort');
   const [protectionSettings, setProtectionSettings] = useState<ProtectionSettingsForm>(DEFAULT_PROTECTION_SETTINGS_FORM);
   const [savedProtectionSettings, setSavedProtectionSettings] = useState<ProtectionSettingsForm>(DEFAULT_PROTECTION_SETTINGS_FORM);
   const [protectionDirty, setProtectionDirty] = useState<ProtectionSettingsDirtyState>(EMPTY_PROTECTION_DIRTY_STATE);
@@ -1261,6 +1332,9 @@ export default function Dashboard() {
     setTakeProfitAutoCloseEnabled(settings.take_profit_auto_close_enabled === '1');
     setReverseOnOppositeSignalEnabled(settings.reverse_on_opposite_signal_enabled !== '0');
     setTrendBreakEvenEnabled(settings.trend_break_even_enabled !== '0');
+    setSelfNativeTrailingEnabled(settings.self_native_trailing_enabled === '1');
+    setSelfNativeTrailingTriggerType(settings.self_native_trailing_trigger_type === 'mark_price' ? 'mark_price' : 'fill_price');
+    setSelfNativeTrailingFallbackMode(settings.self_native_trailing_fallback_mode === 'fallback_to_app' ? 'fallback_to_app' : 'abort');
     const incomingProtectionSettings = {
       trend_trailing_percent: settings.trend_trailing_percent || DEFAULT_PROTECTION_SETTINGS_FORM.trend_trailing_percent,
       auto_break_even_activation_percent: settings.auto_break_even_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.auto_break_even_activation_percent,
@@ -1269,6 +1343,8 @@ export default function Dashboard() {
       self_break_even_activation_percent: settings.self_break_even_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.self_break_even_activation_percent,
       self_trailing_activation_percent: settings.self_trailing_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.self_trailing_activation_percent,
       self_trailing_step_percent: settings.self_trailing_step_percent || DEFAULT_PROTECTION_SETTINGS_FORM.self_trailing_step_percent,
+      self_native_trailing_callback_percent: settings.self_native_trailing_callback_percent || DEFAULT_PROTECTION_SETTINGS_FORM.self_native_trailing_callback_percent,
+      self_native_trailing_activation_percent: settings.self_native_trailing_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.self_native_trailing_activation_percent,
       trend_break_even_activation_percent: settings.trend_break_even_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.trend_break_even_activation_percent,
     };
     setSavedProtectionSettings(incomingProtectionSettings);
@@ -1359,6 +1435,7 @@ export default function Dashboard() {
         profitLossPercent: payload.profitPercent,
         profitLossFiat: payload.profitFiat,
         stopLoss: payload.stopLoss,
+        estimatedStopLoss: payload.estimatedStopLoss,
       };
     }));
     setLastSyncAt(new Date(payload.eventTimestamp || Date.now()).toISOString());
@@ -1414,6 +1491,11 @@ export default function Dashboard() {
           self_break_even_activation_percent: settings.self_break_even_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.self_break_even_activation_percent,
           self_trailing_activation_percent: settings.self_trailing_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.self_trailing_activation_percent,
           self_trailing_step_percent: settings.self_trailing_step_percent || DEFAULT_PROTECTION_SETTINGS_FORM.self_trailing_step_percent,
+          self_native_trailing_enabled: settings.self_native_trailing_enabled || '0',
+          self_native_trailing_callback_percent: settings.self_native_trailing_callback_percent || DEFAULT_PROTECTION_SETTINGS_FORM.self_native_trailing_callback_percent,
+          self_native_trailing_activation_percent: settings.self_native_trailing_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.self_native_trailing_activation_percent,
+          self_native_trailing_trigger_type: settings.self_native_trailing_trigger_type === 'mark_price' ? 'mark_price' : 'fill_price',
+          self_native_trailing_fallback_mode: settings.self_native_trailing_fallback_mode === 'fallback_to_app' ? 'fallback_to_app' : 'abort',
           trend_break_even_activation_percent: settings.trend_break_even_activation_percent || DEFAULT_PROTECTION_SETTINGS_FORM.trend_break_even_activation_percent,
         },
       });
@@ -2768,6 +2850,99 @@ export default function Dashboard() {
                         ))}
                       </div>
                       <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/90 p-3 dark:border-slate-800 dark:bg-slate-950/60">
+                        <div className="flex flex-col gap-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-semibold leading-tight text-slate-700 dark:text-slate-200">Self Native Trailing</p>
+                              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                Si esta activo, las posiciones `self` crean un trailing `moving_plan` en Bitget. La app solo refleja un stop estimado y deja de mover el SL localmente en ese modo.
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const nextValue = !selfNativeTrailingEnabled;
+                                try {
+                                  await apiClient.updateSettings({ self_native_trailing_enabled: nextValue ? '1' : '0' });
+                                  setSelfNativeTrailingEnabled(nextValue);
+                                } catch {
+                                  setErrorPopup('No se pudo actualizar Self Native Trailing.');
+                                }
+                              }}
+                              className={cn(
+                                "rounded-lg border px-3 py-2 text-[10px] font-black uppercase tracking-[0.16em] transition-colors",
+                                selfNativeTrailingEnabled
+                                  ? "border-cyan-500/40 bg-cyan-500/10 text-cyan-600 hover:border-cyan-400 hover:text-cyan-700 dark:text-cyan-200 dark:hover:text-cyan-100"
+                                  : "border-slate-300 bg-white text-slate-600 hover:border-slate-400 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-300"
+                              )}
+                            >
+                              {selfNativeTrailingEnabled ? 'On' : 'Off'}
+                            </button>
+                          </div>
+
+                          <div className="grid gap-3 xl:grid-cols-2">
+                            <div className="rounded-lg border border-slate-200 bg-white/80 p-3 dark:border-slate-800 dark:bg-slate-950/40">
+                              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Trigger Type</p>
+                              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                                {(['fill_price', 'mark_price'] as const).map((value) => (
+                                  <button
+                                    key={value}
+                                    type="button"
+                                    onClick={async () => {
+                                      try {
+                                        await apiClient.updateSettings({ self_native_trailing_trigger_type: value });
+                                        setSelfNativeTrailingTriggerType(value);
+                                      } catch {
+                                        setErrorPopup('No se pudo actualizar el trigger type del trailing nativo.');
+                                      }
+                                    }}
+                                    className={cn(
+                                      "rounded-lg border px-3 py-2 text-[10px] font-black uppercase tracking-[0.16em] transition-colors",
+                                      selfNativeTrailingTriggerType === value
+                                        ? "border-cyan-500/40 bg-cyan-500/10 text-cyan-600 dark:text-cyan-200"
+                                        : "border-slate-300 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-300"
+                                    )}
+                                  >
+                                    {value === 'fill_price' ? 'Fill Price' : 'Mark Price'}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div className="rounded-lg border border-slate-200 bg-white/80 p-3 dark:border-slate-800 dark:bg-slate-950/40">
+                              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">If Bitget Rejects It</p>
+                              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                                {([
+                                  { value: 'abort', label: 'Abort Entry' },
+                                  { value: 'fallback_to_app', label: 'Fallback To App' },
+                                ] as const).map((option) => (
+                                  <button
+                                    key={option.value}
+                                    type="button"
+                                    onClick={async () => {
+                                      try {
+                                        await apiClient.updateSettings({ self_native_trailing_fallback_mode: option.value });
+                                        setSelfNativeTrailingFallbackMode(option.value);
+                                      } catch {
+                                        setErrorPopup('No se pudo actualizar el fallback del trailing nativo.');
+                                      }
+                                    }}
+                                    className={cn(
+                                      "rounded-lg border px-3 py-2 text-[10px] font-black uppercase tracking-[0.16em] transition-colors",
+                                      selfNativeTrailingFallbackMode === option.value
+                                        ? "border-cyan-500/40 bg-cyan-500/10 text-cyan-600 dark:text-cyan-200"
+                                        : "border-slate-300 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-300"
+                                    )}
+                                  >
+                                    {option.label}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/90 p-3 dark:border-slate-800 dark:bg-slate-950/60">
                         <div className="flex items-center justify-between gap-3">
                           <div>
                             <p className="text-sm font-semibold leading-tight text-slate-700 dark:text-slate-200">Trend Breakeven Enabled</p>
@@ -3882,36 +4057,39 @@ function PositionCard({
   const managementModeLabel = formatManagementModeLabel(pos.managementMode);
   const stratManaged = managementMode === 'strat';
   const trendManaged = managementMode === 'trend';
+  const nativeTrailingManaged = isNativeTrailingManagedByExchangeForPosition(pos);
   const breakEvenEnabled = isBreakEvenEffectivelyEnabledForPosition(pos);
   const trailingEnabled = isTrailingEffectivelyEnabledForPosition(pos);
-  const breakEvenLocked = breakEvenEnabled;
+  const breakEvenLocked = breakEvenEnabled || nativeTrailingManaged;
   const quoteCurrency = pos.tradingMode === 'live' ? 'USDC' : 'USDT';
   const comm = getFallbackCommissionRate(pos.tradingMode);
   const parsedLegacyStopPercent = Number.parseFloat(legacyStopPercent || '1.2');
   const LEGACY_STOP_PERCENT = Number.isFinite(parsedLegacyStopPercent) && parsedLegacyStopPercent > 0
     ? parsedLegacyStopPercent
     : 1.2;
+  const estimatedNativeStopLoss = getEstimatedNativeTrailingStopForPosition(pos);
+  const displayStopLoss = typeof estimatedNativeStopLoss === 'number' ? estimatedNativeStopLoss : pos.stopLoss;
   const entryCost = pos.entryPrice * pos.quantity * comm;
-  const exitCost = pos.stopLoss * pos.quantity * comm;
+  const exitCost = displayStopLoss * pos.quantity * comm;
   const grossPercent = pos.profitLossPercent;
   const netPercent = pos.entryPrice > 0 && pos.quantity > 0
     ? (pos.profitLossFiat / (pos.entryPrice * pos.quantity)) * 100
     : 0;
   const pnlSafe = isBuy 
-    ? ((pos.stopLoss - pos.entryPrice) * pos.quantity) - entryCost - exitCost
-    : ((pos.entryPrice - pos.stopLoss) * pos.quantity) - entryCost - exitCost;
+    ? ((displayStopLoss - pos.entryPrice) * pos.quantity) - entryCost - exitCost
+    : ((pos.entryPrice - displayStopLoss) * pos.quantity) - entryCost - exitCost;
   const stopDistancePercent = pos.entryPrice > 0
-    ? ((pos.stopLoss - pos.entryPrice) / pos.entryPrice) * 100
+    ? ((displayStopLoss - pos.entryPrice) / pos.entryPrice) * 100
     : 0;
   const riskDistancePercent = isBuy ? -stopDistancePercent : stopDistancePercent;
   const isLegacyStop = Math.abs(Math.abs(riskDistancePercent) - LEGACY_STOP_PERCENT) < 0.05;
-  const stopAdjustedByApp = !isLegacyStop;
+  const stopAdjustedByApp = nativeTrailingManaged || !isLegacyStop;
   const breakevenStopPrice = isBuy
     ? pos.entryPrice * (1 + comm) / (1 - comm)
     : pos.entryPrice * (1 - comm) / (1 + comm);
   const stopVsBreakevenDelta = isBuy
-    ? pos.stopLoss - breakevenStopPrice
-    : breakevenStopPrice - pos.stopLoss;
+    ? displayStopLoss - breakevenStopPrice
+    : breakevenStopPrice - displayStopLoss;
   const stopTolerance = Math.max(
     0.0000001,
     (typeof pos.pricePrecision === 'number' ? Math.pow(10, -pos.pricePrecision) : pos.entryPrice * 0.0001)
@@ -3923,24 +4101,31 @@ function PositionCard({
   const trailingSecured = isSafe && stopVsBreakevenDelta > stopTolerance;
   const slAtEntry = breakevenActive && !trailingSecured;
   const protectionStatus = trailingSecured
-    ? `Secured +${pnlSafe.toFixed(2)} ${quoteCurrency}`
+    ? `${nativeTrailingManaged ? 'Approx Secured ' : 'Secured '}+${pnlSafe.toFixed(2)} ${quoteCurrency}`
     : breakevenActive
-      ? 'Breakeven Active'
-      : 'Protection Arming';
+      ? (nativeTrailingManaged ? 'Trailing Native Active' : 'Breakeven Active')
+      : (nativeTrailingManaged ? 'Native Trailing Arming' : 'Protection Arming');
   const stopEngineLabel = stratManaged
     ? (trailingEnabled
         ? 'Strat Auto + Self Trailing'
         : breakEvenEnabled
           ? 'Strat Auto + BreakEven'
           : 'Strat Legacy')
+    : nativeTrailingManaged
+      ? 'Bitget Native Trailing (Approx)'
     : trendManaged
       ? (trailingEnabled ? 'Trend Signal/Legacy + Trend Trailing' : 'Trend Signal/Legacy + Trend BreakEven')
-    : (stopAdjustedByApp ? 'Adapted By App' : `Legacy ${LEGACY_STOP_PERCENT}% Default`);
-  const protectionModeLabel = trailingEnabled
-    ? 'Breakeven + Trailing'
+      : (stopAdjustedByApp ? 'Adapted By App' : `Legacy ${LEGACY_STOP_PERCENT}% Default`);
+  const protectionModeLabel = nativeTrailingManaged
+    ? 'Bitget Native Trailing'
+    : trailingEnabled
+      ? 'Breakeven + Trailing'
     : breakEvenEnabled
       ? 'Breakeven'
       : 'Proteccion manual disponible';
+  const nativeTrailingMeta = nativeTrailingManaged && typeof pos.nativeTrailingCallbackPercent === 'number' && typeof pos.nativeTrailingActivationPercent === 'number'
+    ? `CB ${pos.nativeTrailingCallbackPercent.toFixed(2)}% · ACT ${pos.nativeTrailingActivationPercent.toFixed(2)}%`
+    : null;
 
   const exchangeUrl = `https://www.bitget.com/en/futures/usdt/${pos.symbol}`;
   const tradingViewUrl = `https://www.tradingview.com/chart/?symbol=BITGET%3A${encodeURIComponent(`${pos.symbol}.P`)}`;
@@ -3974,6 +4159,9 @@ function PositionCard({
   if (managementMode === 'self' && typeof pos.takeProfitTargetPercent === 'number' && pos.takeProfitTargetPercent > 0) {
     positionMeta.push(`TP ${pos.takeProfitTargetPercent.toFixed(2)}%`);
   }
+  if (nativeTrailingMeta) {
+    positionMeta.push(nativeTrailingMeta);
+  }
 
   const handleBreakEvenClick = async () => {
     if (breakEvenLocked || protectionBusy) {
@@ -3989,7 +4177,7 @@ function PositionCard({
   };
 
   const handleTrailingClick = async () => {
-    if (protectionBusy) {
+    if (protectionBusy || nativeTrailingManaged) {
       return;
     }
 
@@ -4099,7 +4287,7 @@ function PositionCard({
           <div className="min-w-0">
             <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Stop Engine</p>
             <p className={cn("mt-1 text-xl font-mono", isSafe ? "text-emerald-300" : "text-rose-300")}>
-              {formatPrice(pos.stopLoss, pos.pricePrecision)}
+              {formatPrice(displayStopLoss, pos.pricePrecision)}
             </p>
             <p className={cn("mt-2 text-[11px] font-black uppercase tracking-[0.15em]", stopAdjustedByApp || stratManaged ? "text-cyan-300" : "text-slate-500")}>
               {stopDistancePercent > 0 ? '+' : ''}{stopDistancePercent.toFixed(2)}% vs entry
@@ -4122,6 +4310,11 @@ function PositionCard({
             {typeof pos.takeProfit === 'number' && pos.takeProfit > 0 && (
               <p className="mt-2 text-[10px] font-black uppercase tracking-[0.18em] text-amber-300">
                 TP {formatPrice(pos.takeProfit, pos.pricePrecision)}
+              </p>
+            )}
+            {nativeTrailingManaged && estimatedNativeStopLoss !== null && (
+              <p className="mt-2 text-[10px] font-black uppercase tracking-[0.18em] text-cyan-300">
+                Approx Native Stop
               </p>
             )}
             {stratManaged && !breakEvenEnabled && !trailingEnabled && (
@@ -4175,21 +4368,23 @@ function PositionCard({
               (breakEvenLocked || protectionBusy !== null) && "cursor-not-allowed opacity-80"
             )}
           >
-            {protectionBusy === 'breakEven' ? 'Activando...' : breakEvenEnabled ? 'Breakeven Activo' : 'Activar Breakeven'}
+            {nativeTrailingManaged ? 'Bitget Native' : protectionBusy === 'breakEven' ? 'Activando...' : breakEvenEnabled ? 'Breakeven Activo' : 'Activar Breakeven'}
           </button>
           <button
             type="button"
             onClick={handleTrailingClick}
-            disabled={protectionBusy !== null}
+            disabled={protectionBusy !== null || nativeTrailingManaged}
             className={cn(
               "rounded-xl border px-3 py-2 text-[11px] font-black uppercase tracking-[0.18em] transition-colors",
               trailingEnabled
                 ? "border-emerald-400/50 bg-emerald-500/15 text-emerald-300"
                 : "border-slate-700 bg-slate-900/70 text-slate-300 hover:border-emerald-400/40 hover:text-emerald-200",
-              protectionBusy !== null && "cursor-not-allowed opacity-80"
+              (protectionBusy !== null || nativeTrailingManaged) && "cursor-not-allowed opacity-80"
             )}
           >
-            {protectionBusy === 'trailing'
+            {nativeTrailingManaged
+              ? 'Trailing Bitget'
+              : protectionBusy === 'trailing'
               ? (trailingEnabled ? 'Desactivando...' : 'Activando...')
               : trailingEnabled
                 ? 'Desactivar Trailing'

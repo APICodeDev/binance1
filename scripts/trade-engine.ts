@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db';
 import { writeAuditLog } from '@/lib/audit';
 import { notifyAllActiveDevices } from '@/lib/pushNotifications';
 import { notifyPositiveClose } from '@/lib/ntfy';
+import { attachPositionProtectionMeta } from '@/lib/positionSignals';
 import {
   bitgetBuildPositionContext,
   bitgetCancelAllOrders,
@@ -23,8 +24,10 @@ import {
   calculateCloseMetrics,
   computeAdaptiveProtectionDecision,
   inferPositionCloseOrigin,
+  isAppManagedTrailingEffectivelyEnabled,
   isBreakEvenEffectivelyEnabled,
   isFixedPriceManagementMode,
+  isNativeTrailingManagedByExchange,
   isTrailingEffectivelyEnabled,
   normalizePositionManagementMode,
   resolveBitgetCloseExecution,
@@ -36,6 +39,12 @@ import {
 } from '@/lib/protectionSettings';
 
 type TradingMode = 'demo' | 'live';
+type ManagedPosition = Position & {
+  nativeTrailingEnabled?: boolean;
+  nativeTrailingCallbackPercent?: number | null;
+  nativeTrailingActivationPercent?: number | null;
+  protectionOwner?: 'app' | 'bitget';
+};
 
 type MarketSnapshot = {
   symbol: string;
@@ -71,10 +80,12 @@ type PositionMarketUpdate = {
   stopLoss: number;
   takeProfit: number | null;
   candidateStopLoss: number | null;
+  estimatedStopLoss: number | null;
   canImproveStop: boolean;
   managementMode: 'auto' | 'self' | 'strat' | 'trend';
   breakEvenEnabled: boolean;
   trailingEnabled: boolean;
+  trailingSource: 'app' | 'bitget' | 'none';
   eventTimestamp: number;
 };
 
@@ -101,7 +112,7 @@ const EXHAUSTION_FLAT_MIN_STAGNATION_MS = 120 * 60 * 1000;
 const EXHAUSTION_FLAT_MAX_GIVEBACK_PERCENT = 0.25;
 
 const marketSnapshots = new Map<string, MarketSnapshot>();
-const openPositions = new Map<number, Position>();
+const openPositions = new Map<number, ManagedPosition>();
 const positionsByMarketKey = new Map<string, Set<number>>();
 const watchedMarketKeys = new Set<string>();
 const adaptiveContextByPosition = new Map<number, AdaptiveProtectionContext | null>();
@@ -195,7 +206,26 @@ const getAutoTrailingStopPrice = (
     : crossedPrice * (1 + settings.autoTrailingStepPercent / 100);
 };
 
-const getPositionCommission = (position: Position) => {
+const getNativeTrailingEstimatedStopPrice = (
+  position: ManagedPosition,
+  effectiveMovePercent: number
+) => {
+  const callbackPercent = Number(position.nativeTrailingCallbackPercent || 0);
+  const activationPercent = Number(position.nativeTrailingActivationPercent || 0);
+  if (!(callbackPercent > 0) || !(activationPercent > 0) || effectiveMovePercent < activationPercent) {
+    return null;
+  }
+
+  const highestTrackedPrice = position.positionType === 'buy'
+    ? position.entryPrice * (1 + (effectiveMovePercent / 100))
+    : position.entryPrice * (1 - (effectiveMovePercent / 100));
+
+  return position.positionType === 'buy'
+    ? highestTrackedPrice * (1 - (callbackPercent / 100))
+    : highestTrackedPrice * (1 + (callbackPercent / 100));
+};
+
+const getPositionCommission = (position: ManagedPosition) => {
   const tradingMode = ((position as any).tradingMode || 'demo') as TradingMode;
   return getDefaultBitgetFeeRate(tradingMode);
 };
@@ -216,7 +246,7 @@ const resolveLivePrice = (snapshot: MarketSnapshot) => {
   return null;
 };
 
-const updateCachedPosition = (positionId: number, patch: Partial<Position>) => {
+const updateCachedPosition = (positionId: number, patch: Partial<ManagedPosition>) => {
   const current = openPositions.get(positionId);
   if (!current) {
     return;
@@ -228,7 +258,7 @@ const updateCachedPosition = (positionId: number, patch: Partial<Position>) => {
   });
 };
 
-const removeOpenPosition = (position: Position) => {
+const removeOpenPosition = (position: ManagedPosition) => {
   openPositions.delete(position.id);
   const marketKey = makeMarketKey(((position as any).tradingMode || 'demo') as TradingMode, position.symbol);
   const ids = positionsByMarketKey.get(marketKey);
@@ -246,7 +276,7 @@ const removeOpenPosition = (position: Position) => {
   adaptiveContextPromiseByPosition.delete(position.id);
 };
 
-const loadAdaptiveContextForPosition = async (position: Position) => {
+const loadAdaptiveContextForPosition = async (position: ManagedPosition) => {
   const cached = adaptiveContextByPosition.get(position.id);
   if (typeof cached !== 'undefined') {
     return cached;
@@ -286,20 +316,22 @@ const loadAdaptiveContextForPosition = async (position: Position) => {
   return resolved;
 };
 
-const computeCandidateStopLoss = (position: Position, currentPrice: number, adaptiveContext: AdaptiveProtectionContext | null) => {
+const computeCandidateStopLoss = (position: ManagedPosition, currentPrice: number, adaptiveContext: AdaptiveProtectionContext | null) => {
   const managementMode = normalizePositionManagementMode(position.managementMode);
   const breakEvenEnabled = isBreakEvenEffectivelyEnabled({
     ...(position as any),
     trendBreakEvenEnabled: engineSettings.protection.trendBreakEvenEnabled,
   });
   const trailingEnabled = isTrailingEffectivelyEnabled(position as any);
+  const appManagedTrailingEnabled = isAppManagedTrailingEffectivelyEnabled(position as any);
   const fixedManaged = isFixedPriceManagementMode(position.managementMode);
   const trendManaged = managementMode === 'trend';
   const selfManaged = managementMode === 'self' && !fixedManaged;
   const stratManaged = managementMode === 'strat';
   const autoManaged = managementMode === 'auto';
-  const effectiveSelfManaged = trailingEnabled && (!autoManaged || fixedManaged) && !trendManaged;
-  const breakEvenOnlyEnabled = breakEvenEnabled && !trailingEnabled;
+  const nativeTrailingManaged = isNativeTrailingManagedByExchange(position as any);
+  const effectiveSelfManaged = appManagedTrailingEnabled && (!autoManaged || fixedManaged) && !trendManaged;
+  const breakEvenOnlyEnabled = breakEvenEnabled && !appManagedTrailingEnabled && !nativeTrailingManaged;
   const commission = getPositionCommission(position);
   const protection = engineSettings.protection;
   const marketMovePercent = position.positionType === 'buy'
@@ -307,6 +339,10 @@ const computeCandidateStopLoss = (position: Position, currentPrice: number, adap
     : ((position.entryPrice - currentPrice) / position.entryPrice) * 100;
   const historicalMaxProfitPercent = Math.max(0, Number((position as any).maxProfitPercent || 0));
   const effectiveMovePercent = Math.max(marketMovePercent, historicalMaxProfitPercent);
+  if (nativeTrailingManaged) {
+    return null;
+  }
+
   if (trendManaged && !trailingEnabled && breakEvenEnabled) {
     if (position.positionType === 'buy') {
       return effectiveMovePercent >= protection.trendBreakEvenActivationPercent
@@ -404,7 +440,7 @@ const hasBreachedStopLevel = (position: Position, currentPrice: number, stopPric
 };
 
 const buildPositionMarketUpdate = (
-  position: Position,
+  position: ManagedPosition,
   snapshot: MarketSnapshot,
   adaptiveContext: AdaptiveProtectionContext | null
 ): PositionMarketUpdate | null => {
@@ -424,6 +460,15 @@ const buildPositionMarketUpdate = (
     ? ((currentPrice - position.entryPrice) / position.entryPrice) * 100
     : ((position.entryPrice - currentPrice) / position.entryPrice) * 100;
   const candidateStopLoss = computeCandidateStopLoss(position, currentPrice, adaptiveContext);
+  const effectiveMovePercent = Math.max(
+    position.positionType === 'buy'
+      ? ((currentPrice - position.entryPrice) / position.entryPrice) * 100
+      : ((position.entryPrice - currentPrice) / position.entryPrice) * 100,
+    Math.max(0, Number((position as any).maxProfitPercent || 0))
+  );
+  const estimatedStopLoss = isNativeTrailingManagedByExchange(position as any)
+    ? getNativeTrailingEstimatedStopPrice(position, effectiveMovePercent)
+    : null;
   const canImproveStop = candidateStopLoss !== null && (
     (position.positionType === 'buy' && candidateStopLoss > position.stopLoss) ||
     (position.positionType === 'sell' && candidateStopLoss < position.stopLoss)
@@ -440,6 +485,7 @@ const buildPositionMarketUpdate = (
     stopLoss: position.stopLoss,
     takeProfit: typeof position.takeProfit === 'number' ? position.takeProfit : null,
     candidateStopLoss,
+    estimatedStopLoss,
     canImproveStop,
     managementMode: normalizePositionManagementMode(position.managementMode),
     breakEvenEnabled: isBreakEvenEffectivelyEnabled({
@@ -447,6 +493,11 @@ const buildPositionMarketUpdate = (
       trendBreakEvenEnabled: engineSettings.protection.trendBreakEvenEnabled,
     }),
     trailingEnabled: isTrailingEffectivelyEnabled(position as any),
+    trailingSource: isNativeTrailingManagedByExchange(position as any)
+      ? 'bitget'
+      : isAppManagedTrailingEffectivelyEnabled(position as any)
+        ? 'app'
+        : 'none',
     eventTimestamp: snapshot.timestamp,
   };
 };
@@ -469,7 +520,7 @@ const subscribeMarketKey = async (marketKey: string) => {
   watchedMarketKeys.add(marketKey);
 };
 
-const rebuildPositionIndexes = (positions: Position[]) => {
+const rebuildPositionIndexes = (positions: ManagedPosition[]) => {
   openPositions.clear();
   positionsByMarketKey.clear();
 
@@ -604,7 +655,7 @@ const reconcileExternallyClosedPosition = async (position: Position) => {
   return null;
 };
 
-const reconcileOpenPositionsAgainstExchange = async (positions: Position[]) => {
+const reconcileOpenPositionsAgainstExchange = async (positions: ManagedPosition[]) => {
   if (positions.length === 0) {
     return positions;
   }
@@ -643,7 +694,7 @@ const reconcileOpenPositionsAgainstExchange = async (positions: Position[]) => {
     return reconcileExternallyClosedPosition(position);
   }));
 
-  return reconciled.filter((position): position is Position => Boolean(position));
+  return reconciled.filter((position): position is ManagedPosition => Boolean(position));
 };
 
 const reloadOpenPositions = async () => {
@@ -652,7 +703,8 @@ const reloadOpenPositions = async () => {
     orderBy: { createdAt: 'desc' },
   });
 
-  positions = await reconcileOpenPositionsAgainstExchange(positions);
+  positions = await reconcileOpenPositionsAgainstExchange(positions as ManagedPosition[]) as ManagedPosition[];
+  positions = await attachPositionProtectionMeta(positions as ManagedPosition[]) as ManagedPosition[];
 
   rebuildPositionIndexes(positions);
   for (const marketKey of Array.from(positionsByMarketKey.keys())) {
@@ -709,7 +761,7 @@ const shouldPersistPosition = (positionId: number, force = false) => {
   return (Date.now() - lastPersistAt) >= POSITION_PERSIST_COOLDOWN_MS;
 };
 
-const persistPositionSnapshot = async (position: Position, patch: Partial<Position>, force = false) => {
+const persistPositionSnapshot = async (position: ManagedPosition, patch: Partial<ManagedPosition>, force = false) => {
   if (!shouldPersistPosition(position.id, force)) {
     updateCachedPosition(position.id, patch);
     return;
@@ -723,7 +775,7 @@ const persistPositionSnapshot = async (position: Position, patch: Partial<Positi
   lastPersistAtByPosition.set(position.id, Date.now());
 };
 
-const syncStopForPosition = async (position: Position, update: PositionMarketUpdate) => {
+const syncStopForPosition = async (position: ManagedPosition, update: PositionMarketUpdate) => {
   if (!update.canImproveStop || update.candidateStopLoss === null) {
     return null;
   }
@@ -808,7 +860,7 @@ const syncStopForPosition = async (position: Position, update: PositionMarketUpd
   return update.candidateStopLoss;
 };
 
-const closePositionFromEngine = async (position: Position, update: PositionMarketUpdate, reason: 'stop_loss' | 'trailing_stop' | 'take_profit' | 'exhaustion') => {
+const closePositionFromEngine = async (position: ManagedPosition, update: PositionMarketUpdate, reason: 'stop_loss' | 'trailing_stop' | 'take_profit' | 'exhaustion') => {
   const tradingMode = ((position as any).tradingMode || 'demo') as TradingMode;
   const positionMode = await bitgetGetPositionMode(position.symbol.toUpperCase(), tradingMode) || 'one_way_mode';
   const positionContext = bitgetBuildPositionContext(position.positionType as 'buy' | 'sell', positionMode);

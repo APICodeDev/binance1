@@ -9,6 +9,7 @@ import {
   getManualTrailingOverride,
   isBreakEvenEffectivelyEnabled,
   isTrailingEffectivelyEnabled,
+  normalizePositionManagementMode,
 } from '@/lib/positions';
 import {
   bitgetBuildPositionContext,
@@ -59,6 +60,13 @@ export async function POST(req: NextRequest) {
   const position = await prisma.position.findUnique({ where: { id } });
   if (!position || position.status !== 'open') {
     return fail(404, 'Open position not found');
+  }
+
+  if (normalizePositionManagementMode(position.managementMode) === 'self') {
+    const selfNativeTrailingSetting = await prisma.setting.findUnique({ where: { key: 'self_native_trailing_enabled' } });
+    if (selfNativeTrailingSetting?.value === '1') {
+      return fail(409, 'Self positions are managed by Bitget native trailing while self_native_trailing_enabled is active');
+    }
   }
 
   if (requestedBreakEvenEnabled === false) {

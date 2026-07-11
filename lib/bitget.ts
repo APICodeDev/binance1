@@ -518,6 +518,37 @@ export const bitgetPlaceTpslMarket = async (
   return bitgetRequest('/api/v2/mix/order/place-tpsl-order', params, 'POST', true, tradingMode);
 };
 
+export const bitgetPlaceTrailingStop = async (
+  symbol: string,
+  holdSide: 'long' | 'short' | 'buy' | 'sell',
+  triggerPrice: number,
+  quantity: number,
+  callbackPercent: number,
+  triggerType: 'fill_price' | 'mark_price' = BITGET_PROTECTION_TRIGGER_TYPE,
+  clientOid?: string,
+  tradingMode: 'demo' | 'live' = 'demo'
+) => {
+  const sym = symbol.toUpperCase();
+  const precision = await bitgetGetPricePrecision(sym, tradingMode);
+  const params: Record<string, string> = {
+    symbol: sym,
+    productType: getProductType(sym),
+    marginCoin: getMarginCoin(sym),
+    planType: 'moving_plan',
+    triggerPrice: triggerPrice.toFixed(precision),
+    triggerType,
+    holdSide,
+    size: quantity.toString(),
+    rangeRate: callbackPercent.toString(),
+  };
+
+  if (clientOid) {
+    params.clientOid = clientOid;
+  }
+
+  return bitgetRequest('/api/v2/mix/order/place-tpsl-order', params, 'POST', true, tradingMode);
+};
+
 export const bitgetPlaceLimitOrder = async (
   symbol: string,
   side: 'BUY' | 'SELL',
@@ -962,6 +993,10 @@ const bitgetIsTakeProfitOrder = (order: any) => {
   return planType.includes('profit') || orderSource.includes('profit');
 };
 
+export const bitgetIsTrailingOrder = (order: any) => {
+  return String(order?.planType || '').toLowerCase() === 'moving_plan';
+};
+
 const bitgetCancelAllPlanOrdersByType = async (
   symbol: string,
   planType: 'normal_plan' | 'profit_plan' | 'loss_plan' | 'pos_profit' | 'pos_loss' | 'moving_plan',
@@ -974,6 +1009,134 @@ const bitgetCancelAllPlanOrdersByType = async (
     marginCoin: getMarginCoin(sym),
     planType,
   }, 'POST', true, tradingMode);
+};
+
+export const bitgetGetPendingTrailingOrders = async (
+  symbol: string,
+  tradingMode: 'demo' | 'live' = 'demo'
+) => {
+  const pending = await bitgetGetPendingTpslOrders(symbol, tradingMode);
+  if (!pending.ok) {
+    return pending;
+  }
+
+  return {
+    ok: true as const,
+    orders: pending.orders.filter((order: any) => bitgetIsTrailingOrder(order)),
+    error: null,
+  };
+};
+
+const bitgetCallbackMatches = (left: number, right: number) => {
+  return Math.abs(left - right) <= Math.max(0.0001, Math.abs(right) * 0.01);
+};
+
+export const bitgetVerifyPendingTrailingOrder = async (params: {
+  symbol: string;
+  expectedTriggerPrice: number;
+  expectedSize: number;
+  expectedCallbackPercent: number;
+  tradingMode: 'demo' | 'live';
+  expectedTriggerType?: 'fill_price' | 'mark_price';
+}) => {
+  const {
+    symbol,
+    expectedTriggerPrice,
+    expectedSize,
+    expectedCallbackPercent,
+    tradingMode,
+    expectedTriggerType,
+  } = params;
+  const pending = await bitgetGetPendingTrailingOrders(symbol, tradingMode);
+  if (!pending.ok) {
+    return { ok: false, verified: false, message: pending.error || 'Unable to fetch pending trailing orders', order: null };
+  }
+
+  const matched = pending.orders.find((order: any) => {
+    const triggerPrice = Number.parseFloat(String(order?.triggerPrice || order?.planTriggerPrice || '0'));
+    const size = Number.parseFloat(String(order?.size || order?.sz || '0'));
+    const callbackPercent = Number.parseFloat(String(order?.rangeRate || order?.callbackRatio || '0'));
+    const triggerType = String(order?.triggerType || '').toLowerCase();
+
+    return Number.isFinite(triggerPrice) &&
+      Number.isFinite(callbackPercent) &&
+      bitgetPriceMatches(triggerPrice, expectedTriggerPrice) &&
+      bitgetCallbackMatches(callbackPercent, expectedCallbackPercent) &&
+      (!Number.isFinite(size) || size <= 0 || bitgetSizeMatches(size, expectedSize)) &&
+      (!expectedTriggerType || triggerType === expectedTriggerType);
+  }) || null;
+
+  return {
+    ok: true,
+    verified: Boolean(matched),
+    message: matched ? 'verified' : 'matching trailing order not found',
+    order: matched,
+  };
+};
+
+export const bitgetEnsureTrailingOrder = async (params: {
+  symbol: string;
+  holdSide: 'long' | 'short' | 'buy' | 'sell';
+  triggerPrice: number;
+  quantity: number;
+  callbackPercent: number;
+  triggerType?: 'fill_price' | 'mark_price';
+  clientOid?: string;
+  tradingMode: 'demo' | 'live';
+}) => {
+  const {
+    symbol,
+    holdSide,
+    triggerPrice,
+    quantity,
+    callbackPercent,
+    triggerType = BITGET_PROTECTION_TRIGGER_TYPE,
+    clientOid,
+    tradingMode,
+  } = params;
+  const normalizedTriggerPrice = triggerPrice;
+
+  await Promise.allSettled([
+    bitgetCancelAllPlanOrdersByType(symbol, 'moving_plan', tradingMode),
+  ]);
+  await sleep(300);
+
+  const placeResp = await bitgetPlaceTrailingStop(
+    symbol,
+    holdSide,
+    normalizedTriggerPrice,
+    quantity,
+    callbackPercent,
+    triggerType,
+    clientOid,
+    tradingMode
+  );
+  if (!bitgetOrderSuccess(placeResp)) {
+    return { ok: false, message: placeResp?.msg || placeResp?.message || JSON.stringify(placeResp), response: placeResp };
+  }
+
+  for (const delayMs of PROTECTION_VERIFY_DELAYS_MS) {
+    await sleep(delayMs);
+    const verification = await bitgetVerifyPendingTrailingOrder({
+      symbol,
+      expectedTriggerPrice: normalizedTriggerPrice,
+      expectedSize: quantity,
+      expectedCallbackPercent: callbackPercent,
+      expectedTriggerType: triggerType,
+      tradingMode,
+    });
+    if (verification.ok && verification.verified) {
+      return {
+        ok: true,
+        message: 'placed',
+        response: placeResp,
+        order: verification.order,
+        normalizedTriggerPrice,
+      };
+    }
+  }
+
+  return { ok: false, message: `Trailing order could not be verified at ${normalizedTriggerPrice}`, response: placeResp };
 };
 
 export const bitgetCancelVerifiedTakeProfitOrders = async (

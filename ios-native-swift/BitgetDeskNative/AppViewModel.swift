@@ -190,6 +190,11 @@ final class AppViewModel: ObservableObject {
     @Published var selfBreakEvenActivationPercent = "0.5"
     @Published var selfTrailingActivationPercent = "1.25"
     @Published var selfTrailingStepPercent = "1"
+    @Published var selfNativeTrailingEnabled = false
+    @Published var selfNativeTrailingCallbackPercent = "0.5"
+    @Published var selfNativeTrailingActivationPercent = "1.25"
+    @Published var selfNativeTrailingTriggerType = "fill_price"
+    @Published var selfNativeTrailingFallbackMode = "abort"
     @Published var trendBreakEvenActivationPercent = "1"
     @Published var openPositions: [Position] = []
     @Published var closedPositions: [Position] = []
@@ -547,6 +552,11 @@ final class AppViewModel: ObservableObject {
             selfBreakEvenActivationPercent = settings.self_break_even_activation_percent
             selfTrailingActivationPercent = settings.self_trailing_activation_percent
             selfTrailingStepPercent = settings.self_trailing_step_percent
+            selfNativeTrailingEnabled = settings.self_native_trailing_enabled == "1"
+            selfNativeTrailingCallbackPercent = settings.self_native_trailing_callback_percent
+            selfNativeTrailingActivationPercent = settings.self_native_trailing_activation_percent
+            selfNativeTrailingTriggerType = settings.self_native_trailing_trigger_type
+            selfNativeTrailingFallbackMode = settings.self_native_trailing_fallback_mode
             trendBreakEvenActivationPercent = settings.trend_break_even_activation_percent
             profitSoundEnabled = settings.profit_sound_enabled == "1"
             profitSoundFile = settings.profit_sound_file

@@ -14,6 +14,10 @@ import {
   type TradingMode,
 } from '@/lib/positions';
 import {
+  PROTECTION_SETTING_DEFINITIONS,
+  resolveProtectionThresholdSettingsFromMap,
+} from '@/lib/protectionSettings';
+import {
   bitgetBuildPositionContext,
   bitgetCancelAllOrders,
   bitgetCancelOrder,
@@ -40,6 +44,7 @@ import {
   bitgetNormalizeSizeByContract,
   bitgetNormalizeSymbol,
   bitgetOrderSuccess,
+  bitgetEnsureTrailingOrder,
   bitgetPlaceLimitOrder,
   bitgetPlaceMarketOrder,
   bitgetPlaceStopMarket,
@@ -757,12 +762,25 @@ async function executeEntry(
     }
 
     const tradingMode = await resolveTradingMode();
-    const [apiStopModeSetting, apiLegacyStopPercentSetting] = await Promise.all([
+    const [apiStopModeSetting, apiLegacyStopPercentSetting, protectionSettingsRows] = await Promise.all([
       prisma.setting.findUnique({ where: { key: 'api_stop_mode' } }),
       prisma.setting.findUnique({ where: { key: 'api_legacy_stop_percent' } }),
+      prisma.setting.findMany({
+        where: {
+          key: {
+            in: PROTECTION_SETTING_DEFINITIONS.map((definition) => definition.key),
+          },
+        },
+      }),
     ]);
     const apiStopMode = apiStopModeSetting?.value === 'legacy' ? 'legacy' : 'signal';
     const apiLegacyStopPercent = parseConfiguredLegacyStopPercent(apiLegacyStopPercentSetting?.value);
+    const protectionSettings = resolveProtectionThresholdSettingsFromMap(
+      protectionSettingsRows.reduce<Record<string, string>>((acc, row) => {
+        acc[row.key] = row.value;
+        return acc;
+      }, {})
+    );
     const forcedPositionMode = (() => {
       const raw = String(process.env.BITGET_FORCE_POSITION_MODE || '').trim().toLowerCase();
       if (raw === 'hedge_mode' || raw === 'one_way_mode') {
@@ -1210,6 +1228,21 @@ async function executeEntry(
       : stratManaged
       ? (isRequestedTakeProfitValid ? normalizedRequestedTakeProfit : null)
       : (isRequestedTakeProfitValid ? normalizedRequestedTakeProfit : null);
+    const selfNativeTrailingRequested = managementMode === 'self' && protectionSettings.selfNativeTrailingEnabled;
+    const nativeTrailingActivationPrice = selfNativeTrailingRequested
+      ? bitgetNormalizePriceByContractDirectional(
+          type === 'buy'
+            ? entryPrice * (1 + (protectionSettings.selfNativeTrailingActivationPercent / 100))
+            : entryPrice * (1 - (protectionSettings.selfNativeTrailingActivationPercent / 100)),
+          exchangeInfo,
+          type === 'buy' ? 'up' : 'down'
+        )
+      : null;
+    const nativeTrailingCallbackPercent = selfNativeTrailingRequested
+      ? protectionSettings.selfNativeTrailingCallbackPercent
+      : null;
+    const nativeTrailingTriggerType = protectionSettings.selfNativeTrailingTriggerType;
+    const nativeTrailingFallbackMode = protectionSettings.selfNativeTrailingFallbackMode;
     const slSide = positionContext.closeSide;
     const holdSide = positionContext.holdSide;
     const rollbackCloseSide = slSide;
@@ -1248,6 +1281,10 @@ async function executeEntry(
     let initialTakeProfitAttempts = 0;
     let initialTakeProfitPending = false;
     let persistedTakeProfitPrice = takeProfitPrice;
+    let nativeTrailingEnabledOnOpen = false;
+    let nativeTrailingOrderId: string | null = null;
+    let nativeTrailingClientOid: string | null = null;
+    let nativeTrailingResponse: any = null;
 
     if (shouldPlaceInitialStop) {
       const stopPlacement = await placeProtectionOrderWithRetries({
@@ -1344,6 +1381,39 @@ async function executeEntry(
       return NextResponse.json({ error: true, message: errDetail, detail: tpResponse }, { status: 500 });
     }
 
+    if (selfNativeTrailingRequested && nativeTrailingActivationPrice !== null && nativeTrailingCallbackPercent !== null) {
+      nativeTrailingClientOid = createClientOid(symbol);
+      const nativeTrailingPlacement = await bitgetEnsureTrailingOrder({
+        symbol,
+        holdSide,
+        triggerPrice: nativeTrailingActivationPrice,
+        quantity: filledSize,
+        callbackPercent: nativeTrailingCallbackPercent,
+        triggerType: nativeTrailingTriggerType,
+        clientOid: nativeTrailingClientOid,
+        tradingMode,
+      });
+      nativeTrailingResponse = nativeTrailingPlacement.response || null;
+
+      if (!nativeTrailingPlacement.ok) {
+        if (nativeTrailingFallbackMode === 'abort') {
+          await bitgetCancelAllOrders(symbol, tradingMode);
+          await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
+          const errDetail = `Trailing nativo rechazado por Bitget (${tradingMode}) para ${symbol}. ` +
+            `${nativeTrailingPlacement.message}. Rollback ejecutado.`;
+          await saveLastEntryError(errDetail, symbol, type);
+          return NextResponse.json({ error: true, message: errDetail, detail: nativeTrailingPlacement.response }, { status: 500 });
+        }
+      } else {
+        nativeTrailingEnabledOnOpen = true;
+        nativeTrailingOrderId = String(
+          nativeTrailingPlacement.order?.orderId ||
+          nativeTrailingPlacement.response?.data?.orderId ||
+          ''
+        ).trim() || null;
+      }
+    }
+
     if (initialTakeProfitPending) {
       persistedTakeProfitPrice = takeProfitPrice;
     }
@@ -1437,13 +1507,44 @@ async function executeEntry(
         initialTakeProfitExchangeManaged: takeProfitManagedOnExchange,
         stratBreakEvenEnabledOnOpen: stratManaged,
         stratTrailingEnabledOnOpen: defaultTrailingEnabledOnOpen,
+        nativeTrailingRequestedOnOpen: selfNativeTrailingRequested,
+        nativeTrailingEnabledOnOpen,
+        nativeTrailingOrderId,
+        nativeTrailingClientOid,
+        nativeTrailingActivationPrice,
+        nativeTrailingCallbackPercent,
+        nativeTrailingTriggerType,
+        nativeTrailingFallbackMode,
+        protectionOwnerOnOpen: nativeTrailingEnabledOnOpen ? 'bitget' : 'app',
         initialTakeProfitPending,
         initialTakeProfitAttempts,
         initialStopAttempts,
         initialTakeProfitResponseCode: getBitgetResponseCode(tpResponse),
+        nativeTrailingResponseCode: getBitgetResponseCode(nativeTrailingResponse),
       },
       req,
     });
+
+    if (selfNativeTrailingRequested && !nativeTrailingEnabledOnOpen) {
+      await writeAuditLog({
+        action: 'position.open.native_trailing_failed',
+        userId: auth?.user?.id,
+        targetType: 'position',
+        targetId: String(createdPosition.id),
+        metadata: {
+          symbol,
+          tradingMode,
+          type,
+          managementMode: storedManagementMode,
+          nativeTrailingActivationPrice,
+          nativeTrailingCallbackPercent,
+          nativeTrailingTriggerType,
+          nativeTrailingFallbackMode,
+          responseSummary: summarizeBitgetResponse(nativeTrailingResponse),
+        },
+        req,
+      });
+    }
 
     if (initialTakeProfitPending) {
       await writeAuditLog({
@@ -1472,7 +1573,9 @@ async function executeEntry(
       title: initialTakeProfitPending ? `${symbol} abierta con TP pendiente` : `${symbol} abierta`,
       body: initialTakeProfitPending
         ? `Nueva posicion ${type.toUpperCase()} en ${tradingMode.toUpperCase()} @ ${entryPrice.toFixed(pricePrecision)}. El TP ha quedado pendiente en Bitget.`
-        : `Nueva posicion ${type.toUpperCase()} en ${tradingMode.toUpperCase()} @ ${entryPrice.toFixed(pricePrecision)}.`,
+        : nativeTrailingEnabledOnOpen
+          ? `Nueva posicion ${type.toUpperCase()} en ${tradingMode.toUpperCase()} @ ${entryPrice.toFixed(pricePrecision)} con trailing nativo en Bitget.`
+          : `Nueva posicion ${type.toUpperCase()} en ${tradingMode.toUpperCase()} @ ${entryPrice.toFixed(pricePrecision)}.`,
       data: {
         kind: initialTakeProfitPending ? 'position_opened_tp_pending' : 'position_opened',
         positionId: createdPosition.id,
@@ -1493,7 +1596,9 @@ async function executeEntry(
       success: true,
       message: initialTakeProfitPending
         ? `Position opened in ${tradingMode} for ${symbol} with TP pending on Bitget`
-        : `Position opened in ${tradingMode} for ${symbol}`,
+        : nativeTrailingEnabledOnOpen
+          ? `Position opened in ${tradingMode} for ${symbol} with native trailing on Bitget`
+          : `Position opened in ${tradingMode} for ${symbol}`,
       managementMode,
       storedManagementMode,
       positionMode: effectivePositionMode,
@@ -1533,6 +1638,17 @@ async function executeEntry(
         exchangeManaged: takeProfitManagedOnExchange,
         pending: initialTakeProfitPending,
         attempts: initialTakeProfitAttempts,
+      },
+      nativeTrailing: {
+        requested: selfNativeTrailingRequested,
+        enabled: nativeTrailingEnabledOnOpen,
+        protectionOwner: nativeTrailingEnabledOnOpen ? 'bitget' : 'app',
+        activationPrice: nativeTrailingActivationPrice,
+        activationPercent: selfNativeTrailingRequested ? protectionSettings.selfNativeTrailingActivationPercent : null,
+        callbackPercent: nativeTrailingCallbackPercent,
+        triggerType: selfNativeTrailingRequested ? nativeTrailingTriggerType : null,
+        fallbackMode: selfNativeTrailingRequested ? nativeTrailingFallbackMode : null,
+        orderId: nativeTrailingOrderId,
       },
       stratControls: {
         breakEvenEnabled: stratManaged,

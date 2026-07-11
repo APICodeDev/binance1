@@ -76,6 +76,7 @@ type ProtectionConfigPosition = {
   stratTrailingEnabled?: boolean | null;
   manualBreakEvenEnabled?: boolean | null;
   manualTrailingOverride?: boolean | null;
+  nativeTrailingEnabled?: boolean | null;
 };
 
 export function isBaseBreakEvenEnabled(value: unknown, trendBreakEvenEnabled = true) {
@@ -119,6 +120,18 @@ export function isTrailingEffectivelyEnabled(position: ProtectionConfigPosition)
   }
 
   return isBaseTrailingEnabled(position.managementMode) || Boolean(position.stratTrailingEnabled);
+}
+
+export function isNativeTrailingManagedByExchange(position: ProtectionConfigPosition) {
+  return normalizePositionManagementMode(position.managementMode) === 'self' && Boolean(position.nativeTrailingEnabled);
+}
+
+export function isAppManagedTrailingEffectivelyEnabled(position: ProtectionConfigPosition) {
+  if (isNativeTrailingManagedByExchange(position)) {
+    return false;
+  }
+
+  return isTrailingEffectivelyEnabled(position);
 }
 
 type MarketCandle = {

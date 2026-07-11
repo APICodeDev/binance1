@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { fail, ok } from '@/lib/apiResponse';
 import { requireAuth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { attachTakeProfitUpgradeMeta } from '@/lib/positionSignals';
+import { attachPositionRuntimeMeta } from '@/lib/positionSignals';
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth(req);
@@ -33,8 +33,8 @@ export async function GET(req: NextRequest) {
   });
 
   const [openWithTpMeta, historyWithTpMeta] = await Promise.all([
-    attachTakeProfitUpgradeMeta(open as any),
-    attachTakeProfitUpgradeMeta(history as any),
+    attachPositionRuntimeMeta(open as any),
+    attachPositionRuntimeMeta(history as any),
   ]);
 
   const totalPnlRows = await prisma.position.aggregate({

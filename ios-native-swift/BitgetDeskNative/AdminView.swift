@@ -143,6 +143,30 @@ struct AdminView: View {
                 protectionRow(title: "Self Primer Trailing %", key: "self_trailing_activation_percent", value: $appModel.selfTrailingActivationPercent)
                 protectionRow(title: "Self Siguientes %", key: "self_trailing_step_percent", value: $appModel.selfTrailingStepPercent)
 
+                Toggle("Self Native Trailing", isOn: Binding(
+                    get: { appModel.selfNativeTrailingEnabled },
+                    set: { newValue in
+                        Task { await appModel.updateSetting(key: "self_native_trailing_enabled", value: newValue ? "1" : "0") }
+                    }
+                ))
+
+                protectionRow(title: "Self Native Activacion %", key: "self_native_trailing_activation_percent", value: $appModel.selfNativeTrailingActivationPercent)
+                protectionRow(title: "Self Native Callback %", key: "self_native_trailing_callback_percent", value: $appModel.selfNativeTrailingCallbackPercent)
+
+                nativeTrailingPicker(
+                    title: "Self Native Trigger",
+                    options: [("fill_price", "Fill Price"), ("mark_price", "Mark Price")],
+                    selection: appModel.selfNativeTrailingTriggerType,
+                    key: "self_native_trailing_trigger_type"
+                )
+
+                nativeTrailingPicker(
+                    title: "Self Native Fallback",
+                    options: [("abort", "Abort Entry"), ("fallback_to_app", "Fallback To App")],
+                    selection: appModel.selfNativeTrailingFallbackMode,
+                    key: "self_native_trailing_fallback_mode"
+                )
+
                 Toggle("Trend Breakeven Enabled", isOn: Binding(
                     get: { appModel.trendBreakEvenEnabled },
                     set: { newValue in
@@ -201,6 +225,27 @@ struct AdminView: View {
                     }
                 }
                 .buttonStyle(.bordered)
+            }
+        }
+    }
+
+    private func nativeTrailingPicker(
+        title: String,
+        options: [(String, String)],
+        selection: String,
+        key: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.subheadline.bold())
+            HStack(spacing: 8) {
+                ForEach(options, id: \.0) { option in
+                    Button(option.1) {
+                        Task { await appModel.updateSetting(key: key, value: option.0) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(selection == option.0 ? .cyan : .gray)
+                }
             }
         }
     }
