@@ -1216,18 +1216,28 @@ async function executeEntry(
       );
     const normalizedRequestedTakeProfit = takeProfitResolution.normalizedRequestedTakeProfit;
     const isRequestedTakeProfitValid = takeProfitResolution.isRequestedTakeProfitValid;
+    const requestedStopWasInvalid = stopInputProvided && !isRequestedStopValid;
+    const requestedTakeProfitWasInvalid = takeProfitInputProvided && !isRequestedTakeProfitValid;
     const stopPrice = trendManaged
       ? (isRequestedStopValid ? normalizedRequestedStop : legacyStopPrice)
       : stratManaged
       ? (isRequestedStopValid ? normalizedRequestedStop : legacyStopPrice)
       : managementMode === 'self'
-        ? normalizedRequestedStop
+        ? (isRequestedStopValid ? normalizedRequestedStop : legacyStopPrice)
         : (apiStopMode === 'legacy' ? legacyStopPrice : (isRequestedStopValid ? normalizedRequestedStop : legacyStopPrice));
     const takeProfitPrice = trendManaged
       ? null
       : stratManaged
       ? (isRequestedTakeProfitValid ? normalizedRequestedTakeProfit : null)
       : (isRequestedTakeProfitValid ? normalizedRequestedTakeProfit : null);
+    const appliedStopSource = stopPrice === null
+      ? 'none'
+      : isRequestedStopValid
+        ? stopInputSource
+        : 'legacy';
+    const appliedTakeProfitSource = takeProfitPrice === null
+      ? 'none'
+      : takeProfitInputSource;
     const selfNativeTrailingRequested = managementMode === 'self' && protectionSettings.selfNativeTrailingEnabled;
     const nativeTrailingActivationPrice = selfNativeTrailingRequested
       ? bitgetNormalizePriceByContractDirectional(
@@ -1246,30 +1256,43 @@ async function executeEntry(
     const slSide = positionContext.closeSide;
     const holdSide = positionContext.holdSide;
     const rollbackCloseSide = slSide;
-    const shouldRejectInvalidStop = !stratManaged && !trendManaged && ((managementMode === 'self' && stopInputProvided) || hasPayloadValue(rawRequestedStopPercent));
-    const shouldRejectInvalidTakeProfit = !stratManaged && !trendManaged && ((managementMode === 'self' && takeProfitInputProvided) || hasPayloadValue(rawRequestedTakeProfitPercent));
-
-    if ((!stratManaged && managementMode === 'self' && !isRequestedStopValid) || (shouldRejectInvalidStop && stopInputProvided && !isRequestedStopValid)) {
-      await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
-      const errDetail = `Stop invalido para ${symbol}. ` +
-        `JSON stop=${JSON.stringify(rawRequestedStopPrice)}, stopPercent=${JSON.stringify(rawRequestedStopPercent)}, ` +
-        `takeProfit=${JSON.stringify(rawRequestedTakeProfitPrice)}, takeProfitPercent=${JSON.stringify(rawRequestedTakeProfitPercent)}, ` +
-        `parsedStop=${requestedStopPrice}, parsedStopOffset=${requestedStopOffset}, parsedStopPercent=${requestedStopPercent}, resolvedStop=${resolvedRequestedStopPrice}, ` +
-        `normalizedStop=${normalizedRequestedStop}, entry=${entryPrice}. ` +
-        `Rollback ejecutado.`;
-      await saveLastEntryError(errDetail, symbol, type);
-      return NextResponse.json({ error: true, message: errDetail }, { status: 400 });
-    }
-
-    if (shouldRejectInvalidTakeProfit && takeProfitInputProvided && !isRequestedTakeProfitValid) {
-      await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
-      const errDetail = `Take profit invalido para ${symbol}. ` +
-        `JSON takeProfit=${JSON.stringify(rawRequestedTakeProfitPrice)}, takeProfitPercent=${JSON.stringify(rawRequestedTakeProfitPercent)}, ` +
-        `parsedTakeProfit=${requestedTakeProfitPrice}, parsedTakeProfitPercent=${requestedTakeProfitPercent}, ` +
-        `resolvedTakeProfit=${resolvedRequestedTakeProfitPrice}, normalizedTakeProfit=${normalizedRequestedTakeProfit}, entry=${entryPrice}. ` +
-        `Rollback ejecutado.`;
-      await saveLastEntryError(errDetail, symbol, type);
-      return NextResponse.json({ error: true, message: errDetail }, { status: 400 });
+    if (requestedStopWasInvalid || requestedTakeProfitWasInvalid || (managementMode === 'self' && !stopInputProvided)) {
+      await writeAuditLog({
+        action: 'position.input_sanitized',
+        userId: auth?.user?.id,
+        targetType: 'entry',
+        metadata: {
+          symbol,
+          tradingMode,
+          managementMode: storedManagementMode,
+          type,
+          stopInputProvided,
+          takeProfitInputProvided,
+          rawRequestedStopPrice,
+          rawRequestedStopPercent,
+          rawRequestedTakeProfitPrice,
+          rawRequestedTakeProfitPercent,
+          parsedStop: requestedStopPrice,
+          parsedStopOffset: requestedStopOffset,
+          parsedStopPercent: requestedStopPercent,
+          parsedTakeProfit: requestedTakeProfitPrice,
+          parsedTakeProfitPercent: requestedTakeProfitPercent,
+          resolvedRequestedStopPrice,
+          resolvedRequestedTakeProfitPrice,
+          normalizedRequestedStop,
+          normalizedRequestedTakeProfit,
+          requestedStopAccepted: isRequestedStopValid,
+          requestedTakeProfitAccepted: isRequestedTakeProfitValid,
+          appliedStopPrice: stopPrice,
+          appliedStopSource,
+          appliedTakeProfitPrice: takeProfitPrice,
+          appliedTakeProfitSource,
+          note: managementMode === 'self' && !stopInputProvided
+            ? 'Self signal without SL fell back to Admin legacy stop'
+            : 'Invalid TP/SL sanitized before sending to Bitget',
+        },
+        req,
+      });
     }
 
     const shouldPlaceInitialStop = stopPrice !== null;
@@ -1492,8 +1515,10 @@ async function executeEntry(
         resolvedRequestedStopPrice,
         normalizedRequestedStop,
         requestedStopAccepted: isRequestedStopValid,
+        requestedStopWasInvalid,
         legacyStopPrice,
         appliedStopPrice: stopPrice,
+        appliedStopSource,
         initialStopOrderPlaced: shouldPlaceInitialStop,
         requestedTakeProfitPrice,
         requestedTakeProfitPercent,
@@ -1502,7 +1527,9 @@ async function executeEntry(
         resolvedRequestedTakeProfitPrice,
         normalizedRequestedTakeProfit,
         requestedTakeProfitAccepted: isRequestedTakeProfitValid,
+        requestedTakeProfitWasInvalid,
         appliedTakeProfitPrice: persistedTakeProfitPrice,
+        appliedTakeProfitSource,
         initialTakeProfitOrderPlaced: takeProfitManagedOnExchange,
         initialTakeProfitExchangeManaged: takeProfitManagedOnExchange,
         stratBreakEvenEnabledOnOpen: stratManaged,
@@ -1612,18 +1639,13 @@ async function executeEntry(
         realEntryFee,
       },
       stop: {
-        mode: trendManaged
-          ? (isRequestedStopValid ? stopInputSource : 'legacy')
-          : stratManaged
-          ? (isRequestedStopValid ? stopInputSource : 'legacy')
-          : managementMode === 'self'
-          ? stopInputSource
-          : (apiStopMode === 'legacy' ? 'legacy' : (isRequestedStopValid ? stopInputSource : 'legacy')),
+        mode: appliedStopSource,
         requested: requestedStopPrice,
         requestedPercent: requestedStopPercent,
         requestedOffset: requestedStopOffset,
         resolved: resolvedRequestedStopPrice,
         accepted: isRequestedStopValid,
+        sanitized: requestedStopWasInvalid || (managementMode === 'self' && !stopInputProvided),
         applied: stopPrice,
         fallback: legacyStopPrice,
         orderPlaced: shouldPlaceInitialStop,
@@ -1633,7 +1655,9 @@ async function executeEntry(
         requestedPercent: requestedTakeProfitPercent,
         resolved: resolvedRequestedTakeProfitPrice,
         accepted: isRequestedTakeProfitValid,
+        sanitized: requestedTakeProfitWasInvalid,
         applied: persistedTakeProfitPrice,
+        mode: appliedTakeProfitSource,
         orderPlaced: takeProfitManagedOnExchange,
         exchangeManaged: takeProfitManagedOnExchange,
         pending: initialTakeProfitPending,
