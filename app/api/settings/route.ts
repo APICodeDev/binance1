@@ -13,6 +13,11 @@ import {
   PROTECTION_SETTING_DEFINITIONS,
   resolveProtectionThresholdSettingsFromMap,
 } from '@/lib/protectionSettings';
+import {
+  BLOCKED_ENTRY_SYMBOLS_SETTING_KEY,
+  DEFAULT_BLOCKED_ENTRY_SYMBOLS,
+  normalizeBlockedEntrySymbols,
+} from '@/lib/tradingFilters';
 
 const DEFAULT_API_LEGACY_STOP_PERCENT = '1.2';
 
@@ -43,6 +48,7 @@ export async function GET(req: NextRequest) {
   const exhaustionGuardEnabled = await prisma.setting.findUnique({ where: { key: 'exhaustion_guard_enabled' } });
   const takeProfitAutoCloseEnabled = await prisma.setting.findUnique({ where: { key: 'take_profit_auto_close_enabled' } });
   const reverseOnOppositeSignalEnabled = await prisma.setting.findUnique({ where: { key: 'reverse_on_opposite_signal_enabled' } });
+  const blockedEntrySymbols = await prisma.setting.findUnique({ where: { key: BLOCKED_ENTRY_SYMBOLS_SETTING_KEY } });
   const protectionSettingsRows = await prisma.setting.findMany({
     where: {
       key: {
@@ -72,6 +78,7 @@ export async function GET(req: NextRequest) {
     exhaustion_guard_enabled: exhaustionGuardEnabled?.value || '1',
     take_profit_auto_close_enabled: takeProfitAutoCloseEnabled?.value || '0',
     reverse_on_opposite_signal_enabled: reverseOnOppositeSignalEnabled?.value || '1',
+    [BLOCKED_ENTRY_SYMBOLS_SETTING_KEY]: blockedEntrySymbols?.value || DEFAULT_BLOCKED_ENTRY_SYMBOLS.join(','),
     ...buildProtectionThresholdSettingsSnapshot(protectionSettings),
   });
 }
@@ -96,6 +103,10 @@ export async function POST(req: NextRequest) {
 
   if (body.trend_break_even_enabled !== undefined) {
     body.trend_break_even_enabled = parseBooleanSetting(body.trend_break_even_enabled) ? '1' : '0';
+  }
+
+  if (body[BLOCKED_ENTRY_SYMBOLS_SETTING_KEY] !== undefined) {
+    body[BLOCKED_ENTRY_SYMBOLS_SETTING_KEY] = normalizeBlockedEntrySymbols(body[BLOCKED_ENTRY_SYMBOLS_SETTING_KEY]).join(',');
   }
 
   for (const definition of PROTECTION_SETTING_DEFINITIONS) {
@@ -139,6 +150,7 @@ export async function POST(req: NextRequest) {
     { key: 'exhaustion_guard_enabled', value: body.exhaustion_guard_enabled },
     { key: 'take_profit_auto_close_enabled', value: body.take_profit_auto_close_enabled },
     { key: 'reverse_on_opposite_signal_enabled', value: body.reverse_on_opposite_signal_enabled },
+    { key: BLOCKED_ENTRY_SYMBOLS_SETTING_KEY, value: body[BLOCKED_ENTRY_SYMBOLS_SETTING_KEY] },
     ...PROTECTION_SETTING_DEFINITIONS.map((definition) => ({
       key: definition.key,
       value: body[definition.key],

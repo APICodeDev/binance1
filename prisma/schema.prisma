@@ -37,6 +37,8 @@ model Position {
   pricePrecision       Int?      @default(4) @map("price_precision")
   maxProfitPercent     Float?    @default(0) @map("max_profit_percent")
   maxProfitAt          DateTime? @map("max_profit_at")
+  maxAdversePercent    Float?    @default(0) @map("max_adverse_percent")
+  maxAdverseAt         DateTime? @map("max_adverse_at")
   stratBreakEvenEnabled Boolean  @default(false) @map("strat_break_even_enabled")
   stratTrailingEnabled  Boolean  @default(false) @map("strat_trailing_enabled")
   manualBreakEvenEnabled Boolean @default(false) @map("manual_break_even_enabled")

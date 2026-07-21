@@ -11,6 +11,7 @@
     "trade-engine:start": "npx tsx scripts/trade-engine.ts",
     "bookmap:start": "npx tsx scripts/bookmap-ws-service.ts",
     "analyze:performance": "npx tsx scripts/analyze-performance.ts",
+    "calibrate:stops": "npx tsx scripts/calibrate-stops.ts",
     "lint": "next lint",
     "create-admin": "npx tsx scripts/create-admin.ts",
     "postinstall": "prisma generate",

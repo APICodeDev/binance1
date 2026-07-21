@@ -742,15 +742,21 @@ export const bitgetGetHistoricalCandles = async (
   const candles = resp.data
     .map((row: any[]) => ({
       ts: Number.parseInt(String(row?.[0] || '0'), 10),
+      open: Number.parseFloat(String(row?.[1] || '0')),
       high: Number.parseFloat(String(row?.[2] || '0')),
       low: Number.parseFloat(String(row?.[3] || '0')),
+      close: Number.parseFloat(String(row?.[4] || '0')),
     }))
     .filter((candle: any) =>
       Number.isFinite(candle.ts) &&
+      Number.isFinite(candle.open) &&
       Number.isFinite(candle.high) &&
       Number.isFinite(candle.low) &&
+      Number.isFinite(candle.close) &&
+      candle.open > 0 &&
       candle.high > 0 &&
-      candle.low > 0
+      candle.low > 0 &&
+      candle.close > 0
     );
 
   if (candles.length === 0) {

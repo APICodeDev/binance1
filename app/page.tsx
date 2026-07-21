@@ -360,6 +360,7 @@ interface DashboardSettingsSnapshot {
   profit_sound_file: string;
   api_stop_mode: 'signal' | 'legacy';
   api_legacy_stop_percent: string;
+  blocked_entry_symbols: string;
   exhaustion_guard_enabled: string;
   take_profit_auto_close_enabled: string;
   reverse_on_opposite_signal_enabled: string;
@@ -436,8 +437,8 @@ const DEFAULT_PROTECTION_SETTINGS_FORM: ProtectionSettingsForm = {
   auto_trailing_activation_percent: '1',
   auto_trailing_step_percent: '0.5',
   self_break_even_activation_percent: '0.5',
-  self_trailing_activation_percent: '1.25',
-  self_trailing_step_percent: '1',
+  self_trailing_activation_percent: '0.75',
+  self_trailing_step_percent: '0.5',
   self_native_trailing_callback_percent: '0.5',
   self_native_trailing_activation_percent: '1.25',
   trend_break_even_activation_percent: '1',
@@ -1005,6 +1006,8 @@ export default function Dashboard() {
   const [apiLegacyStopPercent, setApiLegacyStopPercent] = useState('1.2');
   const [apiLegacyStopPercentDirty, setApiLegacyStopPercentDirty] = useState(false);
   const [apiLegacyStopPercentSaving, setApiLegacyStopPercentSaving] = useState(false);
+  const [blockedEntrySymbols, setBlockedEntrySymbols] = useState('AVAXUSDT,LTCUSDT');
+  const [blockedEntrySymbolsDirty, setBlockedEntrySymbolsDirty] = useState(false);
   const [exhaustionGuardEnabled, setExhaustionGuardEnabled] = useState(false);
   const [takeProfitAutoCloseEnabled, setTakeProfitAutoCloseEnabled] = useState(false);
   const [reverseOnOppositeSignalEnabled, setReverseOnOppositeSignalEnabled] = useState(true);
@@ -1328,6 +1331,9 @@ export default function Dashboard() {
     if (!apiLegacyStopPercentDirty) {
       setApiLegacyStopPercent(settings.api_legacy_stop_percent || '1.2');
     }
+    if (!blockedEntrySymbolsDirty) {
+      setBlockedEntrySymbols(settings.blocked_entry_symbols || 'AVAXUSDT,LTCUSDT');
+    }
     setExhaustionGuardEnabled(settings.exhaustion_guard_enabled === '1');
     setTakeProfitAutoCloseEnabled(settings.take_profit_auto_close_enabled === '1');
     setReverseOnOppositeSignalEnabled(settings.reverse_on_opposite_signal_enabled !== '0');
@@ -1480,6 +1486,7 @@ export default function Dashboard() {
           profit_sound_file: settings.profit_sound_file || '',
           api_stop_mode: settings.api_stop_mode === 'legacy' ? 'legacy' : 'signal',
           api_legacy_stop_percent: settings.api_legacy_stop_percent || '1.2',
+          blocked_entry_symbols: settings.blocked_entry_symbols || 'AVAXUSDT,LTCUSDT',
           exhaustion_guard_enabled: settings.exhaustion_guard_enabled || '1',
           take_profit_auto_close_enabled: settings.take_profit_auto_close_enabled || '0',
           reverse_on_opposite_signal_enabled: settings.reverse_on_opposite_signal_enabled || '1',
@@ -2049,6 +2056,19 @@ export default function Dashboard() {
       setErrorPopup(getApiErrorMessage(error, 'Unable to update legacy stop percent.'));
     } finally {
       setApiLegacyStopPercentSaving(false);
+    }
+  };
+
+  const saveBlockedEntrySymbols = async (val: string) => {
+    const normalized = Array.from(new Set(
+      val.split(/[\s,;]+/).map((item) => item.trim().toUpperCase()).filter(Boolean)
+    )).join(',');
+    try {
+      await apiClient.updateSettings({ blocked_entry_symbols: normalized });
+      setBlockedEntrySymbols(normalized);
+      setBlockedEntrySymbolsDirty(false);
+    } catch (error) {
+      setErrorPopup(getApiErrorMessage(error, 'Unable to save blocked entry symbols.'));
     }
   };
 
@@ -2756,6 +2776,36 @@ export default function Dashboard() {
                           ) : null}
                           {apiLegacyStopPercentDirty && parsePositivePercentInput(apiLegacyStopPercent) === null ? (
                             <p className="mt-2 text-[11px] font-bold text-amber-500 dark:text-amber-300">Usa un numero positivo.</p>
+                          ) : null}
+                        </div>
+
+                        <div className="tabler-subcard p-3">
+                          <div className="mb-2 flex items-center gap-2">
+                            <span className="tabler-eyebrow text-rose-500 dark:text-rose-400">Entry Filter</span>
+                            <HelpTooltip content="Lista separada por comas de activos que no abriran nuevas posiciones. Las salidas y cierres siguen permitidos." />
+                          </div>
+                          <div className="tabler-input flex items-center gap-2">
+                            <input
+                              type="text"
+                              value={blockedEntrySymbols}
+                              onChange={(e) => {
+                                setBlockedEntrySymbols(e.target.value.toUpperCase());
+                                setBlockedEntrySymbolsDirty(true);
+                              }}
+                              onBlur={(e) => void saveBlockedEntrySymbols(e.target.value)}
+                              className="w-full bg-transparent border-none p-0 m-0 font-black text-rose-500 outline-none dark:text-rose-300"
+                              placeholder="AVAXUSDT,LTCUSDT"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => void saveBlockedEntrySymbols(blockedEntrySymbols)}
+                              className="rounded-md border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-rose-600 dark:text-rose-200"
+                            >
+                              Save
+                            </button>
+                          </div>
+                          {blockedEntrySymbolsDirty ? (
+                            <p className="mt-2 text-[11px] font-bold text-rose-500 dark:text-rose-300">Filtro pendiente de guardar.</p>
                           ) : null}
                         </div>
 

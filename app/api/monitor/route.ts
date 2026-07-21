@@ -78,6 +78,7 @@ const DASHBOARD_SETTING_KEYS = [
   'profit_sound_file',
   'api_stop_mode',
   'api_legacy_stop_percent',
+  'blocked_entry_symbols',
   'exhaustion_guard_enabled',
   'take_profit_auto_close_enabled',
   'reverse_on_opposite_signal_enabled',
@@ -138,6 +139,7 @@ async function buildDashboardSnapshot(mode: DashboardMode) {
       profit_sound_file: settingsMap.profit_sound_file || '',
       api_stop_mode: settingsMap.api_stop_mode || 'signal',
       api_legacy_stop_percent: resolveStoredLegacyStopPercent(settingsMap.api_legacy_stop_percent),
+      blocked_entry_symbols: settingsMap.blocked_entry_symbols || 'AVAXUSDT,LTCUSDT',
       exhaustion_guard_enabled: settingsMap.exhaustion_guard_enabled || '1',
       take_profit_auto_close_enabled: settingsMap.take_profit_auto_close_enabled || '0',
       reverse_on_opposite_signal_enabled: settingsMap.reverse_on_opposite_signal_enabled || '1',
@@ -399,6 +401,8 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
             exitReason: exchangeClose?.exitReason || 'exchange_closed',
             exitSource: exchangeClose?.exitSource || null,
           }),
+          maxAdversePercent: Number((pos as any).maxAdversePercent || 0),
+          maxAdverseAt: ((pos as any).maxAdverseAt ? new Date((pos as any).maxAdverseAt) : null),
         } as any,
       });
       await notifyPositiveClose({
@@ -457,6 +461,14 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     const maxProfitAt = improvedMax
       ? new Date()
       : ((pos as any).maxProfitAt ? new Date((pos as any).maxProfitAt) : null);
+    const adversePercent = pos.positionType === 'buy'
+      ? Math.max(0, ((pos.entryPrice - currentPrice) / pos.entryPrice) * 100)
+      : Math.max(0, ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100);
+    const previousMaxAdversePercent = Math.max(0, Number((pos as any).maxAdversePercent || 0));
+    const maxAdversePercent = Math.max(previousMaxAdversePercent, adversePercent);
+    const maxAdverseAt = adversePercent > previousMaxAdversePercent
+      ? new Date()
+      : ((pos as any).maxAdverseAt ? new Date((pos as any).maxAdverseAt) : null);
     const effectiveMovePercent = Math.max(marketMovePercent, maxProfitPercent);
     const stagnationMs = maxProfitAt ? (Date.now() - maxProfitAt.getTime()) : 0;
     const retracementRatio = maxProfitPercent > 0
@@ -786,6 +798,8 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
             profitLossFiat: closeMetrics.profitFiat,
             maxProfitPercent,
             maxProfitAt,
+            maxAdversePercent,
+            maxAdverseAt,
             exitPrice,
             exitReason: exchangeClose?.exitReason || closeReason,
             exitOrderId: exchangeClose?.exitOrderId || null,
@@ -853,6 +867,8 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
           profitLossFiat: profitFiat,
           maxProfitPercent,
           maxProfitAt,
+          maxAdversePercent,
+          maxAdverseAt,
         },
       });
       results.push(

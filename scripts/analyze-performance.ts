@@ -21,6 +21,7 @@ type PositionRow = {
   takeProfit: number | null;
   profitLossPercent: number | null;
   maxProfitPercent: number | null;
+  maxAdversePercent: number | null;
   quantity: number;
   tradingMode: string;
 };
@@ -59,6 +60,7 @@ type Summary = {
   medianPnl: number;
   totalPnl: number;
   avgMfe: number;
+  avgMae: number;
   avgDurationMin: number;
 };
 
@@ -182,6 +184,7 @@ function buildSummary(rows: PositionRow[]): Summary {
     .filter((row) => row.closedAt)
     .map((row) => (row.closedAt!.getTime() - row.createdAt.getTime()) / 60000);
   const mfe = closed.map((row) => Number(row.maxProfitPercent || 0));
+  const mae = closed.map((row) => Number(row.maxAdversePercent || 0));
 
   return {
     total: rows.length,
@@ -194,6 +197,7 @@ function buildSummary(rows: PositionRow[]): Summary {
     medianPnl: round(median(pnl)),
     totalPnl: round(sum(pnl)),
     avgMfe: round(average(mfe)),
+    avgMae: round(average(mae)),
     avgDurationMin: round(average(durations), 1),
   };
 }
@@ -358,6 +362,8 @@ async function main() {
       pricePrecision: true,
       maxProfitPercent: true,
       maxProfitAt: true,
+      maxAdversePercent: true,
+      maxAdverseAt: true,
     },
   })) as unknown as PositionRow[];
 

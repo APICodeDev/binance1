@@ -77,6 +77,9 @@ type PositionMarketUpdate = {
   priceSource: 'mark_price' | 'last_price' | 'mid_price';
   profitPercent: number;
   profitFiat: number;
+  adversePercent: number;
+  maxAdversePercent: number;
+  maxAdverseAt: Date | null;
   stopLoss: number;
   takeProfit: number | null;
   candidateStopLoss: number | null;
@@ -459,6 +462,14 @@ const buildPositionMarketUpdate = (
   const profitPercent = position.positionType === 'buy'
     ? ((currentPrice - position.entryPrice) / position.entryPrice) * 100
     : ((position.entryPrice - currentPrice) / position.entryPrice) * 100;
+  const adversePercent = position.positionType === 'buy'
+    ? Math.max(0, ((position.entryPrice - currentPrice) / position.entryPrice) * 100)
+    : Math.max(0, ((currentPrice - position.entryPrice) / position.entryPrice) * 100);
+  const previousMaxAdversePercent = Math.max(0, Number((position as any).maxAdversePercent || 0));
+  const maxAdversePercent = Math.max(previousMaxAdversePercent, adversePercent);
+  const maxAdverseAt = adversePercent > previousMaxAdversePercent
+    ? new Date()
+    : ((position as any).maxAdverseAt ? new Date((position as any).maxAdverseAt) : null);
   const candidateStopLoss = computeCandidateStopLoss(position, currentPrice, adaptiveContext);
   const effectiveMovePercent = Math.max(
     position.positionType === 'buy'
@@ -482,6 +493,9 @@ const buildPositionMarketUpdate = (
     priceSource: livePrice.source,
     profitPercent,
     profitFiat,
+    adversePercent,
+    maxAdversePercent,
+    maxAdverseAt,
     stopLoss: position.stopLoss,
     takeProfit: typeof position.takeProfit === 'number' ? position.takeProfit : null,
     candidateStopLoss,
@@ -625,6 +639,8 @@ const reconcileExternallyClosedPosition = async (position: Position) => {
       }),
       maxProfitPercent: Number((position as any).maxProfitPercent || 0),
       maxProfitAt: ((position as any).maxProfitAt ? new Date((position as any).maxProfitAt) : null),
+      maxAdversePercent: Number((position as any).maxAdversePercent || 0),
+      maxAdverseAt: ((position as any).maxAdverseAt ? new Date((position as any).maxAdverseAt) : null),
     } as any,
   });
 
@@ -921,6 +937,8 @@ const closePositionFromEngine = async (position: ManagedPosition, update: Positi
           maxProfitAt: update.profitPercent > Number((position as any).maxProfitPercent || 0)
             ? new Date()
             : ((position as any).maxProfitAt ? new Date((position as any).maxProfitAt) : null),
+          maxAdversePercent: update.maxAdversePercent,
+          maxAdverseAt: update.maxAdverseAt,
         } as any,
       });
 
@@ -1003,6 +1021,8 @@ const closePositionFromEngine = async (position: ManagedPosition, update: Positi
       maxProfitAt: update.profitPercent > Number((position as any).maxProfitPercent || 0)
         ? new Date()
         : ((position as any).maxProfitAt || null),
+      maxAdversePercent: update.maxAdversePercent,
+      maxAdverseAt: update.maxAdverseAt,
     } as any,
   });
 
@@ -1180,6 +1200,8 @@ const processPositionMarketUpdate = async (positionId: number, snapshot: MarketS
       profitLossFiat: update.profitFiat,
       maxProfitPercent,
       maxProfitAt,
+      maxAdversePercent: update.maxAdversePercent,
+      maxAdverseAt: update.maxAdverseAt,
     }, improvedMax);
   } catch (error: any) {
     lastWarning = `position-${positionId}: ${error?.message || 'unknown error'}`;

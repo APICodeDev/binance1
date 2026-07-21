@@ -8,6 +8,7 @@ import { prisma } from '@/lib/db';
 import { notifyAllActiveDevices } from '@/lib/pushNotifications';
 import {
   closeTrackedPosition,
+  calculateStructureAtrStop,
   isFixedPriceManagementMode,
   normalizePositionManagementMode,
   type PositionManagementMode,
@@ -18,6 +19,11 @@ import {
   resolveProtectionThresholdSettingsFromMap,
 } from '@/lib/protectionSettings';
 import {
+  BLOCKED_ENTRY_SYMBOLS_SETTING_KEY,
+  isEntrySymbolBlocked,
+  resolveBlockedEntrySymbols,
+} from '@/lib/tradingFilters';
+import {
   bitgetBuildPositionContext,
   bitgetCancelAllOrders,
   bitgetCancelOrder,
@@ -25,6 +31,7 @@ import {
   bitgetGetCommissionRate,
   bitgetGetCurrentFundingRate,
   bitgetGetExchangeInfo,
+  bitgetGetHistoricalCandles,
   bitgetGetMakerCommissionRate,
   bitgetGetMergeDepth,
   bitgetGetOrderDetail,
@@ -762,9 +769,10 @@ async function executeEntry(
     }
 
     const tradingMode = await resolveTradingMode();
-    const [apiStopModeSetting, apiLegacyStopPercentSetting, protectionSettingsRows] = await Promise.all([
+    const [apiStopModeSetting, apiLegacyStopPercentSetting, blockedEntrySymbolsSetting, protectionSettingsRows] = await Promise.all([
       prisma.setting.findUnique({ where: { key: 'api_stop_mode' } }),
       prisma.setting.findUnique({ where: { key: 'api_legacy_stop_percent' } }),
+      prisma.setting.findUnique({ where: { key: BLOCKED_ENTRY_SYMBOLS_SETTING_KEY } }),
       prisma.setting.findMany({
         where: {
           key: {
@@ -775,6 +783,28 @@ async function executeEntry(
     ]);
     const apiStopMode = apiStopModeSetting?.value === 'legacy' ? 'legacy' : 'signal';
     const apiLegacyStopPercent = parseConfiguredLegacyStopPercent(apiLegacyStopPercentSetting?.value);
+    const blockedEntrySymbols = resolveBlockedEntrySymbols(blockedEntrySymbolsSetting?.value);
+    if (isEntrySymbolBlocked(symbol, blockedEntrySymbols)) {
+      await writeAuditLog({
+        action: 'position.entry.filtered_symbol',
+        userId: auth?.user?.id,
+        targetType: 'entry',
+        metadata: {
+          symbol,
+          type,
+          origin,
+          timeframe,
+          managementMode: storedManagementMode,
+          blockedEntrySymbols,
+        },
+        req,
+      });
+      return NextResponse.json({
+        success: true,
+        filtered: true,
+        message: `Entrada filtrada para ${symbol}: activo bloqueado por baja calidad historica.`,
+      });
+    }
     const protectionSettings = resolveProtectionThresholdSettingsFromMap(
       protectionSettingsRows.reduce<Record<string, string>>((acc, row) => {
         acc[row.key] = row.value;
@@ -1214,17 +1244,44 @@ async function executeEntry(
         (type === 'buy' && normalizedRequestedStop < entryPrice) ||
         (type === 'sell' && normalizedRequestedStop > entryPrice)
       );
+    let structureAtrStopResolution: ReturnType<typeof calculateStructureAtrStop> = null;
+    if (!isRequestedStopValid && apiStopMode === 'signal') {
+      const [structureCandles, atrCandles] = await Promise.all([
+        bitgetGetHistoricalCandles(symbol, '15m', 8, tradingMode).catch(() => ({ ok: false as const, error: '15m history failed' })),
+        bitgetGetHistoricalCandles(symbol, '1H', 20, tradingMode).catch(() => ({ ok: false as const, error: '1H history failed' })),
+      ]);
+
+      if (structureCandles.ok && atrCandles.ok) {
+        structureAtrStopResolution = calculateStructureAtrStop({
+          positionType: type as 'buy' | 'sell',
+          entryPrice,
+          structureCandles: structureCandles.candles,
+          atrCandles: atrCandles.candles,
+        });
+      }
+    }
+    const normalizedStructureAtrStop = structureAtrStopResolution
+      ? normalizeExitPrice(structureAtrStopResolution.stopPrice, stopNormalizeDirection)
+      : null;
+    const isStructureAtrStopValid = normalizedStructureAtrStop !== null &&
+      (
+        (type === 'buy' && normalizedStructureAtrStop < entryPrice) ||
+        (type === 'sell' && normalizedStructureAtrStop > entryPrice)
+      );
+    const normalizedEffectiveRequestedStop = isRequestedStopValid
+      ? normalizedRequestedStop
+      : (isStructureAtrStopValid ? normalizedStructureAtrStop : null);
     const normalizedRequestedTakeProfit = takeProfitResolution.normalizedRequestedTakeProfit;
     const isRequestedTakeProfitValid = takeProfitResolution.isRequestedTakeProfitValid;
     const requestedStopWasInvalid = stopInputProvided && !isRequestedStopValid;
     const requestedTakeProfitWasInvalid = takeProfitInputProvided && !isRequestedTakeProfitValid;
     const stopPrice = trendManaged
-      ? (isRequestedStopValid ? normalizedRequestedStop : legacyStopPrice)
+      ? (normalizedEffectiveRequestedStop !== null ? normalizedEffectiveRequestedStop : legacyStopPrice)
       : stratManaged
-      ? (isRequestedStopValid ? normalizedRequestedStop : legacyStopPrice)
+      ? (normalizedEffectiveRequestedStop !== null ? normalizedEffectiveRequestedStop : legacyStopPrice)
       : managementMode === 'self'
-        ? (isRequestedStopValid ? normalizedRequestedStop : legacyStopPrice)
-        : (apiStopMode === 'legacy' ? legacyStopPrice : (isRequestedStopValid ? normalizedRequestedStop : legacyStopPrice));
+        ? (normalizedEffectiveRequestedStop !== null ? normalizedEffectiveRequestedStop : legacyStopPrice)
+        : (apiStopMode === 'legacy' ? legacyStopPrice : (normalizedEffectiveRequestedStop !== null ? normalizedEffectiveRequestedStop : legacyStopPrice));
     const takeProfitPrice = trendManaged
       ? null
       : stratManaged
@@ -1234,7 +1291,9 @@ async function executeEntry(
       ? 'none'
       : isRequestedStopValid
         ? stopInputSource
-        : 'legacy';
+        : isStructureAtrStopValid
+          ? 'structure_atr'
+          : 'legacy';
     const appliedTakeProfitSource = takeProfitPrice === null
       ? 'none'
       : takeProfitInputSource;
@@ -1281,15 +1340,22 @@ async function executeEntry(
           resolvedRequestedTakeProfitPrice,
           normalizedRequestedStop,
           normalizedRequestedTakeProfit,
+          computedStopPriceFromStructureAtr: normalizedStructureAtrStop,
+          structureAtrStopPercent: structureAtrStopResolution?.stopPercent ?? null,
+          structureAtrPercent: structureAtrStopResolution?.atrPercent ?? null,
+          structureStopPrice: structureAtrStopResolution?.structureStopPrice ?? null,
+          atrStopPercent: structureAtrStopResolution?.atrStopPercent ?? null,
           requestedStopAccepted: isRequestedStopValid,
           requestedTakeProfitAccepted: isRequestedTakeProfitValid,
           appliedStopPrice: stopPrice,
           appliedStopSource,
           appliedTakeProfitPrice: takeProfitPrice,
           appliedTakeProfitSource,
-          note: managementMode === 'self' && !stopInputProvided
-            ? 'Self signal without SL fell back to Admin legacy stop'
-            : 'Invalid TP/SL sanitized before sending to Bitget',
+          note: managementMode === 'self' && !stopInputProvided && isStructureAtrStopValid
+            ? 'Self signal without SL used structure/ATR stop'
+            : managementMode === 'self' && !stopInputProvided
+              ? 'Self signal without SL fell back to Admin legacy stop'
+              : 'Invalid TP/SL sanitized before sending to Bitget',
         },
         req,
       });
@@ -1457,6 +1523,7 @@ async function executeEntry(
         takeProfit: persistedTakeProfitPrice,
         status: 'open',
         tradingMode,
+        maxAdversePercent: 0,
         origin,
         timeframe,
         stratBreakEvenEnabled: stratManaged,
@@ -1512,6 +1579,11 @@ async function executeEntry(
         trendManaged,
         computedStopPriceFromPercent,
         computedStopPriceFromOffset,
+        computedStopPriceFromStructureAtr: normalizedStructureAtrStop,
+        structureAtrStopPercent: structureAtrStopResolution?.stopPercent ?? null,
+        structureAtrPercent: structureAtrStopResolution?.atrPercent ?? null,
+        structureStopPrice: structureAtrStopResolution?.structureStopPrice ?? null,
+        atrStopPercent: structureAtrStopResolution?.atrStopPercent ?? null,
         resolvedRequestedStopPrice,
         normalizedRequestedStop,
         requestedStopAccepted: isRequestedStopValid,

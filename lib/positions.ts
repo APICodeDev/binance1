@@ -39,8 +39,7 @@ const ADAPTIVE_GIVEBACK_BASE_PERCENT = 0.10;
 const ADAPTIVE_GIVEBACK_QUALITY_BONUS_PERCENT = 0.14;
 const ADAPTIVE_GIVEBACK_CHOP_PENALTY_PERCENT = 0.06;
 const ADAPTIVE_GIVEBACK_MIN_PERCENT = 0.08;
-const ADAPTIVE_GIVEBACK_MAX_PERCENT = 0.28;
-const ADAPTIVE_MIN_NET_LOCKED_PERCENT = 0.03;
+const ADAPTIVE_MIN_NET_LOCKED_PERCENT = 0.10;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function normalizePositionManagementMode(value: unknown): PositionManagementMode {
@@ -134,7 +133,7 @@ export function isAppManagedTrailingEffectivelyEnabled(position: ProtectionConfi
   return isTrailingEffectivelyEnabled(position);
 }
 
-type MarketCandle = {
+export type MarketCandle = {
   ts: number;
   open: number;
   high: number;
@@ -255,6 +254,66 @@ export function buildAdaptiveProtectionContext(params: {
   } satisfies AdaptiveProtectionContext;
 }
 
+export type StructureAtrStopResolution = {
+  stopPrice: number;
+  stopPercent: number;
+  structureStopPrice: number;
+  atrPercent: number;
+  atrStopPercent: number;
+  structureBufferPercent: number;
+};
+
+/**
+ * Builds a directional initial stop from the recent 15m structure and 1h ATR.
+ * The farther of the two protections wins so normal volatility does not stop
+ * the trade before the nearby swing is invalidated.
+ */
+export function calculateStructureAtrStop(params: {
+  positionType: 'buy' | 'sell';
+  entryPrice: number;
+  structureCandles: MarketCandle[];
+  atrCandles: MarketCandle[];
+}) : StructureAtrStopResolution | null {
+  const { positionType, entryPrice, structureCandles, atrCandles } = params;
+  if (!(entryPrice > 0) || structureCandles.length < 3 || atrCandles.length < 5) {
+    return null;
+  }
+
+  const recentStructure = structureCandles.slice(-8);
+  const structureLow = Math.min(...recentStructure.map((candle) => candle.low));
+  const structureHigh = Math.max(...recentStructure.map((candle) => candle.high));
+  const atrPercent = calculateAverageTrueRangePercent(atrCandles, Math.min(14, atrCandles.length));
+  if (atrPercent === null || !(atrPercent > 0)) {
+    return null;
+  }
+
+  const structureBufferPercent = Math.max(0.05, atrPercent * 0.15);
+  const structureStopPrice = positionType === 'buy'
+    ? structureLow * (1 - structureBufferPercent / 100)
+    : structureHigh * (1 + structureBufferPercent / 100);
+  const atrStopPercent = Math.max(0.35, atrPercent * 0.75);
+  const atrStopPrice = positionType === 'buy'
+    ? entryPrice * (1 - atrStopPercent / 100)
+    : entryPrice * (1 + atrStopPercent / 100);
+  const stopPrice = positionType === 'buy'
+    ? Math.min(structureStopPrice, atrStopPrice)
+    : Math.max(structureStopPrice, atrStopPrice);
+  const stopPercent = Math.abs((stopPrice - entryPrice) / entryPrice) * 100;
+
+  if (!(stopPrice > 0) || !(stopPercent > 0) || stopPercent > 3) {
+    return null;
+  }
+
+  return {
+    stopPrice,
+    stopPercent,
+    structureStopPrice,
+    atrPercent,
+    atrStopPercent,
+    structureBufferPercent,
+  };
+}
+
 export function calculateFeeAwareExitPrice(params: {
   positionType: string;
   entryPrice: number;
@@ -320,7 +379,7 @@ export function computeAdaptiveProtectionDecision(params: {
       (ADAPTIVE_GIVEBACK_QUALITY_BONUS_PERCENT * context.qualityScore) -
       (ADAPTIVE_GIVEBACK_CHOP_PENALTY_PERCENT * context.chopScore),
     ADAPTIVE_GIVEBACK_MIN_PERCENT,
-    ADAPTIVE_GIVEBACK_MAX_PERCENT
+    0.20
   );
 
   if (effectiveMovePercent >= trailingActivationPercent) {
