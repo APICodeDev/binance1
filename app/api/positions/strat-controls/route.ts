@@ -62,11 +62,9 @@ export async function POST(req: NextRequest) {
     return fail(404, 'Open position not found');
   }
 
-  if (normalizePositionManagementMode(position.managementMode) === 'self') {
-    const selfNativeTrailingSetting = await prisma.setting.findUnique({ where: { key: 'self_native_trailing_enabled' } });
-    if (selfNativeTrailingSetting?.value === '1') {
-      return fail(409, 'Self positions are managed by Bitget native trailing while self_native_trailing_enabled is active');
-    }
+  const selfManaged = normalizePositionManagementMode(position.managementMode) === 'self';
+  if (selfManaged && requestedTrailingEnabled === true) {
+    return fail(409, 'Self positions do not support trailing; only breakeven above 1% profit is allowed');
   }
 
   if (requestedBreakEvenEnabled === false) {
@@ -79,7 +77,9 @@ export async function POST(req: NextRequest) {
   const nextManualBreakEvenEnabled = Boolean((position as any).manualBreakEvenEnabled) ||
     requestedBreakEvenEnabled === true ||
     requestedTrailingEnabled === true;
-  const nextManualTrailingOverride = typeof requestedTrailingEnabled === 'boolean'
+  const nextManualTrailingOverride = selfManaged
+    ? false
+    : typeof requestedTrailingEnabled === 'boolean'
     ? requestedTrailingEnabled
     : previousManualTrailingOverride;
   const nextEffectivePosition = {
@@ -122,7 +122,7 @@ export async function POST(req: NextRequest) {
             ? position.entryPrice * (1 + entryCommission) / (1 - exitCommission)
             : position.entryPrice * (1 - entryCommission) / (1 + exitCommission);
         }
-      } else if (nextBreakEvenEnabled && marketMovePercent >= 0.5) {
+      } else if (nextBreakEvenEnabled && (selfManaged ? marketMovePercent > 1 : marketMovePercent >= 0.5)) {
         candidateStop = position.positionType === 'buy'
           ? position.entryPrice * (1 + entryCommission) / (1 - exitCommission)
           : position.entryPrice * (1 - entryCommission) / (1 + exitCommission);
@@ -142,6 +142,7 @@ export async function POST(req: NextRequest) {
           quantity: position.quantity,
           tradingMode,
           tradeSide: positionContext.closeTradeSide,
+          positionType: position.positionType as 'buy' | 'sell',
         });
 
         if (!syncResult.ok) {

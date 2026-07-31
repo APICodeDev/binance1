@@ -7,6 +7,7 @@ import { notifyPositiveClose } from '@/lib/ntfy';
 import { attachPositionProtectionMeta } from '@/lib/positionSignals';
 import {
   bitgetBuildPositionContext,
+  bitgetCancelTrailingOrders,
   bitgetCancelAllOrders,
   bitgetClosePosition,
   bitgetEnsureVerifiedStopOrder,
@@ -113,6 +114,7 @@ const EXHAUSTION_FLAT_MIN_MFE_PERCENT = 1.5;
 const EXHAUSTION_FLAT_MIN_PROFIT_PERCENT = 1.0;
 const EXHAUSTION_FLAT_MIN_STAGNATION_MS = 120 * 60 * 1000;
 const EXHAUSTION_FLAT_MAX_GIVEBACK_PERCENT = 0.25;
+const SELF_BREAK_EVEN_PROFIT_PERCENT = 1;
 
 const marketSnapshots = new Map<string, MarketSnapshot>();
 const openPositions = new Map<number, ManagedPosition>();
@@ -147,22 +149,6 @@ const emitEngineEvent = (event: string, payload: unknown) => {
   for (const subscriber of Array.from(engineSubscribers.values())) {
     writeSse(subscriber.res, event, payload);
   }
-};
-
-const getSelfManagedTrailingStep = (marketMovePercent: number, settings: ProtectionThresholdSettings) => {
-  if (marketMovePercent < settings.selfTrailingActivationPercent) {
-    return null;
-  }
-
-  const stepsCrossed = Math.floor(
-    ((marketMovePercent - settings.selfTrailingActivationPercent) / settings.selfTrailingStepPercent) + 1e-9
-  );
-  const firstLockedPercent = Math.max(
-    settings.selfBreakEvenActivationPercent,
-    settings.selfTrailingActivationPercent - 0.25
-  );
-  const lockedPercent = firstLockedPercent + (stepsCrossed * settings.selfTrailingStepPercent);
-  return lockedPercent >= settings.selfBreakEvenActivationPercent ? lockedPercent : null;
 };
 
 const getTrendTrailingStopPrice = (
@@ -333,7 +319,6 @@ const computeCandidateStopLoss = (position: ManagedPosition, currentPrice: numbe
   const stratManaged = managementMode === 'strat';
   const autoManaged = managementMode === 'auto';
   const nativeTrailingManaged = isNativeTrailingManagedByExchange(position as any);
-  const effectiveSelfManaged = appManagedTrailingEnabled && (!autoManaged || fixedManaged) && !trendManaged;
   const breakEvenOnlyEnabled = breakEvenEnabled && !appManagedTrailingEnabled && !nativeTrailingManaged;
   const commission = getPositionCommission(position);
   const protection = engineSettings.protection;
@@ -342,6 +327,16 @@ const computeCandidateStopLoss = (position: ManagedPosition, currentPrice: numbe
     : ((position.entryPrice - currentPrice) / position.entryPrice) * 100;
   const historicalMaxProfitPercent = Math.max(0, Number((position as any).maxProfitPercent || 0));
   const effectiveMovePercent = Math.max(marketMovePercent, historicalMaxProfitPercent);
+  if (selfManaged) {
+    if (marketMovePercent <= SELF_BREAK_EVEN_PROFIT_PERCENT) {
+      return null;
+    }
+
+    return position.positionType === 'buy'
+      ? position.entryPrice * (1 + commission) / (1 - commission)
+      : position.entryPrice * (1 - commission) / (1 + commission);
+  }
+
   if (nativeTrailingManaged) {
     return null;
   }
@@ -380,18 +375,7 @@ const computeCandidateStopLoss = (position: ManagedPosition, currentPrice: numbe
       return getTrendTrailingStopPrice(position.entryPrice, effectiveMovePercent, 'buy', protection);
     }
 
-    if (effectiveSelfManaged) {
-      const trailingStep = getSelfManagedTrailingStep(effectiveMovePercent, protection);
-      if (trailingStep !== null) {
-        return position.entryPrice * (1 + (trailingStep / 100));
-      }
-      if (effectiveMovePercent >= protection.selfBreakEvenActivationPercent) {
-        return position.entryPrice * (1 + commission) / (1 - commission);
-      }
-      return null;
-    }
-
-    if ((breakEvenOnlyEnabled || stratManaged || selfManaged || fixedManaged) && effectiveMovePercent >= protection.selfBreakEvenActivationPercent) {
+    if ((breakEvenOnlyEnabled || stratManaged || fixedManaged) && effectiveMovePercent >= protection.selfBreakEvenActivationPercent) {
       return position.entryPrice * (1 + commission) / (1 - commission);
     }
 
@@ -410,18 +394,7 @@ const computeCandidateStopLoss = (position: ManagedPosition, currentPrice: numbe
     return getTrendTrailingStopPrice(position.entryPrice, effectiveMovePercent, 'sell', protection);
   }
 
-  if (effectiveSelfManaged) {
-    const trailingStep = getSelfManagedTrailingStep(effectiveMovePercent, protection);
-    if (trailingStep !== null) {
-      return position.entryPrice * (1 - (trailingStep / 100));
-    }
-    if (effectiveMovePercent >= protection.selfBreakEvenActivationPercent) {
-      return position.entryPrice * (1 - commission) / (1 + commission);
-    }
-    return null;
-  }
-
-  if ((breakEvenOnlyEnabled || stratManaged || selfManaged || fixedManaged) && effectiveMovePercent >= protection.selfBreakEvenActivationPercent) {
+  if ((breakEvenOnlyEnabled || stratManaged || fixedManaged) && effectiveMovePercent >= protection.selfBreakEvenActivationPercent) {
     return position.entryPrice * (1 - commission) / (1 + commission);
   }
 
@@ -722,6 +695,21 @@ const reloadOpenPositions = async () => {
   positions = await reconcileOpenPositionsAgainstExchange(positions as ManagedPosition[]) as ManagedPosition[];
   positions = await attachPositionProtectionMeta(positions as ManagedPosition[]) as ManagedPosition[];
 
+  await Promise.all(positions
+    .filter((position) => normalizePositionManagementMode(position.managementMode) === 'self' && Boolean((position as any).nativeTrailingEnabled))
+    .map(async (position) => {
+      const tradingMode = ((position as any).tradingMode || 'demo') as TradingMode;
+      const cleanup = await bitgetCancelTrailingOrders(position.symbol.toUpperCase(), tradingMode);
+      if (!cleanup.ok) {
+        console.warn('[trade-engine] inherited self trailing cleanup failed', {
+          positionId: position.id,
+          symbol: position.symbol,
+          tradingMode,
+          message: cleanup.message,
+        });
+      }
+    }));
+
   rebuildPositionIndexes(positions);
   for (const marketKey of Array.from(positionsByMarketKey.keys())) {
     await subscribeMarketKey(marketKey);
@@ -815,6 +803,7 @@ const syncStopForPosition = async (position: ManagedPosition, update: PositionMa
     quantity: position.quantity,
     tradingMode,
     tradeSide: positionContext.closeTradeSide,
+    positionType: position.positionType as 'buy' | 'sell',
   });
 
   lastStopSyncAtByPosition.set(position.id, Date.now());
@@ -839,14 +828,19 @@ const syncStopForPosition = async (position: ManagedPosition, update: PositionMa
     return null;
   }
 
+  const appliedStopLoss = typeof syncResult.normalizedStopPrice === 'number' &&
+    Number.isFinite(syncResult.normalizedStopPrice)
+    ? syncResult.normalizedStopPrice
+    : update.candidateStopLoss;
+
   await prisma.position.update({
     where: { id: position.id },
     data: {
-      stopLoss: update.candidateStopLoss,
+      stopLoss: appliedStopLoss,
     } as any,
   });
   updateCachedPosition(position.id, {
-    stopLoss: update.candidateStopLoss,
+    stopLoss: appliedStopLoss,
   });
   lastPersistAtByPosition.set(position.id, Date.now());
 
@@ -858,7 +852,7 @@ const syncStopForPosition = async (position: ManagedPosition, update: PositionMa
       symbol: position.symbol,
       tradingMode,
       previousStopLoss: position.stopLoss,
-      updatedStopLoss: update.candidateStopLoss,
+      updatedStopLoss: appliedStopLoss,
       action: syncResult.message,
     },
   });
@@ -868,7 +862,7 @@ const syncStopForPosition = async (position: ManagedPosition, update: PositionMa
     symbol: position.symbol,
     tradingMode,
     previousStopLoss: position.stopLoss,
-    updatedStopLoss: update.candidateStopLoss,
+    updatedStopLoss: appliedStopLoss,
     action: syncResult.message,
     at: Date.now(),
   });
@@ -1189,7 +1183,9 @@ const processPositionMarketUpdate = async (positionId: number, snapshot: MarketS
         ? 'exhaustion'
         : takeProfitTriggered
           ? 'take_profit'
-          : ((typeof movedStopLoss === 'number' || impliedTrailingStop) ? 'trailing_stop' : 'stop_loss');
+          : (managementMode === 'self'
+            ? 'stop_loss'
+            : ((typeof movedStopLoss === 'number' || impliedTrailingStop) ? 'trailing_stop' : 'stop_loss'));
       await closePositionFromEngine(currentPosition, update, reason);
       return;
     }

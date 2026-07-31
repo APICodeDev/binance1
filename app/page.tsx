@@ -436,7 +436,7 @@ const DEFAULT_PROTECTION_SETTINGS_FORM: ProtectionSettingsForm = {
   auto_break_even_activation_percent: '0.5',
   auto_trailing_activation_percent: '1',
   auto_trailing_step_percent: '0.5',
-  self_break_even_activation_percent: '0.5',
+  self_break_even_activation_percent: '1',
   self_trailing_activation_percent: '0.75',
   self_trailing_step_percent: '0.5',
   self_native_trailing_callback_percent: '0.5',
@@ -473,8 +473,8 @@ const PROTECTION_SETTING_GROUPS: Array<{
     ],
   },
   {
-    title: 'Self App Fallback / Strat / Fixed',
-    description: 'Umbrales locales de la app. En Self solo se usan si el trailing nativo esta apagado o si Bitget cae al fallback de app.',
+    title: 'Self / Strat / Fixed',
+    description: 'Self conserva el SL/TP recibido y solo activa breakeven por encima del 1%. Los umbrales de trailing no aplican a Self.',
     items: [
       { key: 'self_break_even_activation_percent', label: 'Breakeven %' },
       { key: 'self_trailing_activation_percent', label: 'Primer trailing %' },
@@ -482,8 +482,8 @@ const PROTECTION_SETTING_GROUPS: Array<{
     ],
   },
   {
-    title: 'Self Native',
-    description: 'Parametros del trailing nativo de Bitget para posiciones Self.',
+    title: 'Self Native (desactivado)',
+    description: 'El trailing nativo no se utiliza en posiciones Self.',
     items: [
       { key: 'self_native_trailing_activation_percent', label: 'Activacion %' },
       { key: 'self_native_trailing_callback_percent', label: 'Callback %' },
@@ -905,7 +905,7 @@ function isBaseTrailingEnabledForPosition(position: Pick<Position, 'managementMo
   }
 
   const normalized = normalizeManagementMode(position.managementMode);
-  return normalized === 'auto' || normalized === 'self' || normalized === 'strat' || normalized === 'trend';
+  return normalized === 'auto' || normalized === 'strat' || normalized === 'trend';
 }
 
 function isBreakEvenEffectivelyEnabledForPosition(position: Pick<Position, 'managementMode' | 'stratBreakEvenEnabled' | 'manualBreakEvenEnabled' | 'manualTrailingOverride' | 'stratTrailingEnabled'>) {
@@ -916,6 +916,10 @@ function isBreakEvenEffectivelyEnabledForPosition(position: Pick<Position, 'mana
 }
 
 function isTrailingEffectivelyEnabledForPosition(position: Pick<Position, 'managementMode' | 'manualTrailingOverride' | 'stratTrailingEnabled'>) {
+  if (normalizeManagementMode(position.managementMode) === 'self') {
+    return false;
+  }
+
   if (typeof position.manualTrailingOverride === 'boolean') {
     return position.manualTrailingOverride;
   }
@@ -924,7 +928,7 @@ function isTrailingEffectivelyEnabledForPosition(position: Pick<Position, 'manag
 }
 
 function isNativeTrailingManagedByExchangeForPosition(position: Pick<Position, 'managementMode' | 'nativeTrailingEnabled'>) {
-  return normalizeManagementMode(position.managementMode) === 'self' && Boolean(position.nativeTrailingEnabled);
+  return false;
 }
 
 function getEstimatedNativeTrailingStopForPosition(position: Pick<Position, 'managementMode' | 'positionType' | 'entryPrice' | 'stopLoss' | 'maxProfitPercent' | 'nativeTrailingEnabled' | 'nativeTrailingCallbackPercent' | 'nativeTrailingActivationPercent' | 'estimatedStopLoss'>) {
@@ -2903,13 +2907,14 @@ export default function Dashboard() {
                         <div className="flex flex-col gap-3">
                           <div className="flex items-start justify-between gap-3">
                             <div>
-                              <p className="text-sm font-semibold leading-tight text-slate-700 dark:text-slate-200">Self Native Trailing</p>
+                              <p className="text-sm font-semibold leading-tight text-slate-700 dark:text-slate-200">Self Native Trailing (desactivado)</p>
                               <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                                Si esta activo, las posiciones `self` crean un trailing `moving_plan` en Bitget. La app solo refleja un stop estimado y deja de mover el SL localmente en ese modo.
+                                 Self no crea trailing. Conserva el SL/TP recibido y solo mueve el SL a breakeven cuando el beneficio actual supera el 1%.
                               </p>
                             </div>
                             <button
                               type="button"
+                              disabled
                               onClick={async () => {
                                 const nextValue = !selfNativeTrailingEnabled;
                                 try {
@@ -2926,7 +2931,7 @@ export default function Dashboard() {
                                   : "border-slate-300 bg-white text-slate-600 hover:border-slate-400 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-300"
                               )}
                             >
-                              {selfNativeTrailingEnabled ? 'On' : 'Off'}
+                              {selfNativeTrailingEnabled ? 'Ignorado' : 'Off'}
                             </button>
                           </div>
 
@@ -4155,7 +4160,9 @@ function PositionCard({
     : breakevenActive
       ? (nativeTrailingManaged ? 'Trailing Native Active' : 'Breakeven Active')
       : (nativeTrailingManaged ? 'Native Trailing Arming' : 'Protection Arming');
-  const stopEngineLabel = stratManaged
+  const stopEngineLabel = managementMode === 'self'
+    ? 'Self SL/TP + Breakeven >1%'
+    : stratManaged
     ? (trailingEnabled
         ? 'Strat Auto + Self Trailing'
         : breakEvenEnabled
@@ -4166,7 +4173,9 @@ function PositionCard({
     : trendManaged
       ? (trailingEnabled ? 'Trend Signal/Legacy + Trend Trailing' : 'Trend Signal/Legacy + Trend BreakEven')
       : (stopAdjustedByApp ? 'Adapted By App' : `Legacy ${LEGACY_STOP_PERCENT}% Default`);
-  const protectionModeLabel = nativeTrailingManaged
+  const protectionModeLabel = managementMode === 'self'
+    ? 'Breakeven >1% · Sin trailing'
+    : nativeTrailingManaged
     ? 'Bitget Native Trailing'
     : trailingEnabled
       ? 'Breakeven + Trailing'
@@ -4227,7 +4236,7 @@ function PositionCard({
   };
 
   const handleTrailingClick = async () => {
-    if (protectionBusy || nativeTrailingManaged) {
+    if (protectionBusy || nativeTrailingManaged || managementMode === 'self') {
       return;
     }
 
@@ -4418,21 +4427,31 @@ function PositionCard({
               (breakEvenLocked || protectionBusy !== null) && "cursor-not-allowed opacity-80"
             )}
           >
-            {nativeTrailingManaged ? 'Bitget Native' : protectionBusy === 'breakEven' ? 'Activando...' : breakEvenEnabled ? 'Breakeven Activo' : 'Activar Breakeven'}
+            {managementMode === 'self'
+              ? 'Breakeven automático >1%'
+              : nativeTrailingManaged
+                ? 'Bitget Native'
+                : protectionBusy === 'breakEven'
+                  ? 'Activando...'
+                  : breakEvenEnabled
+                    ? 'Breakeven Activo'
+                    : 'Activar Breakeven'}
           </button>
           <button
             type="button"
             onClick={handleTrailingClick}
-            disabled={protectionBusy !== null || nativeTrailingManaged}
+            disabled={protectionBusy !== null || nativeTrailingManaged || managementMode === 'self'}
             className={cn(
               "rounded-xl border px-3 py-2 text-[11px] font-black uppercase tracking-[0.18em] transition-colors",
               trailingEnabled
                 ? "border-emerald-400/50 bg-emerald-500/15 text-emerald-300"
                 : "border-slate-700 bg-slate-900/70 text-slate-300 hover:border-emerald-400/40 hover:text-emerald-200",
-              (protectionBusy !== null || nativeTrailingManaged) && "cursor-not-allowed opacity-80"
+              (protectionBusy !== null || nativeTrailingManaged || managementMode === 'self') && "cursor-not-allowed opacity-80"
             )}
           >
-            {nativeTrailingManaged
+            {managementMode === 'self'
+              ? 'Trailing no disponible'
+              : nativeTrailingManaged
               ? 'Trailing Bitget'
               : protectionBusy === 'trailing'
               ? (trailingEnabled ? 'Desactivando...' : 'Activando...')

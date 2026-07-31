@@ -38,6 +38,7 @@ import {
   bitgetEnsureVerifiedStopOrder,
   bitgetGetHistoricalCandles,
   bitgetGetPendingStopOrders,
+  bitgetCancelTrailingOrders,
   bitgetGetRecentCandleRange,
   bitgetModifyStopOrder,
   bitgetCancelPlanOrdersByIds,
@@ -224,6 +225,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
   const syncStopOrder = async (
     symbol: string,
     side: 'BUY' | 'SELL',
+    positionType: 'buy' | 'sell',
     stopPrice: number,
     quantity: number,
     mode: 'demo' | 'live',
@@ -232,6 +234,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     return bitgetEnsureVerifiedStopOrder({
       symbol,
       side,
+      positionType,
       stopPrice,
       quantity,
       tradingMode: mode,
@@ -239,21 +242,10 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     });
   };
 
-  const getSelfManagedTrailingStep = (marketMovePercent: number, settings: ProtectionThresholdSettings) => {
-    if (marketMovePercent < settings.selfTrailingActivationPercent) {
-      return null;
-    }
-
-    const stepsCrossed = Math.floor(
-      ((marketMovePercent - settings.selfTrailingActivationPercent) / settings.selfTrailingStepPercent) + 1e-9
-    );
-    const firstLockedPercent = Math.max(
-      settings.selfBreakEvenActivationPercent,
-      settings.selfTrailingActivationPercent - 0.25
-    );
-    const lockedPercent = firstLockedPercent + (stepsCrossed * settings.selfTrailingStepPercent);
-    return lockedPercent >= settings.selfBreakEvenActivationPercent ? lockedPercent : null;
-  };
+  const getSyncedStopPrice = (response: any, fallbackPrice: number) =>
+    response?.ok && typeof response.normalizedStopPrice === 'number' && Number.isFinite(response.normalizedStopPrice)
+      ? response.normalizedStopPrice
+      : fallbackPrice;
 
   const getTrendTrailingStopPrice = (
     entryPrice: number,
@@ -327,7 +319,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     const mode = ((pos as any).tradingMode || 'demo') as 'demo' | 'live';
     const managementMode = normalizePositionManagementMode((pos as any).managementMode);
     const fixedManaged = isFixedPriceManagementMode((pos as any).managementMode);
-    const selfManaged = managementMode === 'self';
+    const selfManaged = managementMode === 'self' && !fixedManaged;
     const stratManaged = managementMode === 'strat';
     const trendManaged = managementMode === 'trend';
     const breakEvenEnabled = isBreakEvenEffectivelyEnabled({
@@ -337,7 +329,6 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     const trailingEnabled = isTrailingEffectivelyEnabled(pos as any);
     const appManagedTrailingEnabled = isAppManagedTrailingEffectivelyEnabled(pos as any);
     const nativeTrailingManaged = isNativeTrailingManagedByExchange(pos as any);
-    const effectiveSelfManaged = appManagedTrailingEnabled && (fixedManaged || selfManaged || stratManaged) && !trendManaged;
     const breakEvenOnlyEnabled = breakEvenEnabled && !appManagedTrailingEnabled && !nativeTrailingManaged;
     const autoManaged = managementMode === 'auto';
     const realMap = mode === 'live' ? liveMap : demoMap;
@@ -345,6 +336,15 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     const symbol = pos.symbol.toUpperCase();
     const positionMode = await bitgetGetPositionMode(symbol, mode) || 'one_way_mode';
     const positionContext = bitgetBuildPositionContext(pos.positionType as 'buy' | 'sell', positionMode);
+
+    if (selfManaged && Boolean((pos as any).nativeTrailingEnabled)) {
+      const trailingCleanup = await bitgetCancelTrailingOrders(symbol, mode);
+      if (!trailingCleanup.ok) {
+        results.push(`TRAILING_CLEANUP_WARNING (${mode}): ${symbol} -> ${trailingCleanup.message}`);
+      } else if (trailingCleanup.message === 'cancelled') {
+        results.push(`TRAILING_DISABLED (${mode}): ${symbol} -> trailing nativo heredado cancelado.`);
+      }
+    }
 
     if (!snapshot.ok) {
       results.push(`SYNC_SKIPPED (${mode}): No se pudo verificar ${symbol} en Bitget. ${snapshot.errors.join(' | ')}`);
@@ -524,10 +524,11 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       );
     }
 
-    if (!effectiveSelfManaged && !nativeTrailingManaged) {
+    if (!nativeTrailingManaged) {
       const ensuredStopResp = await syncStopOrder(
         symbol,
         positionContext.closeSide,
+        pos.positionType as 'buy' | 'sell',
         newSl,
         pos.quantity,
         mode,
@@ -542,12 +543,25 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     }
 
     if (!exhaustionTriggered && pos.positionType === 'buy') {
-      if (trendManaged && breakEvenEnabled && effectiveMovePercent >= protectionSettings.trendBreakEvenActivationPercent) {
+      if (selfManaged) {
+        if (profitPercent > 1) {
+          const targetSlPrice = pos.entryPrice * (1 + entryComm) / (1 - comm);
+          if (targetSlPrice > pos.stopLoss) {
+            const slResp = await syncStopOrder(symbol, positionContext.closeSide, pos.positionType as 'buy' | 'sell', targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
+            if (slResp.ok) {
+              newSl = getSyncedStopPrice(slResp, targetSlPrice);
+              results.push(`SL_UPDATE (${mode}): ${symbol} self breakeven >1% -> ${newSl}`);
+            } else {
+              results.push(`SL_SYNC_WARNING (${mode}): ${symbol} self breakeven -> ${slResp.message}`);
+            }
+          }
+        }
+      } else if (trendManaged && breakEvenEnabled && effectiveMovePercent >= protectionSettings.trendBreakEvenActivationPercent) {
         const targetSlPrice = pos.entryPrice * (1 + entryComm) / (1 - comm);
         if (targetSlPrice > pos.stopLoss) {
-          const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
+          const slResp = await syncStopOrder(symbol, positionContext.closeSide, pos.positionType as 'buy' | 'sell', targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
           if (slResp.ok) {
-            newSl = targetSlPrice;
+            newSl = getSyncedStopPrice(slResp, targetSlPrice);
             results.push(`SL_UPDATE (${mode}): ${symbol} trend breakeven -> ${targetSlPrice}`);
           } else {
             results.push(`SL_SYNC_WARNING (${mode}): ${symbol} trend breakeven -> ${slResp.message}`);
@@ -556,53 +570,32 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       } else if (autoManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice >= takeProfit) {
         takeProfitTriggered = true;
       } else if (!trendManaged && adaptiveProtection && appManagedTrailingEnabled && adaptiveProtection.stopPrice > pos.stopLoss) {
-        const slResp = await syncStopOrder(symbol, positionContext.closeSide, adaptiveProtection.stopPrice, pos.quantity, mode, positionContext.closeTradeSide);
+        const slResp = await syncStopOrder(symbol, positionContext.closeSide, pos.positionType as 'buy' | 'sell', adaptiveProtection.stopPrice, pos.quantity, mode, positionContext.closeTradeSide);
         if (slResp.ok) {
-          newSl = adaptiveProtection.stopPrice;
+          newSl = getSyncedStopPrice(slResp, adaptiveProtection.stopPrice);
           results.push(`SL_UPDATE (${mode}): ${symbol} adaptive ${adaptiveProtection.reason} -> ${adaptiveProtection.stopPrice}`);
         }
       } else if (!trendManaged && adaptiveProtection && breakEvenEnabled && adaptiveProtection.reason === 'break_even' && adaptiveProtection.stopPrice > pos.stopLoss) {
-        const slResp = await syncStopOrder(symbol, positionContext.closeSide, adaptiveProtection.stopPrice, pos.quantity, mode, positionContext.closeTradeSide);
+        const slResp = await syncStopOrder(symbol, positionContext.closeSide, pos.positionType as 'buy' | 'sell', adaptiveProtection.stopPrice, pos.quantity, mode, positionContext.closeTradeSide);
         if (slResp.ok) {
-          newSl = adaptiveProtection.stopPrice;
+          newSl = getSyncedStopPrice(slResp, adaptiveProtection.stopPrice);
           results.push(`SL_UPDATE (${mode}): ${symbol} adaptive break-even -> ${adaptiveProtection.stopPrice}`);
         }
       } else if (trendManaged && appManagedTrailingEnabled) {
         const targetSlPrice = getTrendTrailingStopPrice(pos.entryPrice, marketMovePercent, 'buy', protectionSettings);
         if (typeof targetSlPrice === 'number' && targetSlPrice > pos.stopLoss) {
-          const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
+          const slResp = await syncStopOrder(symbol, positionContext.closeSide, pos.positionType as 'buy' | 'sell', targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
           if (slResp.ok) {
-            newSl = targetSlPrice;
+            newSl = getSyncedStopPrice(slResp, targetSlPrice);
             results.push(`SL_UPDATE (${mode}): ${symbol} trend trailing -> ${targetSlPrice}`);
-          }
-        }
-      } else if (effectiveSelfManaged) {
-        const trailingStep = getSelfManagedTrailingStep(marketMovePercent, protectionSettings);
-        if (trailingStep !== null) {
-          const targetSlPrice = pos.entryPrice * (1 + (trailingStep / 100));
-          if (targetSlPrice > pos.stopLoss) {
-            const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
-            if (slResp.ok) {
-              newSl = targetSlPrice;
-              results.push(`SL_UPDATE (${mode}): ${symbol} self trailing -> ${targetSlPrice}`);
-            }
-          }
-        } else if (marketMovePercent >= protectionSettings.selfBreakEvenActivationPercent) {
-          const targetSlPrice = pos.entryPrice * (1 + entryComm) / (1 - comm);
-          if (targetSlPrice > pos.stopLoss) {
-            const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
-            if (slResp.ok) {
-              newSl = targetSlPrice;
-              results.push(`SL_UPDATE (${mode}): ${symbol} -> breakeven+fees`);
-            }
           }
         }
       } else if (breakEvenOnlyEnabled && marketMovePercent >= protectionSettings.selfBreakEvenActivationPercent) {
         const targetSlPrice = pos.entryPrice * (1 + entryComm) / (1 - comm);
         if (targetSlPrice > pos.stopLoss) {
-          const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
+          const slResp = await syncStopOrder(symbol, positionContext.closeSide, pos.positionType as 'buy' | 'sell', targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
           if (slResp.ok) {
-            newSl = targetSlPrice;
+            newSl = getSyncedStopPrice(slResp, targetSlPrice);
             results.push(`SL_UPDATE (${mode}): ${symbol} breakeven -> ${targetSlPrice}`);
           } else {
             results.push(`SL_SYNC_WARNING (${mode}): ${symbol} breakeven -> ${slResp.message}`);
@@ -611,18 +604,18 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       } else if (autoManaged && appManagedTrailingEnabled) {
         const targetSlPrice = getAutoTrailingStopPrice(pos.entryPrice, marketMovePercent, 'buy', protectionSettings);
         if (typeof targetSlPrice === 'number' && targetSlPrice > pos.stopLoss) {
-          const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
+          const slResp = await syncStopOrder(symbol, positionContext.closeSide, pos.positionType as 'buy' | 'sell', targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
           if (slResp.ok) {
-            newSl = targetSlPrice;
+            newSl = getSyncedStopPrice(slResp, targetSlPrice);
             results.push(`SL_UPDATE (${mode}): ${symbol} trailing -> ${targetSlPrice}`);
           }
         }
       } else if (autoManaged && breakEvenEnabled && marketMovePercent >= protectionSettings.autoBreakEvenActivationPercent) {
         const targetSlPrice = pos.entryPrice * (1 + entryComm) / (1 - comm);
         if (targetSlPrice > pos.stopLoss) {
-          const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
+          const slResp = await syncStopOrder(symbol, positionContext.closeSide, pos.positionType as 'buy' | 'sell', targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
           if (slResp.ok) {
-            newSl = targetSlPrice;
+            newSl = getSyncedStopPrice(slResp, targetSlPrice);
             results.push(`SL_UPDATE (${mode}): ${symbol} -> breakeven+fees`);
           }
         }
@@ -647,12 +640,25 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
         }
       }
     } else if (!exhaustionTriggered) { // short
-      if (trendManaged && breakEvenEnabled && effectiveMovePercent >= protectionSettings.trendBreakEvenActivationPercent) {
+      if (selfManaged) {
+        if (profitPercent > 1) {
+          const targetSlPrice = pos.entryPrice * (1 - entryComm) / (1 + comm);
+          if (targetSlPrice < pos.stopLoss) {
+            const slResp = await syncStopOrder(symbol, positionContext.closeSide, pos.positionType as 'buy' | 'sell', targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
+            if (slResp.ok) {
+              newSl = getSyncedStopPrice(slResp, targetSlPrice);
+              results.push(`SL_UPDATE (${mode}): ${symbol} self breakeven >1% -> ${newSl}`);
+            } else {
+              results.push(`SL_SYNC_WARNING (${mode}): ${symbol} self breakeven -> ${slResp.message}`);
+            }
+          }
+        }
+      } else if (trendManaged && breakEvenEnabled && effectiveMovePercent >= protectionSettings.trendBreakEvenActivationPercent) {
         const targetSlPrice = pos.entryPrice * (1 - entryComm) / (1 + comm);
         if (targetSlPrice < pos.stopLoss) {
-          const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
+          const slResp = await syncStopOrder(symbol, positionContext.closeSide, pos.positionType as 'buy' | 'sell', targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
           if (slResp.ok) {
-            newSl = targetSlPrice;
+            newSl = getSyncedStopPrice(slResp, targetSlPrice);
             results.push(`SL_UPDATE (${mode}): ${symbol} trend breakeven -> ${targetSlPrice}`);
           } else {
             results.push(`SL_SYNC_WARNING (${mode}): ${symbol} trend breakeven -> ${slResp.message}`);
@@ -661,53 +667,32 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       } else if (autoManaged && takeProfitAutoCloseEnabled && hasTakeProfit && currentPrice <= takeProfit) {
         takeProfitTriggered = true;
       } else if (!trendManaged && adaptiveProtection && appManagedTrailingEnabled && adaptiveProtection.stopPrice < pos.stopLoss) {
-        const slResp = await syncStopOrder(symbol, positionContext.closeSide, adaptiveProtection.stopPrice, pos.quantity, mode, positionContext.closeTradeSide);
+        const slResp = await syncStopOrder(symbol, positionContext.closeSide, pos.positionType as 'buy' | 'sell', adaptiveProtection.stopPrice, pos.quantity, mode, positionContext.closeTradeSide);
         if (slResp.ok) {
-          newSl = adaptiveProtection.stopPrice;
+          newSl = getSyncedStopPrice(slResp, adaptiveProtection.stopPrice);
           results.push(`SL_UPDATE (${mode}): ${symbol} adaptive ${adaptiveProtection.reason} -> ${adaptiveProtection.stopPrice}`);
         }
       } else if (!trendManaged && adaptiveProtection && breakEvenEnabled && adaptiveProtection.reason === 'break_even' && adaptiveProtection.stopPrice < pos.stopLoss) {
-        const slResp = await syncStopOrder(symbol, positionContext.closeSide, adaptiveProtection.stopPrice, pos.quantity, mode, positionContext.closeTradeSide);
+        const slResp = await syncStopOrder(symbol, positionContext.closeSide, pos.positionType as 'buy' | 'sell', adaptiveProtection.stopPrice, pos.quantity, mode, positionContext.closeTradeSide);
         if (slResp.ok) {
-          newSl = adaptiveProtection.stopPrice;
+          newSl = getSyncedStopPrice(slResp, adaptiveProtection.stopPrice);
           results.push(`SL_UPDATE (${mode}): ${symbol} adaptive break-even -> ${adaptiveProtection.stopPrice}`);
         }
       } else if (trendManaged && appManagedTrailingEnabled) {
         const targetSlPrice = getTrendTrailingStopPrice(pos.entryPrice, marketMovePercent, 'sell', protectionSettings);
         if (typeof targetSlPrice === 'number' && targetSlPrice < pos.stopLoss) {
-          const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
+          const slResp = await syncStopOrder(symbol, positionContext.closeSide, pos.positionType as 'buy' | 'sell', targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
           if (slResp.ok) {
-            newSl = targetSlPrice;
+            newSl = getSyncedStopPrice(slResp, targetSlPrice);
             results.push(`SL_UPDATE (${mode}): ${symbol} trend trailing -> ${targetSlPrice}`);
-          }
-        }
-      } else if (effectiveSelfManaged) {
-        const trailingStep = getSelfManagedTrailingStep(marketMovePercent, protectionSettings);
-        if (trailingStep !== null) {
-          const targetSlPrice = pos.entryPrice * (1 - (trailingStep / 100));
-          if (targetSlPrice < pos.stopLoss) {
-            const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
-            if (slResp.ok) {
-              newSl = targetSlPrice;
-              results.push(`SL_UPDATE (${mode}): ${symbol} self trailing -> ${targetSlPrice}`);
-            }
-          }
-        } else if (marketMovePercent >= protectionSettings.selfBreakEvenActivationPercent) {
-          const targetSlPrice = pos.entryPrice * (1 - entryComm) / (1 + comm);
-          if (targetSlPrice < pos.stopLoss) {
-            const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
-            if (slResp.ok) {
-              newSl = targetSlPrice;
-              results.push(`SL_UPDATE (${mode}): ${symbol} -> breakeven+fees`);
-            }
           }
         }
       } else if (breakEvenOnlyEnabled && marketMovePercent >= protectionSettings.selfBreakEvenActivationPercent) {
         const targetSlPrice = pos.entryPrice * (1 - entryComm) / (1 + comm);
         if (targetSlPrice < pos.stopLoss) {
-          const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
+          const slResp = await syncStopOrder(symbol, positionContext.closeSide, pos.positionType as 'buy' | 'sell', targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
           if (slResp.ok) {
-            newSl = targetSlPrice;
+            newSl = getSyncedStopPrice(slResp, targetSlPrice);
             results.push(`SL_UPDATE (${mode}): ${symbol} breakeven -> ${targetSlPrice}`);
           } else {
             results.push(`SL_SYNC_WARNING (${mode}): ${symbol} breakeven -> ${slResp.message}`);
@@ -716,18 +701,18 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       } else if (autoManaged && appManagedTrailingEnabled) {
         const targetSlPrice = getAutoTrailingStopPrice(pos.entryPrice, marketMovePercent, 'sell', protectionSettings);
         if (typeof targetSlPrice === 'number' && targetSlPrice < pos.stopLoss) {
-          const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
+          const slResp = await syncStopOrder(symbol, positionContext.closeSide, pos.positionType as 'buy' | 'sell', targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
           if (slResp.ok) {
-            newSl = targetSlPrice;
+            newSl = getSyncedStopPrice(slResp, targetSlPrice);
             results.push(`SL_UPDATE (${mode}): ${symbol} trailing -> ${targetSlPrice}`);
           }
         }
       } else if (autoManaged && breakEvenEnabled && marketMovePercent >= protectionSettings.autoBreakEvenActivationPercent) {
         const targetSlPrice = pos.entryPrice * (1 - entryComm) / (1 + comm);
         if (targetSlPrice < pos.stopLoss) {
-          const slResp = await syncStopOrder(symbol, positionContext.closeSide, targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
+          const slResp = await syncStopOrder(symbol, positionContext.closeSide, pos.positionType as 'buy' | 'sell', targetSlPrice, pos.quantity, mode, positionContext.closeTradeSide);
           if (slResp.ok) {
-            newSl = targetSlPrice;
+            newSl = getSyncedStopPrice(slResp, targetSlPrice);
             results.push(`SL_UPDATE (${mode}): ${symbol} -> breakeven+fees`);
           }
         }

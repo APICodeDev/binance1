@@ -48,6 +48,7 @@ import {
   bitgetSetPositionMode,
   bitgetNormalizePriceByContract,
   bitgetNormalizePriceByContractDirectional,
+  bitgetNormalizeProtectionPrice,
   bitgetNormalizeSizeByContract,
   bitgetNormalizeSymbol,
   bitgetOrderSuccess,
@@ -1275,17 +1276,88 @@ async function executeEntry(
     const isRequestedTakeProfitValid = takeProfitResolution.isRequestedTakeProfitValid;
     const requestedStopWasInvalid = stopInputProvided && !isRequestedStopValid;
     const requestedTakeProfitWasInvalid = takeProfitInputProvided && !isRequestedTakeProfitValid;
+
+    // Bitget validates trigger prices against both the contract tick and the
+    // current market. Preserve a valid self SL/TP exactly after tick
+    // normalization; otherwise move it to the nearest valid protective level
+    // for this symbol instead of silently dropping the requested TP.
+    const fetchedProtectionReferencePrice = await bitgetGetPrice(symbol, tradingMode).catch(() => false);
+    const protectionReferencePrice = typeof fetchedProtectionReferencePrice === 'number' &&
+      Number.isFinite(fetchedProtectionReferencePrice) && fetchedProtectionReferencePrice > 0
+      ? fetchedProtectionReferencePrice
+      : entryPrice;
+    const protectionTickSize = Math.max(Number(bitgetGetTickSize(exchangeInfo)) || 0, Number.EPSILON);
+    const isSelfProtectionPriceValid = (
+      price: number | null,
+      kind: 'stop' | 'take_profit'
+    ) => {
+      if (!(typeof price === 'number' && Number.isFinite(price) && price > 0)) {
+        return false;
+      }
+
+      if (type === 'buy') {
+        return kind === 'stop'
+          ? price < Math.min(entryPrice, protectionReferencePrice)
+          : price > Math.max(entryPrice, protectionReferencePrice);
+      }
+
+      return kind === 'stop'
+        ? price > Math.max(entryPrice, protectionReferencePrice)
+        : price < Math.min(entryPrice, protectionReferencePrice);
+    };
+    const adjustSelfProtectionPrice = (
+      candidate: number | null,
+      kind: 'stop' | 'take_profit'
+    ) => {
+      const normalizedCandidate = candidate !== null
+        ? bitgetNormalizeProtectionPrice(candidate, exchangeInfo, type as 'buy' | 'sell', kind)
+        : null;
+      if (isSelfProtectionPriceValid(normalizedCandidate, kind)) {
+        return normalizedCandidate;
+      }
+
+      const anchor = type === 'buy'
+        ? (kind === 'stop' ? Math.min(entryPrice, protectionReferencePrice) : Math.max(entryPrice, protectionReferencePrice))
+        : (kind === 'stop' ? Math.max(entryPrice, protectionReferencePrice) : Math.min(entryPrice, protectionReferencePrice));
+      const fallbackRawPrice = type === 'buy'
+        ? (kind === 'stop' ? anchor - protectionTickSize : anchor + protectionTickSize)
+        : (kind === 'stop' ? anchor + protectionTickSize : anchor - protectionTickSize);
+      const fallbackPrice = bitgetNormalizeProtectionPrice(fallbackRawPrice, exchangeInfo, type as 'buy' | 'sell', kind);
+      if (isSelfProtectionPriceValid(fallbackPrice, kind)) {
+        return fallbackPrice;
+      }
+
+      // Protect against a contract whose tick is coarser than the first
+      // directional step after rounding.
+      const widerFallbackRawPrice = type === 'buy'
+        ? (kind === 'stop' ? anchor - (protectionTickSize * 2) : anchor + (protectionTickSize * 2))
+        : (kind === 'stop' ? anchor + (protectionTickSize * 2) : anchor - (protectionTickSize * 2));
+      return bitgetNormalizeProtectionPrice(widerFallbackRawPrice, exchangeInfo, type as 'buy' | 'sell', kind);
+    };
+    const selfStopPrice = managementMode === 'self'
+      ? adjustSelfProtectionPrice(normalizedEffectiveRequestedStop ?? legacyStopPrice, 'stop')
+      : null;
+    const selfTakeProfitPrice = managementMode === 'self' && takeProfitInputProvided
+      ? adjustSelfProtectionPrice(
+          isRequestedTakeProfitValid
+            ? normalizedRequestedTakeProfit
+            : takeProfitResolution.resolvedRequestedTakeProfitPrice,
+          'take_profit'
+        )
+      : null;
     const stopPrice = trendManaged
       ? (normalizedEffectiveRequestedStop !== null ? normalizedEffectiveRequestedStop : legacyStopPrice)
       : stratManaged
       ? (normalizedEffectiveRequestedStop !== null ? normalizedEffectiveRequestedStop : legacyStopPrice)
       : managementMode === 'self'
-        ? (normalizedEffectiveRequestedStop !== null ? normalizedEffectiveRequestedStop : legacyStopPrice)
+        ? selfStopPrice
         : (apiStopMode === 'legacy' ? legacyStopPrice : (normalizedEffectiveRequestedStop !== null ? normalizedEffectiveRequestedStop : legacyStopPrice));
     const takeProfitPrice = trendManaged
       ? null
       : stratManaged
       ? (isRequestedTakeProfitValid ? normalizedRequestedTakeProfit : null)
+      : managementMode === 'self'
+      ? selfTakeProfitPrice
       : (isRequestedTakeProfitValid ? normalizedRequestedTakeProfit : null);
     const appliedStopSource = stopPrice === null
       ? 'none'
@@ -1297,7 +1369,7 @@ async function executeEntry(
     const appliedTakeProfitSource = takeProfitPrice === null
       ? 'none'
       : takeProfitInputSource;
-    const selfNativeTrailingRequested = managementMode === 'self' && protectionSettings.selfNativeTrailingEnabled;
+    const selfNativeTrailingRequested = false;
     const nativeTrailingActivationPrice = selfNativeTrailingRequested
       ? bitgetNormalizePriceByContractDirectional(
           type === 'buy'
@@ -1380,7 +1452,7 @@ async function executeEntry(
         kind: 'stop',
         symbol,
         tradingMode,
-        place: () => bitgetPlaceStopMarket(symbol, slSide, stopPrice!, filledSize, tradingMode, closeTradeSide),
+        place: () => bitgetPlaceStopMarket(symbol, slSide, stopPrice!, filledSize, tradingMode, closeTradeSide, type as 'buy' | 'sell'),
       });
       slResponse = stopPlacement.response;
       initialStopAttempts = stopPlacement.attempts;
@@ -1395,7 +1467,7 @@ async function executeEntry(
       return NextResponse.json({ error: true, message: errDetail, detail: slResponse }, { status: 500 });
     }
 
-    if ((stratManaged || trendManaged) && shouldPlaceInitialStop) {
+    if ((stratManaged || trendManaged || managementMode === 'self') && shouldPlaceInitialStop) {
       const verifiedStop = await verifyProtectionOrder({
         kind: 'stop',
         symbol,
@@ -1443,7 +1515,7 @@ async function executeEntry(
       return NextResponse.json({ error: true, message: errDetail, detail: tpResponse }, { status: 500 });
     }
 
-    if (stratManaged && shouldPlaceNativeTakeProfit && !initialTakeProfitPending) {
+    if ((stratManaged || managementMode === 'self') && shouldPlaceNativeTakeProfit && !initialTakeProfitPending) {
       const verifiedTakeProfit = await verifyProtectionOrder({
         kind: 'takeProfit',
         symbol,

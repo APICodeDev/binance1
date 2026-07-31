@@ -96,7 +96,7 @@ export function isBaseTrailingEnabled(value: unknown) {
   }
 
   const managementMode = normalizePositionManagementMode(value);
-  return managementMode === 'auto' || managementMode === 'self' || managementMode === 'strat' || managementMode === 'trend';
+  return managementMode === 'auto' || managementMode === 'strat' || managementMode === 'trend';
 }
 
 export function getManualTrailingOverride(position: ProtectionConfigPosition) {
@@ -113,6 +113,12 @@ export function isBreakEvenEffectivelyEnabled(position: ProtectionConfigPosition
 }
 
 export function isTrailingEffectivelyEnabled(position: ProtectionConfigPosition) {
+  // Self positions keep their incoming SL/TP and only receive the fixed
+  // breakeven rule. Manual controls must not be able to re-enable trailing.
+  if (normalizePositionManagementMode(position.managementMode) === 'self') {
+    return false;
+  }
+
   const manualOverride = getManualTrailingOverride(position);
   if (manualOverride !== null) {
     return manualOverride;
@@ -122,7 +128,9 @@ export function isTrailingEffectivelyEnabled(position: ProtectionConfigPosition)
 }
 
 export function isNativeTrailingManagedByExchange(position: ProtectionConfigPosition) {
-  return normalizePositionManagementMode(position.managementMode) === 'self' && Boolean(position.nativeTrailingEnabled);
+  // Native trailing is intentionally disabled for self positions. Keep this
+  // helper returning false so old audit metadata cannot re-enable it.
+  return false;
 }
 
 export function isAppManagedTrailingEffectivelyEnabled(position: ProtectionConfigPosition) {

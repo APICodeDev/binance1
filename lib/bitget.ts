@@ -395,7 +395,9 @@ export const bitgetGetPricePrecision = async (symbol: string, tradingMode: 'demo
 export const bitgetGetTickSize = (exchangeInfo: any) => {
   const pricePlace = parseInt(exchangeInfo?.pricePlace || '4', 10);
   const priceEndStep = parseFloat(exchangeInfo?.priceEndStep || '1');
-  return priceEndStep / Math.pow(10, pricePlace);
+  const safePricePlace = Number.isFinite(pricePlace) && pricePlace >= 0 ? pricePlace : 4;
+  const safePriceEndStep = Number.isFinite(priceEndStep) && priceEndStep > 0 ? priceEndStep : 1;
+  return safePriceEndStep / Math.pow(10, safePricePlace);
 };
 
 export const bitgetNormalizePriceByContract = (price: number, exchangeInfo: any) => {
@@ -435,6 +437,21 @@ export const bitgetNormalizePriceByContractDirectional = (
   return result;
 };
 
+export type BitgetProtectionKind = 'stop' | 'take_profit';
+
+export const bitgetNormalizeProtectionPrice = (
+  price: number,
+  exchangeInfo: any,
+  positionType: 'buy' | 'sell',
+  kind: BitgetProtectionKind
+) => {
+  const direction = kind === 'stop'
+    ? (positionType === 'buy' ? 'down' : 'up')
+    : (positionType === 'buy' ? 'up' : 'down');
+
+  return bitgetNormalizePriceByContractDirectional(price, exchangeInfo, direction);
+};
+
 export const bitgetNormalizeSizeByContract = (size: number, exchangeInfo: any) => {
   const minTradeNum = parseFloat(exchangeInfo?.minTradeNum || '0.001');
   const sizeMultiplier = parseFloat(exchangeInfo?.sizeMultiplier || '0');
@@ -457,16 +474,23 @@ export const bitgetPlaceStopMarket = async (
   stopPrice: number,
   quantity?: number,
   tradingMode: 'demo' | 'live' = 'demo',
-  tradeSide?: 'open' | 'close'
+  tradeSide?: 'open' | 'close',
+  positionType?: 'buy' | 'sell'
 ) => {
   const sym = symbol.toUpperCase();
-  const precision = await bitgetGetPricePrecision(sym, tradingMode);
+  const exchangeInfo = await bitgetGetExchangeInfo(sym, tradingMode);
+  const precision = parseInt(exchangeInfo?.pricePlace || '', 10) || await bitgetGetPricePrecision(sym, tradingMode);
+  const normalizedStopPrice = exchangeInfo && positionType
+    ? bitgetNormalizeProtectionPrice(stopPrice, exchangeInfo, positionType, 'stop')
+    : exchangeInfo
+      ? bitgetNormalizePriceByContract(stopPrice, exchangeInfo)
+      : stopPrice;
 
   const params: any = {
     symbol: sym,
     productType: getProductType(sym),
     planType: 'normal_plan',
-    triggerPrice: stopPrice.toFixed(precision),
+    triggerPrice: normalizedStopPrice.toFixed(precision),
     triggerType: BITGET_PROTECTION_TRIGGER_TYPE,
     executePrice: '0', // market order
     side: side.toLowerCase(),
@@ -498,13 +522,19 @@ export const bitgetPlaceTpslMarket = async (
   tradingMode: 'demo' | 'live' = 'demo'
 ) => {
   const sym = symbol.toUpperCase();
-  const precision = await bitgetGetPricePrecision(sym, tradingMode);
+  const exchangeInfo = await bitgetGetExchangeInfo(sym, tradingMode);
+  const precision = parseInt(exchangeInfo?.pricePlace || '', 10) || await bitgetGetPricePrecision(sym, tradingMode);
+  const positionType = holdSide === 'long' || holdSide === 'buy' ? 'buy' : 'sell';
+  const protectionKind: BitgetProtectionKind = planType === 'profit_plan' ? 'take_profit' : 'stop';
+  const normalizedTriggerPrice = exchangeInfo
+    ? bitgetNormalizeProtectionPrice(triggerPrice, exchangeInfo, positionType, protectionKind)
+    : triggerPrice;
   const params: Record<string, string> = {
     symbol: sym,
     productType: getProductType(sym),
     marginCoin: getMarginCoin(sym),
     planType,
-    triggerPrice: triggerPrice.toFixed(precision),
+    triggerPrice: normalizedTriggerPrice.toFixed(precision),
     triggerType: BITGET_PROTECTION_TRIGGER_TYPE,
     executePrice: '0',
     holdSide,
@@ -908,16 +938,15 @@ export const bitgetEnsureVerifiedStopOrder = async (params: {
   quantity: number;
   tradingMode: 'demo' | 'live';
   tradeSide?: 'open' | 'close';
+  positionType?: 'buy' | 'sell';
 }) => {
-  const { symbol, side, stopPrice, quantity, tradingMode, tradeSide } = params;
+  const { symbol, side, stopPrice, quantity, tradingMode, tradeSide, positionType } = params;
   const exchangeInfo = await bitgetGetExchangeInfo(symbol, tradingMode);
-  const normalizedStopPrice = exchangeInfo
-    ? bitgetNormalizePriceByContractDirectional(
-        stopPrice,
-        exchangeInfo,
-        side === 'SELL' ? 'up' : 'down'
-      )
-    : stopPrice;
+  const normalizedStopPrice = exchangeInfo && positionType
+    ? bitgetNormalizeProtectionPrice(stopPrice, exchangeInfo, positionType, 'stop')
+    : exchangeInfo
+      ? bitgetNormalizePriceByContractDirectional(stopPrice, exchangeInfo, side === 'SELL' ? 'up' : 'down')
+      : stopPrice;
   const pending = await bitgetGetPendingStopOrders(symbol, tradingMode);
   if (!pending.ok) {
     return { ok: false, message: pending.error || 'Unable to fetch pending stop orders before sync' };
@@ -1247,6 +1276,24 @@ export const bitgetCancelPlanOrdersByIds = async (
     marginCoin: getMarginCoin(sym),
     orderIdList: orderIds.map((orderId) => ({ orderId, clientOid: '' })),
   }, 'POST', true, tradingMode);
+};
+
+export const bitgetCancelTrailingOrders = async (
+  symbol: string,
+  tradingMode: 'demo' | 'live' = 'demo'
+) => {
+  const pending = await bitgetGetPendingTrailingOrders(symbol, tradingMode);
+  if (!pending.ok) {
+    return { ok: false, message: pending.error || 'Unable to fetch pending trailing orders' };
+  }
+
+  const orderIds = pending.orders.map((order: any) => order?.orderId).filter(Boolean);
+  if (orderIds.length > 0) {
+    await bitgetCancelPlanOrdersByIds(symbol, orderIds, tradingMode);
+  }
+
+  await bitgetCancelAllPlanOrdersByType(symbol, 'moving_plan', tradingMode);
+  return { ok: true, message: orderIds.length > 0 ? 'cancelled' : 'already-empty' };
 };
 
 export const bitgetCancelAlgoOrders = async (symbol: string, tradingMode: 'demo' | 'live' = 'demo') => {
