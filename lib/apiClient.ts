@@ -4,13 +4,36 @@ type ApiOptions = RequestInit & {
 };
 
 type ApiPayload = {
-  message?: string;
-  detail?: string;
+  message?: unknown;
+  detail?: unknown;
   success?: boolean;
   [key: string]: unknown;
 };
 
 type MonitorMode = 'demo' | 'live';
+
+function stringifyErrorValue(value: unknown, fallback: string) {
+  if (typeof value === 'string' && value.trim()) {
+    return value;
+  }
+
+  if (value instanceof Error && value.message) {
+    return value.message;
+  }
+
+  if (value !== undefined && value !== null) {
+    try {
+      const serialized = JSON.stringify(value);
+      if (serialized && serialized !== '{}') {
+        return serialized;
+      }
+    } catch {
+      // Use the fallback when an error payload cannot be serialized.
+    }
+  }
+
+  return fallback;
+}
 
 const API_TOKEN_STORAGE_KEY = 'kraken-desk-api-token';
 
@@ -18,8 +41,8 @@ class ApiClientError extends Error {
   status: number;
   payload: ApiPayload | null;
 
-  constructor(message: string, status: number, payload: ApiPayload | null) {
-    super(message);
+  constructor(message: unknown, status: number, payload: ApiPayload | null) {
+    super(stringifyErrorValue(message, `Request failed: ${status}`));
     this.name = 'ApiClientError';
     this.status = status;
     this.payload = payload;
@@ -84,7 +107,7 @@ async function request<T>(url: string, options: ApiOptions = {}): Promise<T> {
   const payload = await safeJson(res);
 
   if (!res.ok) {
-    throw new ApiClientError(payload?.message || `Request failed: ${res.status}`, res.status, payload);
+    throw new ApiClientError(payload?.message ?? payload?.detail ?? `Request failed: ${res.status}`, res.status, payload);
   }
 
   return payload as T;
@@ -95,10 +118,10 @@ export const apiClient = {
     error instanceof ApiClientError && (error.status === 401 || error.status === 403),
   getErrorMessage: (error: unknown, fallback: string) => {
     if (error instanceof ApiClientError) {
-      return String(error.payload?.detail || error.payload?.message || fallback);
+      return stringifyErrorValue(error.payload?.detail ?? error.payload?.message ?? error.message, fallback);
     }
 
-    return fallback;
+    return stringifyErrorValue(error, fallback);
   },
   getApiBaseUrl: () => getBaseUrl(),
   getStoredApiToken: () => getStoredApiToken(),

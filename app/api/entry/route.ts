@@ -252,12 +252,13 @@ async function verifyProtectionOrder(params: {
 }) {
   const { kind, symbol, tradingMode, expectedTriggerPrice, expectedSize, pricePrecision } = params;
   const matcher = (order: any) => {
-    const triggerPrice = Number.parseFloat(String(order?.triggerPrice || order?.planTriggerPrice || '0'));
-    const size = Number.parseFloat(String(order?.size || order?.sz || '0'));
+    const triggerPrice = Number.parseFloat(String(order?.triggerPrice || order?.planTriggerPrice || order?.stopPrice || '0'));
+    const size = Number.parseFloat(String(order?.size || order?.sz || order?.quantity || '0'));
     const planType = String(order?.planType || '').toLowerCase();
+    const orderType = String(order?.orderType || order?.type || '').toLowerCase();
     const planMatches = kind === 'stop'
-      ? planType === 'normal_plan'
-      : planType.includes('profit');
+      ? planType === 'normal_plan' || orderType === 'stp' || orderType === 'stop'
+      : planType.includes('profit') || orderType === 'take_profit';
     return planMatches &&
       Number.isFinite(triggerPrice) &&
       isPriceMatch(triggerPrice, expectedTriggerPrice, pricePrecision) &&
@@ -1149,8 +1150,29 @@ async function executeEntry(
           return NextResponse.json({ error: true, message: errDetail, detail: marketResp }, { status: 500 });
         }
 
-        filledSize = size;
-        entryPrice = parseFloat(marketResp?.avgPrice || midPrice.toString()) || midPrice;
+        let marketOrderData = extractOrderData(marketResp);
+        const marketOrderId = marketResp?.data?.orderId || marketResp?.data?.orderIdStr || marketResp?.orderId;
+        if (tradingMode === 'live' && marketOrderId) {
+          await sleep(250);
+          const marketDetail = await krakenGetOrderDetail(symbol, tradingMode, String(marketOrderId));
+          marketOrderData = extractOrderData(marketDetail);
+        }
+
+        const marketFilledSize = parseFloat(
+          marketOrderData?.baseVolume ||
+          marketOrderData?.filledQty ||
+          marketOrderData?.filled ||
+          marketOrderData?.size ||
+          '0'
+        );
+        if (!Number.isFinite(marketFilledSize) || marketFilledSize <= 0) {
+          const errDetail = `Fallback market aceptado por Kraken pero sin ejecucion confirmada para ${symbol}.`;
+          await saveLastEntryError(errDetail, symbol, type);
+          return NextResponse.json({ error: true, message: errDetail, detail: marketResp }, { status: 409 });
+        }
+
+        filledSize = marketFilledSize;
+        entryPrice = parseFloat(marketOrderData?.priceAvg || marketOrderData?.avgPrice || marketResp?.avgPrice || midPrice.toString()) || midPrice;
         realEntryFee = filledSize * entryPrice * takerFeeRate;
       } else {
         const iocPrice = krakenNormalizePriceByContract(takerReferencePrice, exchangeInfo);

@@ -192,6 +192,13 @@ const writePaperOrders = async (orders: PaperOrder[]) => {
   });
 };
 
+const planTypeForOrderType = (orderType: unknown) => {
+  const normalized = String(orderType || '').toLowerCase();
+  if (normalized === 'stp' || normalized === 'stop') return 'normal_plan';
+  if (normalized === 'take_profit') return 'profit_plan';
+  return 'normal';
+};
+
 const paperOrderResponse = (order: PaperOrder) => ({
   result: 'success',
   code: '00000',
@@ -203,6 +210,8 @@ const paperOrderResponse = (order: PaperOrder) => ({
     symbol: order.symbol,
     side: order.side,
     orderType: order.orderType,
+    planType: planTypeForOrderType(order.orderType),
+    triggerPrice: order.stopPrice,
     size: order.size,
     filledQty: order.filledSize,
     baseVolume: order.filledSize,
@@ -451,7 +460,16 @@ export const krakenGetCurrentFundingRate = async (symbol: string, tradingMode: T
 
 const normalizeOpenOrders = (resp: any, symbol: string) => {
   const native = toKrakenContractSymbol(symbol);
-  return (Array.isArray(resp?.openOrders) ? resp.openOrders : []).filter((order: any) => order.symbol === native).map((order: any) => ({ ...order, orderId: order.order_id, planType: String(order.orderType || '').toLowerCase().includes('trigger') ? 'normal_plan' : 'normal', triggerPrice: order.stopPrice || order.priceTriggerOptions?.triggerPrice, size: order.unfilledSize || order.quantity, rangeRate: order.priceTriggerOptions?.trailingStopOptions?.maxDeviation }));
+  return (Array.isArray(resp?.openOrders) ? resp.openOrders : [])
+    .filter((order: any) => order.symbol === native)
+    .map((order: any) => ({
+      ...order,
+      orderId: order.order_id || order.orderId,
+      planType: planTypeForOrderType(order.orderType),
+      triggerPrice: order.stopPrice || order.priceTriggerOptions?.triggerPrice,
+      size: order.unfilledSize || order.quantity,
+      rangeRate: order.priceTriggerOptions?.trailingStopOptions?.maxDeviation,
+    }));
 };
 const getPendingOrders = async (symbol: string, mode: TradingMode) => {
   if (mode === 'demo') {
@@ -462,6 +480,7 @@ const getPendingOrders = async (symbol: string, mode: TradingMode) => {
         ...order,
         orderId: order.orderId,
         orderType: order.orderType,
+        planType: planTypeForOrderType(order.orderType),
         triggerPrice: order.stopPrice,
         size: order.size,
         unfilledSize: order.size,

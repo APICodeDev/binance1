@@ -671,6 +671,15 @@ export async function closeTrackedPosition(pos: CloseablePosition): Promise<Clos
 
     await krakenCancelAllOrders(symbol, tradingMode);
 
+    // Paper mode is app-local by design. A successful simulated reduce-only
+    // order is the exchange confirmation; querying the still-open database
+    // row here would create a circular false negative before this function
+    // can mark that row closed.
+    if (tradingMode === 'demo' && krakenOrderSuccess(closeResp)) {
+      verifiedClosed = true;
+      break;
+    }
+
     let attemptConfirmedStillOpen = false;
     let attemptVerifyErrors: string[] = [];
 

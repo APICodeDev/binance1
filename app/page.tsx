@@ -33,7 +33,7 @@ import {
 import { clsx, type ClassValue } from 'clsx';
 import { apiClient } from '@/lib/apiClient';
 import { buildInfo } from '@/lib/buildInfo';
-import appLogo from '@/kraken_logo.png';
+import appLogo from '@/krakenlogo.jpg';
 import { twMerge } from 'tailwind-merge';
 
 function cn(...inputs: ClassValue[]) {
@@ -4277,7 +4277,7 @@ function PositionCard({
                 aria-label={`Open ${pos.symbol} on Kraken`}
                 title="Open on Kraken"
               >
-                <Image src="/kraken-mark.svg" alt="Kraken" width={32} height={32} className="h-8 w-8" />
+                <Image src={appLogo} alt="Kraken" width={32} height={32} className="h-8 w-8 rounded-lg object-cover" />
               </a>
               <a
                 href={tradingViewUrl}
