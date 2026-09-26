@@ -7,13 +7,13 @@ import type { Viewport } from 'next'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata = {
-  title: 'Bitget Signal Desk',
-  description: 'Premium trading dashboard powered by Bitget Futures execution',
+  title: 'KrakenDesk',
+  description: 'Premium trading dashboard powered by Kraken Futures execution',
 }
 
 export const viewport: Viewport = {
   colorScheme: 'dark',
-  themeColor: '#020617',
+  themeColor: '#0b0c0f',
 }
 
 export default function RootLayout({

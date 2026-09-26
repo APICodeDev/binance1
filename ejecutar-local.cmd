@@ -6,14 +6,14 @@ cd /d "%~dp0"
 echo ===================================
 echo Iniciando dashboard Next.js...
 echo ===================================
-start "Bitget Dashboard" cmd /k "cd /d %~dp0 && npm run dev"
+start "Kraken Dashboard" cmd /k "cd /d %~dp0 && npm run dev"
 
 timeout /t 2 /nobreak >nul
 
 echo ===================================
 echo Iniciando servicio WebSocket marketdata...
 echo ===================================
-start "Bitget Market Data WS" cmd /k "cd /d %~dp0 && npm run marketdata:start"
+start "Kraken Market Data WS" cmd /k "cd /d %~dp0 && npm run marketdata:start"
 
 echo ===================================
 echo Servicios lanzados.

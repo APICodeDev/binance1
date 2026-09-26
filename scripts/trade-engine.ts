@@ -6,19 +6,19 @@ import { notifyAllActiveDevices } from '@/lib/pushNotifications';
 import { notifyPositiveClose } from '@/lib/ntfy';
 import { attachPositionProtectionMeta } from '@/lib/positionSignals';
 import {
-  bitgetBuildPositionContext,
-  bitgetCancelTrailingOrders,
-  bitgetCancelAllOrders,
-  bitgetClosePosition,
-  bitgetEnsureVerifiedStopOrder,
-  getDefaultBitgetFeeRate,
-  bitgetGetHistoricalCandles,
-  bitgetGetPositionMode,
-  bitgetGetPrice,
-  bitgetGetPositions,
-  bitgetGetSinglePosition,
-  bitgetOrderSuccess,
-} from '@/lib/bitget';
+  krakenBuildPositionContext,
+  krakenCancelTrailingOrders,
+  krakenCancelAllOrders,
+  krakenClosePosition,
+  krakenEnsureVerifiedStopOrder,
+  getDefaultKrakenFeeRate,
+  krakenGetHistoricalCandles,
+  krakenGetPositionMode,
+  krakenGetPrice,
+  krakenGetPositions,
+  krakenGetSinglePosition,
+  krakenOrderSuccess,
+} from '@/lib/kraken';
 import {
   AdaptiveProtectionContext,
   buildAdaptiveProtectionContext,
@@ -31,7 +31,7 @@ import {
   isNativeTrailingManagedByExchange,
   isTrailingEffectivelyEnabled,
   normalizePositionManagementMode,
-  resolveBitgetCloseExecution,
+  resolveKrakenCloseExecution,
 } from '@/lib/positions';
 import {
   PROTECTION_SETTING_DEFINITIONS,
@@ -44,7 +44,7 @@ type ManagedPosition = Position & {
   nativeTrailingEnabled?: boolean;
   nativeTrailingCallbackPercent?: number | null;
   nativeTrailingActivationPercent?: number | null;
-  protectionOwner?: 'app' | 'bitget';
+  protectionOwner?: 'app' | 'kraken';
 };
 
 type MarketSnapshot = {
@@ -89,7 +89,7 @@ type PositionMarketUpdate = {
   managementMode: 'auto' | 'self' | 'strat' | 'trend';
   breakEvenEnabled: boolean;
   trailingEnabled: boolean;
-  trailingSource: 'app' | 'bitget' | 'none';
+  trailingSource: 'app' | 'kraken' | 'none';
   eventTimestamp: number;
 };
 
@@ -101,7 +101,7 @@ type EngineSettings = {
 
 const HOST = process.env.TRADE_ENGINE_HOST || '127.0.0.1';
 const PORT = Number.parseInt(process.env.TRADE_ENGINE_PORT || '8789', 10);
-const MARKETDATA_URL = (process.env.BITGET_WS_SERVICE_URL || 'http://127.0.0.1:8787').replace(/\/$/, '');
+const MARKETDATA_URL = (process.env.KRAKEN_WS_SERVICE_URL || 'http://127.0.0.1:8787').replace(/\/$/, '');
 const POSITION_REFRESH_MS = Number.parseInt(process.env.TRADE_ENGINE_POSITION_REFRESH_MS || '3000', 10);
 const SETTINGS_REFRESH_MS = Number.parseInt(process.env.TRADE_ENGINE_SETTINGS_REFRESH_MS || '5000', 10);
 const MARKET_STREAM_RECONNECT_MS = Number.parseInt(process.env.TRADE_ENGINE_MARKET_STREAM_RECONNECT_MS || '2000', 10);
@@ -216,7 +216,7 @@ const getNativeTrailingEstimatedStopPrice = (
 
 const getPositionCommission = (position: ManagedPosition) => {
   const tradingMode = ((position as any).tradingMode || 'demo') as TradingMode;
-  return getDefaultBitgetFeeRate(tradingMode);
+  return getDefaultKrakenFeeRate(tradingMode);
 };
 
 const resolveLivePrice = (snapshot: MarketSnapshot) => {
@@ -279,8 +279,8 @@ const loadAdaptiveContextForPosition = async (position: ManagedPosition) => {
   const createdAtMs = new Date(position.createdAt).getTime();
   const tradingMode = ((position as any).tradingMode || 'demo') as TradingMode;
   const promise = Promise.all([
-    bitgetGetHistoricalCandles(position.symbol, '15m', 8, tradingMode, createdAtMs).catch(() => ({ ok: false as const, error: '15m history failed' })),
-    bitgetGetHistoricalCandles(position.symbol, '1H', 20, tradingMode, createdAtMs).catch(() => ({ ok: false as const, error: '1H history failed' })),
+    krakenGetHistoricalCandles(position.symbol, '15m', 8, tradingMode, createdAtMs).catch(() => ({ ok: false as const, error: '15m history failed' })),
+    krakenGetHistoricalCandles(position.symbol, '1H', 20, tradingMode, createdAtMs).catch(() => ({ ok: false as const, error: '1H history failed' })),
   ])
     .then(([candles15m, candles1h]) => {
       if (!candles15m.ok || !candles1h.ok) {
@@ -481,7 +481,7 @@ const buildPositionMarketUpdate = (
     }),
     trailingEnabled: isTrailingEffectivelyEnabled(position as any),
     trailingSource: isNativeTrailingManagedByExchange(position as any)
-      ? 'bitget'
+      ? 'kraken'
       : isAppManagedTrailingEffectivelyEnabled(position as any)
         ? 'app'
         : 'none',
@@ -552,7 +552,7 @@ const buildPositionIdsByMode = () => {
   return { demo, live };
 };
 
-const positionExistsInSnapshot = (snapshot: Awaited<ReturnType<typeof bitgetGetSinglePosition>>, symbol: string) => {
+const positionExistsInSnapshot = (snapshot: Awaited<ReturnType<typeof krakenGetSinglePosition>>, symbol: string) => {
   const normalizedSymbol = symbol.toUpperCase();
   return snapshot.ok && snapshot.positions.some((remotePosition: any) => (
     String(remotePosition?.symbol || '').toUpperCase() === normalizedSymbol &&
@@ -568,15 +568,15 @@ const reconcileExternallyClosedPosition = async (position: Position) => {
   const tradingMode = ((position as any).tradingMode || 'demo') as TradingMode;
   const symbol = position.symbol.toUpperCase();
   const [singleSnapshot, currentPrice] = await Promise.all([
-    bitgetGetSinglePosition(symbol, tradingMode).catch(() => null),
-    bitgetGetPrice(symbol, tradingMode).catch(() => false),
+    krakenGetSinglePosition(symbol, tradingMode).catch(() => null),
+    krakenGetPrice(symbol, tradingMode).catch(() => false),
   ]);
 
   if (!singleSnapshot?.ok || positionExistsInSnapshot(singleSnapshot, symbol)) {
     return position;
   }
 
-  const exchangeClose = await resolveBitgetCloseExecution({
+  const exchangeClose = await resolveKrakenCloseExecution({
     position: position as any,
     tradingMode,
     targetTime: new Date(),
@@ -650,8 +650,8 @@ const reconcileOpenPositionsAgainstExchange = async (positions: ManagedPosition[
   }
 
   const modeSnapshots = await Promise.all([
-    bitgetGetPositions('demo').catch(() => null),
-    bitgetGetPositions('live').catch(() => null),
+    krakenGetPositions('demo').catch(() => null),
+    krakenGetPositions('live').catch(() => null),
   ]);
 
   const openSymbolsByMode = {
@@ -699,7 +699,7 @@ const reloadOpenPositions = async () => {
     .filter((position) => normalizePositionManagementMode(position.managementMode) === 'self' && Boolean((position as any).nativeTrailingEnabled))
     .map(async (position) => {
       const tradingMode = ((position as any).tradingMode || 'demo') as TradingMode;
-      const cleanup = await bitgetCancelTrailingOrders(position.symbol.toUpperCase(), tradingMode);
+      const cleanup = await krakenCancelTrailingOrders(position.symbol.toUpperCase(), tradingMode);
       if (!cleanup.ok) {
         console.warn('[trade-engine] inherited self trailing cleanup failed', {
           positionId: position.id,
@@ -794,9 +794,9 @@ const syncStopForPosition = async (position: ManagedPosition, update: PositionMa
   }
 
   const tradingMode = ((position as any).tradingMode || 'demo') as TradingMode;
-  const positionMode = await bitgetGetPositionMode(position.symbol.toUpperCase(), tradingMode) || 'one_way_mode';
-  const positionContext = bitgetBuildPositionContext(position.positionType as 'buy' | 'sell', positionMode);
-  const syncResult = await bitgetEnsureVerifiedStopOrder({
+  const positionMode = await krakenGetPositionMode(position.symbol.toUpperCase(), tradingMode) || 'one_way_mode';
+  const positionContext = krakenBuildPositionContext(position.positionType as 'buy' | 'sell', positionMode);
+  const syncResult = await krakenEnsureVerifiedStopOrder({
     symbol: position.symbol.toUpperCase(),
     side: positionContext.closeSide,
     stopPrice: update.candidateStopLoss,
@@ -872,10 +872,10 @@ const syncStopForPosition = async (position: ManagedPosition, update: PositionMa
 
 const closePositionFromEngine = async (position: ManagedPosition, update: PositionMarketUpdate, reason: 'stop_loss' | 'trailing_stop' | 'take_profit' | 'exhaustion') => {
   const tradingMode = ((position as any).tradingMode || 'demo') as TradingMode;
-  const positionMode = await bitgetGetPositionMode(position.symbol.toUpperCase(), tradingMode) || 'one_way_mode';
-  const positionContext = bitgetBuildPositionContext(position.positionType as 'buy' | 'sell', positionMode);
-  await bitgetCancelAllOrders(position.symbol.toUpperCase(), tradingMode);
-  const closeResp = await bitgetClosePosition(
+  const positionMode = await krakenGetPositionMode(position.symbol.toUpperCase(), tradingMode) || 'one_way_mode';
+  const positionContext = krakenBuildPositionContext(position.positionType as 'buy' | 'sell', positionMode);
+  await krakenCancelAllOrders(position.symbol.toUpperCase(), tradingMode);
+  const closeResp = await krakenClosePosition(
     position.symbol.toUpperCase(),
     positionContext.closeSide,
     position.quantity,
@@ -883,8 +883,8 @@ const closePositionFromEngine = async (position: ManagedPosition, update: Positi
     positionContext.closeTradeSide
   );
 
-  if (!bitgetOrderSuccess(closeResp)) {
-    const singlePositionSnapshot = await bitgetGetSinglePosition(position.symbol.toUpperCase(), tradingMode).catch(() => null);
+  if (!krakenOrderSuccess(closeResp)) {
+    const singlePositionSnapshot = await krakenGetSinglePosition(position.symbol.toUpperCase(), tradingMode).catch(() => null);
     const exchangeStillOpen = singlePositionSnapshot?.ok
       ? singlePositionSnapshot.positions.some((remotePosition: any) => (
           String(remotePosition?.symbol || '').toUpperCase() === position.symbol.toUpperCase() &&
@@ -893,7 +893,7 @@ const closePositionFromEngine = async (position: ManagedPosition, update: Positi
       : true;
 
     if (!exchangeStillOpen) {
-      const exchangeClose = await resolveBitgetCloseExecution({
+      const exchangeClose = await resolveKrakenCloseExecution({
         position: position as any,
         tradingMode,
         targetTime: new Date(),
@@ -976,7 +976,7 @@ const closePositionFromEngine = async (position: ManagedPosition, update: Positi
     return false;
   }
 
-  const exchangeClose = await resolveBitgetCloseExecution({
+  const exchangeClose = await resolveKrakenCloseExecution({
     position: position as any,
     tradingMode,
     targetTime: new Date(),

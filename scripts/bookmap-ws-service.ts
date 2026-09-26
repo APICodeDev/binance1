@@ -1,7 +1,7 @@
 import http from 'http';
 import WebSocket from 'ws';
 
-type ExchangeName = 'bybit' | 'binance' | 'bitget';
+type ExchangeName = 'bybit' | 'binance' | 'kraken';
 type BookSide = 'bid' | 'ask';
 type TradeSide = 'buy' | 'sell';
 
@@ -203,14 +203,15 @@ const feeds = new Map<string, FeedState>();
 const symbols = new Map<string, SymbolState>();
 
 const bybitPublicUrl = 'wss://stream.bybit.com/v5/public/linear';
-const bitgetPublicUrl = 'wss://ws.bitget.com/v2/ws/public';
+const krakenPublicUrl = 'wss://futures.kraken.com/ws/v1';
 
 const makeFeedKey = (exchange: ExchangeName, symbol: string) => `${exchange}:${symbol}`;
 
-const getProductType = (symbol: string) => {
-  if (symbol.endsWith('USDC')) return 'USDC-FUTURES';
-  if (symbol.endsWith('USD')) return 'COIN-FUTURES';
-  return 'USDT-FUTURES';
+const toKrakenProduct = (symbol: string) => {
+  const raw = symbol.toUpperCase().replace(/[\/-]/g, '');
+  if (/^(PF|PI|FF)_/.test(raw)) return raw;
+  const base = raw.replace(/USDT$|USDC$|USD$/, '').replace(/^BTC$/, 'XBT');
+  return `PF_${base}USD`;
 };
 
 const ensureSymbolState = (rawSymbol: string): SymbolState => {
@@ -236,7 +237,7 @@ const ensureSymbolState = (rawSymbol: string): SymbolState => {
     exchanges: {
       bybit: makeExchange('bybit'),
       binance: makeExchange('binance'),
-      bitget: makeExchange('bitget'),
+      kraken: makeExchange('kraken'),
     },
     trades: [],
     heatmapFrames: [],
@@ -542,7 +543,7 @@ const createExchangeSocket = (exchange: ExchangeName, symbol: string) => {
     return createBinanceSocket(symbol);
   }
 
-  return createBitgetSocket(symbol);
+  return createKrakenSocket(symbol);
 };
 
 const createBybitSocket = (symbol: string) => {
@@ -704,40 +705,16 @@ const createBinanceSocket = (symbol: string) => {
   return ws;
 };
 
-const createBitgetSocket = (symbol: string) => {
+const createKrakenSocket = (symbol: string) => {
   const state = ensureSymbolState(symbol);
-  const book = state.exchanges.bitget;
-  const ws = new WebSocket(bitgetPublicUrl);
+  const book = state.exchanges.kraken;
+  const ws = new WebSocket(krakenPublicUrl);
+  const productId = toKrakenProduct(symbol);
 
   ws.on('open', () => {
     book.status = 'open';
-    ws.send(JSON.stringify({
-      op: 'subscribe',
-      args: [
-        {
-          instType: getProductType(symbol),
-          channel: 'books15',
-          instId: symbol,
-        },
-        {
-          instType: getProductType(symbol),
-          channel: 'trade',
-          instId: symbol,
-        },
-      ],
-    }));
-
-    const heartbeat = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send('ping');
-      }
-    }, 25_000);
-    heartbeat.unref();
-
-    const feed = feeds.get(makeFeedKey('bitget', symbol));
-    if (feed) {
-      feed.heartbeat = heartbeat;
-    }
+    ws.send(JSON.stringify({ event: 'subscribe', feed: 'book', product_ids: [productId] }));
+    ws.send(JSON.stringify({ event: 'subscribe', feed: 'trade', product_ids: [productId] }));
   });
 
   ws.on('message', (buffer) => {
@@ -753,38 +730,41 @@ const createBitgetSocket = (symbol: string) => {
       return;
     }
 
-    const channel = String(payload?.arg?.channel || '');
-    if (channel === 'books15' || channel === 'books') {
-      const entry = Array.isArray(payload?.data) ? payload.data[0] : null;
-      if (!entry) {
-        return;
-      }
-      replaceBookSide(book, 'bid', entry.bids || []);
-      replaceBookSide(book, 'ask', entry.asks || []);
-      setBookTimestamp(book, normalizeNumber(entry?.ts) || normalizeNumber(payload?.ts));
+    const feedName = String(payload?.feed || '');
+    if (feedName === 'book_snapshot') {
+      replaceBookSide(book, 'bid', (payload.bids || []).map((level: any) => [level?.price, level?.qty]));
+      replaceBookSide(book, 'ask', (payload.asks || []).map((level: any) => [level?.price, level?.qty]));
+      setBookTimestamp(book, normalizeNumber(payload?.timestamp));
       return;
     }
 
-    if (channel === 'trade') {
-      const trades = Array.isArray(payload?.data) ? payload.data : [];
+    if (feedName === 'book') {
+      const side = String(payload?.side || '').toLowerCase() === 'sell' ? 'ask' : 'bid';
+      applyDeltaSide(book, side, [[payload?.price, payload?.qty]]);
+      setBookTimestamp(book, normalizeNumber(payload?.timestamp));
+      return;
+    }
+
+    if (feedName === 'trade') {
+      const trades = Array.isArray(payload?.trades) ? payload.trades : payload?.price !== undefined ? [payload] : [];
       pushTrades(
         state,
         trades
           .map((trade: any) => {
             const price = normalizeNumber(trade?.price);
-            const size = normalizeNumber(trade?.size);
-            const timestamp = normalizeNumber(trade?.ts);
+            const size = normalizeNumber(trade?.qty ?? trade?.size);
+            const timestamp = normalizeNumber(trade?.timestamp ?? trade?.time ?? trade?.ts);
             if (price === null || size === null || timestamp === null) {
               return null;
             }
 
             return {
-              exchange: 'bitget' as const,
+              exchange: 'kraken' as const,
               price,
               size,
               side: String(trade?.side || '').toLowerCase() === 'sell' ? 'sell' : 'buy',
               timestamp,
-              id: String(trade?.tradeId || ''),
+              id: String(trade?.trade_id || trade?.tradeId || ''),
             };
           })
           .filter(Boolean) as NormalizedTrade[]
@@ -799,11 +779,11 @@ const createBitgetSocket = (symbol: string) => {
 
   ws.on('close', () => {
     book.status = 'closed';
-    const feed = feeds.get(makeFeedKey('bitget', symbol));
+    const feed = feeds.get(makeFeedKey('kraken', symbol));
     if (feed?.heartbeat) {
       clearInterval(feed.heartbeat);
     }
-    setTimeout(() => ensureFeed('bitget', symbol), 2_000);
+    setTimeout(() => ensureFeed('kraken', symbol), 2_000);
   });
 
   return ws;
@@ -814,7 +794,7 @@ const subscribeSymbol = (symbol: string) => {
   ensureSymbolState(normalized);
   ensureFeed('bybit', normalized);
   ensureFeed('binance', normalized);
-  ensureFeed('bitget', normalized);
+  ensureFeed('kraken', normalized);
 };
 
 const levelDistancePercent = (price: number, mid: number) => (mid > 0 ? Math.abs((price - mid) / mid) * 100 : 0);

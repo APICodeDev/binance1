@@ -16,7 +16,7 @@ import {
   isNativeTrailingManagedByExchange,
   isTrailingEffectivelyEnabled,
   normalizePositionManagementMode,
-  resolveBitgetCloseExecution,
+  resolveKrakenCloseExecution,
 } from '@/lib/positions';
 import {
   buildProtectionThresholdSettingsSnapshot,
@@ -28,25 +28,25 @@ import { attachPositionProtectionMeta, attachPositionRuntimeMeta } from '@/lib/p
 import { notifyPositiveClose } from '@/lib/ntfy';
 import { notifyAllActiveDevices } from '@/lib/pushNotifications';
 import {
-  bitgetBuildPositionContext,
-  bitgetGetPrice,
-  bitgetGetPositionMode,
-  bitgetGetPositions,
-  bitgetGetSinglePosition,
-  bitgetCancelAllOrders,
-  bitgetCancelAlgoOrders,
-  bitgetEnsureVerifiedStopOrder,
-  bitgetGetHistoricalCandles,
-  bitgetGetPendingStopOrders,
-  bitgetCancelTrailingOrders,
-  bitgetGetRecentCandleRange,
-  bitgetModifyStopOrder,
-  bitgetCancelPlanOrdersByIds,
-  bitgetOrderSuccess,
-  bitgetClosePosition,
-  bitgetPlaceStopMarket,
-  bitgetGetCommissionRate
-} from '@/lib/bitget';
+  krakenBuildPositionContext,
+  krakenGetPrice,
+  krakenGetPositionMode,
+  krakenGetPositions,
+  krakenGetSinglePosition,
+  krakenCancelAllOrders,
+  krakenCancelAlgoOrders,
+  krakenEnsureVerifiedStopOrder,
+  krakenGetHistoricalCandles,
+  krakenGetPendingStopOrders,
+  krakenCancelTrailingOrders,
+  krakenGetRecentCandleRange,
+  krakenModifyStopOrder,
+  krakenCancelPlanOrdersByIds,
+  krakenOrderSuccess,
+  krakenClosePosition,
+  krakenPlaceStopMarket,
+  krakenGetCommissionRate
+} from '@/lib/kraken';
 
 const MONITOR_INTERNAL_SECRET = process.env.MONITOR_INTERNAL_SECRET || '';
 const TRADE_ENGINE_URL = (process.env.TRADE_ENGINE_URL || '').trim();
@@ -200,8 +200,8 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
   }
 
   // Fetch real positions for both worlds
-  const realDemo = await bitgetGetPositions('demo');
-  const realLive = await bitgetGetPositions('live');
+  const realDemo = await krakenGetPositions('demo');
+  const realLive = await krakenGetPositions('live');
 
   const buildMap = (realList: any[]) => {
     const map: Record<string, any> = {};
@@ -231,7 +231,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     mode: 'demo' | 'live',
     tradeSide?: 'open' | 'close'
   ) => {
-    return bitgetEnsureVerifiedStopOrder({
+    return krakenEnsureVerifiedStopOrder({
       symbol,
       side,
       positionType,
@@ -298,8 +298,8 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
 
     const createdAtMs = new Date(pos.createdAt).getTime();
     const [candles15m, candles1h] = await Promise.all([
-      bitgetGetHistoricalCandles(pos.symbol, '15m', 8, mode, createdAtMs).catch(() => ({ ok: false as const, error: '15m history failed' })),
-      bitgetGetHistoricalCandles(pos.symbol, '1H', 20, mode, createdAtMs).catch(() => ({ ok: false as const, error: '1H history failed' })),
+      krakenGetHistoricalCandles(pos.symbol, '15m', 8, mode, createdAtMs).catch(() => ({ ok: false as const, error: '15m history failed' })),
+      krakenGetHistoricalCandles(pos.symbol, '1H', 20, mode, createdAtMs).catch(() => ({ ok: false as const, error: '1H history failed' })),
     ]);
 
     const context = candles15m.ok && candles1h.ok
@@ -334,11 +334,11 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     const realMap = mode === 'live' ? liveMap : demoMap;
     const snapshot = mode === 'live' ? realLive : realDemo;
     const symbol = pos.symbol.toUpperCase();
-    const positionMode = await bitgetGetPositionMode(symbol, mode) || 'one_way_mode';
-    const positionContext = bitgetBuildPositionContext(pos.positionType as 'buy' | 'sell', positionMode);
+    const positionMode = await krakenGetPositionMode(symbol, mode) || 'one_way_mode';
+    const positionContext = krakenBuildPositionContext(pos.positionType as 'buy' | 'sell', positionMode);
 
     if (selfManaged && Boolean((pos as any).nativeTrailingEnabled)) {
-      const trailingCleanup = await bitgetCancelTrailingOrders(symbol, mode);
+      const trailingCleanup = await krakenCancelTrailingOrders(symbol, mode);
       if (!trailingCleanup.ok) {
         results.push(`TRAILING_CLEANUP_WARNING (${mode}): ${symbol} -> ${trailingCleanup.message}`);
       } else if (trailingCleanup.message === 'cancelled') {
@@ -347,13 +347,13 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     }
 
     if (!snapshot.ok) {
-      results.push(`SYNC_SKIPPED (${mode}): No se pudo verificar ${symbol} en Bitget. ${snapshot.errors.join(' | ')}`);
+      results.push(`SYNC_SKIPPED (${mode}): No se pudo verificar ${symbol} en Kraken. ${snapshot.errors.join(' | ')}`);
       continue;
     }
 
-    // 1. Sync with Bitget (closure check)
+    // 1. Sync with Kraken (closure check)
     if (!realMap[symbol]) {
-      const singleSnapshot = await bitgetGetSinglePosition(symbol, mode);
+      const singleSnapshot = await krakenGetSinglePosition(symbol, mode);
       if (!singleSnapshot.ok) {
         results.push(`SYNC_SKIPPED (${mode}): Verificación individual falló para ${symbol}. ${singleSnapshot.errors.join(' | ')}`);
         continue;
@@ -361,14 +361,14 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
 
       const stillOpen = singleSnapshot.positions.some((rp: any) => rp.symbol && parseFloat(rp.positionAmt) !== 0);
       if (stillOpen) {
-        results.push(`SYNC_OK (${mode}): ${symbol} sigue abierto en Bitget tras verificación individual.`);
+        results.push(`SYNC_OK (${mode}): ${symbol} sigue abierto en Kraken tras verificación individual.`);
         continue;
       }
 
-      const comm = await bitgetGetCommissionRate(symbol, mode);
+      const comm = await krakenGetCommissionRate(symbol, mode);
       const entryComm = comm;
-      const currentPrice = (await bitgetGetPrice(symbol, mode)) || pos.entryPrice;
-      const exchangeClose = await resolveBitgetCloseExecution({
+      const currentPrice = (await krakenGetPrice(symbol, mode)) || pos.entryPrice;
+      const exchangeClose = await resolveKrakenCloseExecution({
         position: pos as any,
         tradingMode: mode,
         targetTime: new Date(),
@@ -385,7 +385,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
         exitPrice,
       });
 
-      await bitgetCancelAllOrders(symbol, mode);
+      await krakenCancelAllOrders(symbol, mode);
       await prisma.position.update({
         where: { id: pos.id },
         data: {
@@ -413,10 +413,10 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       }).catch((error) => {
         console.error('Failed to send positive close ntfy notification', error);
       });
-      results.push(`SINC_CERRADA (${mode}): Position #${pos.id} (${symbol}) cerrada en Bitget.`);
+      results.push(`SINC_CERRADA (${mode}): Position #${pos.id} (${symbol}) cerrada en Kraken.`);
       pushEvents.push({
         title: `${symbol} cerrada`,
-        body: `La posicion #${pos.id} en ${mode.toUpperCase()} se detecto como cerrada en Bitget.`,
+        body: `La posicion #${pos.id} en ${mode.toUpperCase()} se detecto como cerrada en Kraken.`,
         data: {
           kind: 'position_closed_sync',
           positionId: pos.id,
@@ -428,19 +428,19 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     }
 
     // 2. Trailing Stop and Local SL Check
-    const currentPrice = await bitgetGetPrice(symbol, mode);
+    const currentPrice = await krakenGetPrice(symbol, mode);
     if (!currentPrice) {
       results.push(`ERROR: Failed to fetch price for ${symbol} in ${mode}.`);
       continue;
     }
     const positionAgeMs = Date.now() - new Date(pos.createdAt).getTime();
     const recentRange = (fixedManaged || stratManaged) && positionAgeMs >= 2 * 60 * 1000
-      ? await bitgetGetRecentCandleRange(symbol, mode, 5).catch(() => ({ ok: false as const, error: 'Recent candle fetch failed' }))
+      ? await krakenGetRecentCandleRange(symbol, mode, 5).catch(() => ({ ok: false as const, error: 'Recent candle fetch failed' }))
       : { ok: false as const, error: 'Recent candle fallback skipped' };
     const recentHigh: number | null = recentRange.ok ? (recentRange.high ?? null) : null;
     const recentLow: number | null = recentRange.ok ? (recentRange.low ?? null) : null;
 
-    const comm = await bitgetGetCommissionRate(symbol, mode);
+    const comm = await krakenGetCommissionRate(symbol, mode);
     const entryComm = comm;
     const entryCost = pos.entryPrice * pos.quantity * entryComm;
     const exitCost = currentPrice * pos.quantity * comm;
@@ -740,10 +740,10 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
 
     if (stopLossTriggered || takeProfitTriggered || exhaustionTriggered) {
       const closeSide = positionContext.closeSide;
-      await bitgetCancelAllOrders(symbol, mode);
-      const closeResp = await bitgetClosePosition(symbol, closeSide, pos.quantity, mode, positionContext.closeTradeSide);
+      await krakenCancelAllOrders(symbol, mode);
+      const closeResp = await krakenClosePosition(symbol, closeSide, pos.quantity, mode, positionContext.closeTradeSide);
 
-      if (bitgetOrderSuccess(closeResp)) {
+      if (krakenOrderSuccess(closeResp)) {
         const stopWasMovedByTrailing = !trendManaged && Math.abs(newSl - previousStopLoss) > Math.max(1e-8, Math.abs(previousStopLoss) * 0.000001);
         const closeReason = exhaustionTriggered
           ? 'exhaustion'
@@ -757,7 +757,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
           : stopLossTriggered
             ? newSl
             : currentPrice;
-        const exchangeClose = await resolveBitgetCloseExecution({
+        const exchangeClose = await resolveKrakenCloseExecution({
           position: pos as any,
           tradingMode: mode,
           targetTime: new Date(),

@@ -318,7 +318,7 @@ struct AdminView: View {
                 HStack {
                     Text(item.accountType)
                     Spacer()
-                    Text("USDT \(AppFormatters.compact(item.usdtBalance))")
+                    Text("USD \(AppFormatters.compact(item.usdtBalance))")
                 }
                 .font(.subheadline)
             }

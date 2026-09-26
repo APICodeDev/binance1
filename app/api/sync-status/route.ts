@@ -6,7 +6,7 @@ import { requireAuth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 
 const TRADE_ENGINE_URL = (process.env.TRADE_ENGINE_URL || 'http://127.0.0.1:8789').replace(/\/$/, '');
-const MARKETDATA_URL = (process.env.BITGET_WS_SERVICE_URL || 'http://127.0.0.1:8787').replace(/\/$/, '');
+const MARKETDATA_URL = (process.env.KRAKEN_WS_SERVICE_URL || 'http://127.0.0.1:8787').replace(/\/$/, '');
 
 async function fetchJson(url: string) {
   try {

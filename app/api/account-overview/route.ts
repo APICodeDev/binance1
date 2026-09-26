@@ -4,11 +4,10 @@ import { NextRequest } from 'next/server';
 import { ok, fail } from '@/lib/apiResponse';
 import { requireRole } from '@/lib/auth';
 import {
-  bitgetGetAllAccountBalance,
-  bitgetGetFuturesAccounts,
-  bitgetGetSpotAssets,
-  bitgetOrderSuccess,
-} from '@/lib/bitget';
+  krakenGetAllAccountBalance,
+  krakenGetSpotAssets,
+  krakenOrderSuccess,
+} from '@/lib/kraken';
 
 type TradingMode = 'demo' | 'live';
 
@@ -41,24 +40,21 @@ const mapSpotAssets = (items: any[] | undefined) =>
     .slice(0, 12);
 
 async function loadModeOverview(tradingMode: TradingMode) {
-  const [allBalanceResp, usdtResp, usdcResp, coinResp, spotResp] = await Promise.all([
-    bitgetGetAllAccountBalance(tradingMode),
-    bitgetGetFuturesAccounts('USDT-FUTURES', tradingMode),
-    bitgetGetFuturesAccounts('USDC-FUTURES', tradingMode),
-    bitgetGetFuturesAccounts('COIN-FUTURES', tradingMode),
-    bitgetGetSpotAssets(tradingMode),
+  const [allBalanceResp, spotResp] = await Promise.all([
+    krakenGetAllAccountBalance(tradingMode),
+    krakenGetSpotAssets(tradingMode),
   ]);
 
-  const allAccounts = bitgetOrderSuccess(allBalanceResp) ? (allBalanceResp.data || []) : [];
+  const allAccounts = krakenOrderSuccess(allBalanceResp) ? (allBalanceResp.data || []) : [];
   const summaryFromAllAccounts = (Array.isArray(allAccounts) ? allAccounts : []).map((item: any) => ({
     accountType: item.accountType || '-',
     usdtBalance: parseNumber(item.usdtBalance),
     btcBalance: parseNumber(item.btcBalance),
   }));
-  const usdtFutures = mapFuturesAccounts(usdtResp?.data);
-  const fallbackSummary = usdtFutures.length > 0 ? [{
-    accountType: 'USDT-FUTURES',
-    usdtBalance: usdtFutures.reduce((sum, item) => sum + item.accountEquity, 0),
+  const usdFutures = mapFuturesAccounts(allBalanceResp?.data);
+  const fallbackSummary = usdFutures.length > 0 ? [{
+    accountType: 'KRAKEN-FUTURES-USD',
+    usdtBalance: usdFutures.reduce((sum, item) => sum + item.accountEquity, 0),
     btcBalance: 0,
   }] : [];
   const summaryHasValue = summaryFromAllAccounts.some((item) => item.usdtBalance > 0 || item.btcBalance > 0);
@@ -67,17 +63,17 @@ async function loadModeOverview(tradingMode: TradingMode) {
   return {
     summary,
     futures: {
-      usdt: usdtFutures,
-      usdc: mapFuturesAccounts(usdcResp?.data),
-      coin: mapFuturesAccounts(coinResp?.data),
+      // Keep the response shape consumed by older clients; Kraken's current
+      // Futures account is USD-margined rather than USDT/USDC segmented.
+      usdt: usdFutures,
+      usdc: [],
+      coin: [],
     },
     spotAssets: mapSpotAssets(spotResp?.data),
     rawStatus: {
-      allAccountBalance: bitgetOrderSuccess(allBalanceResp),
-      usdtFutures: bitgetOrderSuccess(usdtResp),
-      usdcFutures: bitgetOrderSuccess(usdcResp),
-      coinFutures: bitgetOrderSuccess(coinResp),
-      spotAssets: bitgetOrderSuccess(spotResp),
+      allAccountBalance: krakenOrderSuccess(allBalanceResp),
+      usdFutures: krakenOrderSuccess(allBalanceResp),
+      spotAssets: krakenOrderSuccess(spotResp),
     },
   };
 }
@@ -100,6 +96,6 @@ export async function GET(req: NextRequest) {
       fetchedAt: new Date().toISOString(),
     }, 'Account overview loaded');
   } catch (error: any) {
-    return fail(500, error?.message || 'Unable to load Bitget account overview');
+    return fail(500, error?.message || 'Unable to load Kraken account overview');
   }
 }

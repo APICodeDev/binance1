@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 
-export const AUTH_COOKIE_NAME = process.env.AUTH_COOKIE_NAME || 'bitget_dashboard_session';
+export const AUTH_COOKIE_NAME = process.env.AUTH_COOKIE_NAME || 'kraken_dashboard_session';
 export const AUTH_SESSION_TTL_HOURS = Number(process.env.AUTH_SESSION_TTL_HOURS || '168');
 export const AUTH_API_TOKEN_TTL_DAYS = Number(process.env.AUTH_API_TOKEN_TTL_DAYS || '365');
 

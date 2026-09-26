@@ -58,7 +58,7 @@ struct PositionCardView: View {
             }
 
             if position.normalizedManagementMode == "self", position.nativeTrailingEnabled == true {
-                Text("Self: usa trailing nativo de Bitget. La app muestra un SL estimado segun callback y maximo favorable.")
+                Text("Self: usa trailing nativo de Kraken. La app muestra un SL estimado segun callback y maximo favorable.")
                     .font(.caption.bold())
                     .foregroundStyle(.green)
                     .padding(.horizontal, 12)
@@ -96,7 +96,7 @@ struct PositionCardView: View {
                         .font(.caption.bold())
                         .foregroundStyle(position.nativeTrailingEnabled == true ? Color.green : (legacyDistance ? Color.secondary : Color.cyan))
                     Text(position.nativeTrailingEnabled == true
-                         ? "Bitget Native Trailing (Approx)"
+                         ? "Kraken Native Trailing (Approx)"
                          : (isStrategyManaged ? "Legacy \(String(format: "%.2f", configuredLegacyStopPercent))% Fixed For Strat" : (legacyDistance ? "Legacy \(String(format: "%.2f", configuredLegacyStopPercent))% Default" : "Adapted By App")))
                         .font(.caption2.bold())
                         .foregroundStyle(position.nativeTrailingEnabled == true ? Color.green : (isStrategyManaged ? Color.orange : (legacyDistance ? Color.secondary : Color.cyan)))
@@ -125,7 +125,7 @@ struct PositionCardView: View {
                         .foregroundStyle(position.profitLossPercent >= 0 ? .green : .red)
                 }
                 Spacer()
-                Text("\(position.profitLossFiat >= 0 ? "+" : "")\(AppFormatters.compact(position.profitLossFiat)) \(position.tradingMode == "live" ? "USDC" : "USDT")")
+                Text("\(position.profitLossFiat >= 0 ? "+" : "")\(AppFormatters.compact(position.profitLossFiat)) USD")
                     .font(.subheadline.bold())
                     .foregroundStyle(position.profitLossFiat >= 0 ? .green : .red)
             }

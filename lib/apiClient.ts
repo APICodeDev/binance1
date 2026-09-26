@@ -12,7 +12,7 @@ type ApiPayload = {
 
 type MonitorMode = 'demo' | 'live';
 
-const API_TOKEN_STORAGE_KEY = 'bitget-desk-api-token';
+const API_TOKEN_STORAGE_KEY = 'kraken-desk-api-token';
 
 class ApiClientError extends Error {
   status: number;

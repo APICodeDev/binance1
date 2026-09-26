@@ -32,16 +32,19 @@ services:
     command: sh -c "npx prisma db push && npm run create-admin"
     restart: "no"
 
-  bitget-bot:
+  kraken-bot:
     build: .
-    container_name: bitget-trading-bot
+    container_name: kraken-trading-bot
     ports:
       - "3000:3000"
     env_file:
       - .env
     environment:
       DATABASE_URL: postgresql://traderbot:traderbot@postgres:5432/traderbot?schema=public
-      BITGET_WS_SERVICE_URL: http://bitget-marketdata:8787
+      KRAKEN_FUTURES_API_URL_LIVE: https://futures.kraken.com
+      KRAKEN_LIVE_TRADING_ENABLED: ${KRAKEN_LIVE_TRADING_ENABLED:-0}
+      KRAKEN_PAPER_INITIAL_BALANCE_USD: ${KRAKEN_PAPER_INITIAL_BALANCE_USD:-10000}
+      KRAKEN_WS_SERVICE_URL: http://kraken-marketdata:8787
       TRADE_ENGINE_URL: http://trade-engine:8789
       BOOKMAP_WS_SERVICE_URL: http://bookmap-service:8788
     depends_on:
@@ -49,12 +52,12 @@ services:
         condition: service_healthy
       db-init:
         condition: service_completed_successfully
-      bitget-marketdata:
-        condition: service_started
+      kraken-marketdata:
+        condition: service_healthy
       trade-engine:
-        condition: service_started
+        condition: service_healthy
       bookmap-service:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 30s
@@ -63,15 +66,16 @@ services:
       start_period: 20s
     restart: always
 
-  bitget-marketdata:
+  kraken-marketdata:
     build: .
-    container_name: bitget-marketdata
+    container_name: kraken-marketdata
     command: npm run marketdata:start
     env_file:
       - .env
     environment:
-      BITGET_WS_SERVICE_HOST: 0.0.0.0
-      BITGET_WS_SERVICE_PORT: 8787
+      KRAKEN_WS_SERVICE_HOST: 0.0.0.0
+      KRAKEN_WS_SERVICE_PORT: 8787
+      KRAKEN_PAPER_MARKET_WS_URL: ${KRAKEN_PAPER_MARKET_WS_URL:-wss://futures.kraken.com/ws/v1}
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 30s
@@ -90,14 +94,16 @@ services:
       DATABASE_URL: postgresql://traderbot:traderbot@postgres:5432/traderbot?schema=public
       TRADE_ENGINE_HOST: 0.0.0.0
       TRADE_ENGINE_PORT: 8789
-      BITGET_WS_SERVICE_URL: http://bitget-marketdata:8787
+      KRAKEN_FUTURES_API_URL_LIVE: https://futures.kraken.com
+      KRAKEN_LIVE_TRADING_ENABLED: ${KRAKEN_LIVE_TRADING_ENABLED:-0}
+      KRAKEN_WS_SERVICE_URL: http://kraken-marketdata:8787
     depends_on:
       postgres:
         condition: service_healthy
       db-init:
         condition: service_completed_successfully
-      bitget-marketdata:
-        condition: service_started
+      kraken-marketdata:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8789/health').then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 30s
@@ -115,6 +121,12 @@ services:
     environment:
       BOOKMAP_WS_SERVICE_HOST: 0.0.0.0
       BOOKMAP_WS_SERVICE_PORT: 8788
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8788/health').then((res) => process.exit(res.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     restart: always
 
 volumes:

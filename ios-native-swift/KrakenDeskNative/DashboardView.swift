@@ -112,7 +112,7 @@ struct DashboardView: View {
                                 .padding(.vertical, 4)
                                 .background(Color.white.opacity(0.08))
                                 .clipShape(Capsule())
-                            Text("\(position.profitLossFiat >= 0 ? "+" : "")\(AppFormatters.compact(position.profitLossFiat)) \(position.tradingMode == "live" ? "USDC" : "USDT")")
+                            Text("\(position.profitLossFiat >= 0 ? "+" : "")\(AppFormatters.compact(position.profitLossFiat)) USD")
                                 .font(.subheadline.bold())
                                 .foregroundStyle(position.profitLossFiat >= 0 ? .green : .red)
                         }

@@ -12,13 +12,13 @@ import {
   normalizePositionManagementMode,
 } from '@/lib/positions';
 import {
-  bitgetBuildPositionContext,
-  bitgetEnsureVerifiedStopOrder,
-  bitgetGetCommissionRate,
-  getDefaultBitgetFeeRate,
-  bitgetGetPositionMode,
-  bitgetGetPrice,
-} from '@/lib/bitget';
+  krakenBuildPositionContext,
+  krakenEnsureVerifiedStopOrder,
+  krakenGetCommissionRate,
+  getDefaultKrakenFeeRate,
+  krakenGetPositionMode,
+  krakenGetPrice,
+} from '@/lib/kraken';
 
 const getSelfManagedTrailingStep = (marketMovePercent: number) => {
   if (marketMovePercent < 1.25) {
@@ -99,9 +99,9 @@ export async function POST(req: NextRequest) {
 
   if (nextBreakEvenEnabled || nextTrailingEnabled) {
     const [currentPrice, exitCommission, positionMode] = await Promise.all([
-      bitgetGetPrice(symbol, tradingMode).catch(() => false),
-      bitgetGetCommissionRate(symbol, tradingMode).catch(() => getDefaultBitgetFeeRate(tradingMode)),
-      bitgetGetPositionMode(symbol, tradingMode).catch(() => 'one_way_mode' as const),
+      krakenGetPrice(symbol, tradingMode).catch(() => false),
+      krakenGetCommissionRate(symbol, tradingMode).catch(() => getDefaultKrakenFeeRate(tradingMode)),
+      krakenGetPositionMode(symbol, tradingMode).catch(() => 'one_way_mode' as const),
     ]);
 
     if (typeof currentPrice === 'number' && Number.isFinite(currentPrice) && currentPrice > 0) {
@@ -134,8 +134,8 @@ export async function POST(req: NextRequest) {
       );
 
       if (shouldImproveStop && candidateStop !== null) {
-        const positionContext = bitgetBuildPositionContext(position.positionType as 'buy' | 'sell', positionMode || 'one_way_mode');
-        const syncResult = await bitgetEnsureVerifiedStopOrder({
+        const positionContext = krakenBuildPositionContext(position.positionType as 'buy' | 'sell', positionMode || 'one_way_mode');
+        const syncResult = await krakenEnsureVerifiedStopOrder({
           symbol,
           side: positionContext.closeSide,
           stopPrice: candidateStop,
@@ -146,7 +146,7 @@ export async function POST(req: NextRequest) {
         });
 
         if (!syncResult.ok) {
-          return fail(500, `Unable to verify stop order on Bitget for ${symbol}`, syncResult.message);
+          return fail(500, `Unable to verify stop order on Kraken for ${symbol}`, syncResult.message);
         }
 
         updatedStopLoss = candidateStop;
@@ -192,6 +192,6 @@ export async function POST(req: NextRequest) {
     position: updated,
     immediateSyncMessage,
   }, immediateSyncMessage
-    ? 'Strat controls updated and synchronized with Bitget'
+    ? 'Strat controls updated and synchronized with Kraken'
     : 'Strat controls updated');
 }

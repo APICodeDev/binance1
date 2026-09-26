@@ -260,7 +260,7 @@ final class AppViewModel: ObservableObject {
     }
 
     var currencyLabel: String {
-        tradingMode == "live" ? "USDC" : "USDT"
+        "USD"
     }
 
     var securedAmount: Double {

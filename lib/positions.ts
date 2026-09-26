@@ -1,18 +1,18 @@
 import { prisma } from '@/lib/db';
 import { notifyPositiveClose } from '@/lib/ntfy';
 import {
-  bitgetBuildPositionContext,
-  bitgetCancelAllOrders,
-  bitgetClosePosition,
-  bitgetFlashClosePosition,
-  bitgetGetCommissionRate,
-  bitgetGetOrderHistory,
-  bitgetGetPlanOrderHistory,
-  bitgetGetPositionMode,
-  bitgetGetPrice,
-  bitgetGetSinglePosition,
-  bitgetOrderSuccess,
-} from '@/lib/bitget';
+  krakenBuildPositionContext,
+  krakenCancelAllOrders,
+  krakenClosePosition,
+  krakenFlashClosePosition,
+  krakenGetCommissionRate,
+  krakenGetOrderHistory,
+  krakenGetPlanOrderHistory,
+  krakenGetPositionMode,
+  krakenGetPrice,
+  krakenGetSinglePosition,
+  krakenOrderSuccess,
+} from '@/lib/kraken';
 
 export type TradingMode = 'demo' | 'live';
 export type PositionManagementMode = 'auto' | 'self' | 'strat' | 'trend';
@@ -485,7 +485,7 @@ function extractCloseOrderId(closeResp: any) {
   ).trim() || null;
 }
 
-function snapshotHasOpenPosition(snapshot: Awaited<ReturnType<typeof bitgetGetSinglePosition>>, symbol: string) {
+function snapshotHasOpenPosition(snapshot: Awaited<ReturnType<typeof krakenGetSinglePosition>>, symbol: string) {
   const normalizedSymbol = symbol.toUpperCase();
   return snapshot.positions.some((rp: any) =>
     String(rp?.symbol || '').toUpperCase() === normalizedSymbol &&
@@ -544,7 +544,7 @@ export function inferPositionCloseOrigin(params: {
   return 'app_rules' satisfies PositionCloseOrigin;
 }
 
-export async function resolveBitgetCloseExecution(params: {
+export async function resolveKrakenCloseExecution(params: {
   position: CloseablePosition;
   tradingMode: TradingMode;
   targetTime?: Date | null;
@@ -570,8 +570,8 @@ export async function resolveBitgetCloseExecution(params: {
   const searchEnd = Math.max(targetTimestamp + (15 * 60 * 1000), Date.now() + (2 * 60 * 1000));
 
   const [orderHistoryResp, stopPlanHistoryResp] = await Promise.all([
-    bitgetGetOrderHistory(symbol, searchStart, searchEnd, tradingMode).catch(() => null),
-    bitgetGetPlanOrderHistory(symbol, 'normal_plan', searchStart, searchEnd, tradingMode).catch(() => null),
+    krakenGetOrderHistory(symbol, searchStart, searchEnd, tradingMode).catch(() => null),
+    krakenGetPlanOrderHistory(symbol, 'normal_plan', searchStart, searchEnd, tradingMode).catch(() => null),
   ]);
 
   const orderHistory = Array.isArray(orderHistoryResp?.data?.entrustedList)
@@ -638,28 +638,28 @@ export async function closeTrackedPosition(pos: CloseablePosition): Promise<Clos
   const tradingMode = ((pos.tradingMode || 'demo') as TradingMode);
   const symbol = pos.symbol.toUpperCase();
 
-  const currentPrice = await bitgetGetPrice(symbol, tradingMode);
+  const currentPrice = await krakenGetPrice(symbol, tradingMode);
   if (!currentPrice) {
     return { ok: false, status: 500, message: 'Failed to fetch price' };
   }
 
-  const exitComm = await bitgetGetCommissionRate(symbol, tradingMode);
+  const exitComm = await krakenGetCommissionRate(symbol, tradingMode);
   const entryComm = exitComm;
-  const positionMode = await bitgetGetPositionMode(symbol, tradingMode) || 'one_way_mode';
-  const positionContext = bitgetBuildPositionContext(pos.positionType as 'buy' | 'sell', positionMode);
+  const positionMode = await krakenGetPositionMode(symbol, tradingMode) || 'one_way_mode';
+  const positionContext = krakenBuildPositionContext(pos.positionType as 'buy' | 'sell', positionMode);
   let closeResp: any = null;
   let lastVerifyErrors: string[] = [];
   let lastConfirmedStillOpen = false;
   let verifiedClosed = false;
 
   for (let attempt = 0; attempt <= CLOSE_RETRY_DELAYS_MS.length; attempt += 1) {
-    await bitgetCancelAllOrders(symbol, tradingMode);
+    await krakenCancelAllOrders(symbol, tradingMode);
 
-    const flashResp = await bitgetFlashClosePosition(symbol, positionContext.flashCloseHoldSide, tradingMode);
+    const flashResp = await krakenFlashClosePosition(symbol, positionContext.flashCloseHoldSide, tradingMode);
     closeResp = flashResp;
 
-    if (!bitgetOrderSuccess(flashResp)) {
-      const marketResp = await bitgetClosePosition(
+    if (!krakenOrderSuccess(flashResp)) {
+      const marketResp = await krakenClosePosition(
         symbol,
         positionContext.closeSide,
         pos.quantity,
@@ -669,7 +669,7 @@ export async function closeTrackedPosition(pos: CloseablePosition): Promise<Clos
       closeResp = marketResp;
     }
 
-    await bitgetCancelAllOrders(symbol, tradingMode);
+    await krakenCancelAllOrders(symbol, tradingMode);
 
     let attemptConfirmedStillOpen = false;
     let attemptVerifyErrors: string[] = [];
@@ -679,7 +679,7 @@ export async function closeTrackedPosition(pos: CloseablePosition): Promise<Clos
         await sleep(verifyDelayMs);
       }
 
-      const verifySnapshot = await bitgetGetSinglePosition(symbol, tradingMode);
+      const verifySnapshot = await krakenGetSinglePosition(symbol, tradingMode);
       if (!verifySnapshot.ok) {
         attemptVerifyErrors = verifySnapshot.errors;
         continue;
@@ -711,15 +711,15 @@ export async function closeTrackedPosition(pos: CloseablePosition): Promise<Clos
     if (lastConfirmedStillOpen) {
       return {
         ok: false,
-        status: bitgetOrderSuccess(closeResp) ? 409 : 500,
-        message: bitgetOrderSuccess(closeResp)
-          ? `Position still open on Bitget after ${CLOSE_RETRY_DELAYS_MS.length + 1} close attempts`
-          : 'Bitget close failed and the position is still open on exchange',
+        status: krakenOrderSuccess(closeResp) ? 409 : 500,
+        message: krakenOrderSuccess(closeResp)
+          ? `Position still open on Kraken after ${CLOSE_RETRY_DELAYS_MS.length + 1} close attempts`
+          : 'Kraken close failed and the position is still open on exchange',
         details: closeResp,
       };
     }
 
-    const closeDetailsFromHistory = await resolveBitgetCloseExecution({
+    const closeDetailsFromHistory = await resolveKrakenCloseExecution({
       position: pos,
       tradingMode,
       targetTime: new Date(),
@@ -732,13 +732,13 @@ export async function closeTrackedPosition(pos: CloseablePosition): Promise<Clos
       return {
         ok: false,
         status: 502,
-        message: 'Bitget close verification failed after repeated attempts',
+        message: 'Kraken close verification failed after repeated attempts',
         details: lastVerifyErrors.length > 0 ? lastVerifyErrors : closeResp,
       };
     }
   }
 
-  const closeDetails = await resolveBitgetCloseExecution({
+  const closeDetails = await resolveKrakenCloseExecution({
     position: pos,
     tradingMode,
     targetTime: new Date(),

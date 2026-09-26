@@ -1,9 +1,8 @@
 import fs from 'fs';
 import path from 'path';
-import crypto from 'crypto';
 import { execFileSync } from 'child_process';
-import axios from 'axios';
 import { PrismaClient } from '@prisma/client';
+import { krakenGetOrderHistory, krakenGetPlanOrderHistory } from '@/lib/kraken';
 
 type TradingMode = 'demo' | 'live';
 type PositionRow = {
@@ -65,7 +64,6 @@ type Summary = {
 };
 
 const prisma = new PrismaClient();
-const BASE_URL = 'https://api.bitget.com';
 const MONITORED_FILES = ['app/api/entry/route.ts', 'app/api/monitor/route.ts'];
 
 function loadDotEnv() {
@@ -209,81 +207,14 @@ function printSummary(label: string, summary: Summary) {
   );
 }
 
-function getProductType(symbol: string) {
-  if (symbol.endsWith('USDC')) return 'usdc-futures';
-  if (symbol.endsWith('USD')) return 'coin-futures';
-  return 'usdt-futures';
-}
-
-function getBitgetDemoCredentials() {
-  const apiKey = process.env.BITGET_DEMO_API_KEY || '';
-  const secret = process.env.BITGET_DEMO_SECRET_KEY || '';
-  const passphrase = process.env.BITGET_DEMO_PASSPHRASE || '';
-
-  if (!apiKey || !secret || !passphrase) {
-    return null;
-  }
-
-  return { apiKey, secret, passphrase };
-}
-
-async function bitgetSignedGet(endpoint: string, params: Record<string, string>) {
-  const credentials = getBitgetDemoCredentials();
-  if (!credentials) {
-    throw new Error('Credenciales demo de Bitget no disponibles');
-  }
-
-  const query = new URLSearchParams(params).toString();
-  const requestPath = `${endpoint}?${query}`;
-  const timestamp = Date.now().toString();
-  const prehash = `${timestamp}GET${requestPath}`;
-  const signature = crypto
-    .createHmac('sha256', credentials.secret)
-    .update(prehash)
-    .digest('base64');
-
-  const response = await axios.get(`${BASE_URL}${requestPath}`, {
-    timeout: 20000,
-    headers: {
-      'ACCESS-KEY': credentials.apiKey,
-      'ACCESS-SIGN': signature,
-      'ACCESS-TIMESTAMP': timestamp,
-      'ACCESS-PASSPHRASE': credentials.passphrase,
-      'Content-Type': 'application/json',
-      paptrading: '1',
-    },
-  });
-
-  return response.data;
-}
-
 async function fetchOrderHistory(symbol: string, startTime: Date, endTime: Date) {
-  const response = await bitgetSignedGet('/api/v2/mix/order/orders-history', {
-    symbol,
-    productType: getProductType(symbol),
-    startTime: String(startTime.getTime()),
-    endTime: String(endTime.getTime()),
-    limit: '100',
-  });
-
-  return Array.isArray(response?.data?.entrustedList)
-    ? (response.data.entrustedList as OrderHistoryRow[])
-    : [];
+  const response = await krakenGetOrderHistory(symbol, startTime.getTime(), endTime.getTime(), 'demo');
+  return Array.isArray(response?.data) ? response.data as OrderHistoryRow[] : [];
 }
 
 async function fetchPlanHistory(symbol: string, startTime: Date, endTime: Date) {
-  const response = await bitgetSignedGet('/api/v2/mix/order/orders-plan-history', {
-    symbol,
-    productType: getProductType(symbol),
-    planType: 'normal_plan',
-    startTime: String(startTime.getTime()),
-    endTime: String(endTime.getTime()),
-    limit: '100',
-  });
-
-  return Array.isArray(response?.data?.entrustedList)
-    ? (response.data.entrustedList as PlanHistoryRow[])
-    : [];
+  const response = await krakenGetPlanOrderHistory(symbol, 'normal_plan', startTime.getTime(), endTime.getTime(), 'demo');
+  return Array.isArray(response?.data) ? response.data as PlanHistoryRow[] : [];
 }
 
 function buildBucket<T>(rows: T[], keyFn: (row: T) => string, valueFn: (row: T) => number) {
@@ -433,27 +364,20 @@ async function main() {
 
   if (tradingMode !== 'demo') {
     console.log('');
-    console.log('El cruce con historial de ordenes de Bitget solo esta implementado para demo en este script.');
+    console.log('El cruce con historial de ordenes de Kraken solo esta implementado para demo en este script.');
     return;
   }
 
-  const credentials = getBitgetDemoCredentials();
-  if (!credentials) {
-    console.log('');
-    console.log('Sin credenciales demo de Bitget: se omite el analisis de protecciones y cierres en exchange.');
-    return;
-  }
-
-  const startForBitget = new Date(Math.max(pivot.getTime() - 10 * 60 * 1000, positions[0]?.createdAt?.getTime?.() || pivot.getTime()));
-  const endForBitget = rangeEnd || new Date();
+  const startForKraken = new Date(Math.max(pivot.getTime() - 10 * 60 * 1000, positions[0]?.createdAt?.getTime?.() || pivot.getTime()));
+  const endForKraken = rangeEnd || new Date();
   const symbols = Array.from(new Set(afterAutoClosed.map((row) => row.symbol)));
   const ordersBySymbol = new Map<string, OrderHistoryRow[]>();
   const plansBySymbol = new Map<string, PlanHistoryRow[]>();
 
   for (const symbol of symbols) {
     const [orders, plans] = await Promise.all([
-      fetchOrderHistory(symbol, startForBitget, endForBitget),
-      fetchPlanHistory(symbol, startForBitget, endForBitget),
+      fetchOrderHistory(symbol, startForKraken, endForKraken),
+      fetchPlanHistory(symbol, startForKraken, endForKraken),
     ]);
     ordersBySymbol.set(symbol, orders);
     plansBySymbol.set(symbol, plans);

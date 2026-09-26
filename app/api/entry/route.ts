@@ -24,42 +24,42 @@ import {
   resolveBlockedEntrySymbols,
 } from '@/lib/tradingFilters';
 import {
-  bitgetBuildPositionContext,
-  bitgetCancelAllOrders,
-  bitgetCancelOrder,
-  bitgetClosePosition,
-  bitgetGetCommissionRate,
-  bitgetGetCurrentFundingRate,
-  bitgetGetExchangeInfo,
-  bitgetGetHistoricalCandles,
-  bitgetGetMakerCommissionRate,
-  bitgetGetMergeDepth,
-  bitgetGetOrderDetail,
-  bitgetGetOrderFills,
-  bitgetGetPendingStopOrders,
-  bitgetGetPendingTpslOrders,
-  bitgetGetPositionMode,
-  bitgetGetPrice,
-  bitgetGetSinglePosition,
-  bitgetGetTickSize,
-  bitgetGetVipFeeRates,
-  bitgetGetWsBestBidAsk,
-  bitgetModifyTpslOrder,
-  bitgetSetPositionMode,
-  bitgetNormalizePriceByContract,
-  bitgetNormalizePriceByContractDirectional,
-  bitgetNormalizeProtectionPrice,
-  bitgetNormalizeSizeByContract,
-  bitgetNormalizeSymbol,
-  bitgetOrderSuccess,
-  bitgetEnsureTrailingOrder,
-  bitgetPlaceLimitOrder,
-  bitgetPlaceMarketOrder,
-  bitgetPlaceStopMarket,
-  bitgetPlaceTpslMarket,
-  type BitgetPositionMode,
-  bitgetSetLeverage,
-} from '@/lib/bitget';
+  krakenBuildPositionContext,
+  krakenCancelAllOrders,
+  krakenCancelOrder,
+  krakenClosePosition,
+  krakenGetCommissionRate,
+  krakenGetCurrentFundingRate,
+  krakenGetExchangeInfo,
+  krakenGetHistoricalCandles,
+  krakenGetMakerCommissionRate,
+  krakenGetMergeDepth,
+  krakenGetOrderDetail,
+  krakenGetOrderFills,
+  krakenGetPendingStopOrders,
+  krakenGetPendingTpslOrders,
+  krakenGetPositionMode,
+  krakenGetPrice,
+  krakenGetSinglePosition,
+  krakenGetTickSize,
+  krakenGetVipFeeRates,
+  krakenGetWsBestBidAsk,
+  krakenModifyTpslOrder,
+  krakenSetPositionMode,
+  krakenNormalizePriceByContract,
+  krakenNormalizePriceByContractDirectional,
+  krakenNormalizeProtectionPrice,
+  krakenNormalizeSizeByContract,
+  krakenNormalizeSymbol,
+  krakenOrderSuccess,
+  krakenEnsureTrailingOrder,
+  krakenPlaceLimitOrder,
+  krakenPlaceMarketOrder,
+  krakenPlaceStopMarket,
+  krakenPlaceTpslMarket,
+  type KrakenPositionMode,
+  krakenSetLeverage,
+} from '@/lib/kraken';
 
 const DEFAULT_API_LEGACY_STOP_PERCENT = 1.2;
 
@@ -78,10 +78,10 @@ const WEBHOOK_STATUS_SETTING_KEY = 'last_webhook_status';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const createClientOid = (symbol: string) =>
-  `bgd-${symbol.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  `kraken-${symbol.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const PROTECTION_VERIFICATION_DELAYS_MS = [250, 700, 1300];
 
-const summarizeBitgetResponse = (resp: any) => {
+const summarizeKrakenResponse = (resp: any) => {
   if (resp === undefined || resp === null) {
     return 'without response payload';
   }
@@ -100,9 +100,9 @@ const summarizeBitgetResponse = (resp: any) => {
   return [code, msg, data].filter(Boolean).join(' | ') || JSON.stringify(resp);
 };
 
-const getBitgetResponseCode = (resp: any) => String(resp?.code || '').trim();
+const getKrakenResponseCode = (resp: any) => String(resp?.code || '').trim();
 const RETRYABLE_PROTECTION_CODES = new Set(['43023', '40891']);
-const isRetryableProtectionPlacementError = (resp: any) => RETRYABLE_PROTECTION_CODES.has(getBitgetResponseCode(resp));
+const isRetryableProtectionPlacementError = (resp: any) => RETRYABLE_PROTECTION_CODES.has(getKrakenResponseCode(resp));
 
 const parseOptionalPrice = (...values: unknown[]) => {
   for (const value of values) {
@@ -159,7 +159,7 @@ const isSameOrigin = (left: unknown, right: unknown) =>
   normalizeSignalOrigin(left) === normalizeSignalOrigin(right);
 
 const getProtectionRetryDelays = () => {
-  const rawValue = process.env.BITGET_PROTECTION_RETRY_DELAYS_MS;
+  const rawValue = process.env.KRAKEN_PROTECTION_RETRY_DELAYS_MS;
   if (!rawValue) {
     return DEFAULT_PROTECTION_RETRY_DELAYS_MS;
   }
@@ -224,8 +224,8 @@ function classifyWebhookOutcome(payload: any, status: number) {
   };
 }
 
-async function hasBitgetOpenPosition(symbol: string, tradingMode: TradingMode) {
-  const snapshot = await bitgetGetSinglePosition(symbol, tradingMode);
+async function hasKrakenOpenPosition(symbol: string, tradingMode: TradingMode) {
+  const snapshot = await krakenGetSinglePosition(symbol, tradingMode);
   if (!snapshot.ok) {
     return false;
   }
@@ -270,8 +270,8 @@ async function verifyProtectionOrder(params: {
     }
 
     const pending = kind === 'stop'
-      ? await bitgetGetPendingStopOrders(symbol, tradingMode)
-      : await bitgetGetPendingTpslOrders(symbol, tradingMode);
+      ? await krakenGetPendingStopOrders(symbol, tradingMode)
+      : await krakenGetPendingTpslOrders(symbol, tradingMode);
 
     if (!pending.ok) {
       continue;
@@ -297,17 +297,17 @@ async function placeProtectionOrderWithRetries(params: {
   let response = await place();
   let attempts = 1;
 
-  while (!bitgetOrderSuccess(response) && isRetryableProtectionPlacementError(response) && attempts <= delays.length) {
+  while (!krakenOrderSuccess(response) && isRetryableProtectionPlacementError(response) && attempts <= delays.length) {
     const delayMs = delays[attempts - 1];
     await sleep(delayMs);
-    await hasBitgetOpenPosition(symbol, tradingMode).catch(() => false);
+    await hasKrakenOpenPosition(symbol, tradingMode).catch(() => false);
     response = await place();
     attempts += 1;
   }
 
-  const exhaustedRetryable = !bitgetOrderSuccess(response) && isRetryableProtectionPlacementError(response);
+  const exhaustedRetryable = !krakenOrderSuccess(response) && isRetryableProtectionPlacementError(response);
   return {
-    ok: bitgetOrderSuccess(response),
+    ok: krakenOrderSuccess(response),
     response,
     attempts,
     exhaustedRetryable,
@@ -346,7 +346,7 @@ function resolveRequestedTakeProfit(params: {
   const takeProfitNormalizeDirection = positionType === 'buy' ? 'up' : 'down';
   const normalizeExitPrice = (price: number | null, direction: 'down' | 'up') =>
     price !== null
-      ? bitgetNormalizePriceByContractDirectional(price, exchangeInfo, direction)
+      ? krakenNormalizePriceByContractDirectional(price, exchangeInfo, direction)
       : null;
   const computedTakeProfitPriceFromPercent = requestedTakeProfitPercent !== null
     ? (positionType === 'buy'
@@ -385,7 +385,7 @@ async function closePositionFromEntrySignal(
   req: NextRequest,
   auth: Awaited<ReturnType<typeof getAuthContext>>
 ) {
-  const symbol = bitgetNormalizeSymbol(data.symbol || '');
+  const symbol = krakenNormalizeSymbol(data.symbol || '');
   const modeProvided = data.mode !== undefined && data.mode !== null && String(data.mode).trim() !== '';
   const managementMode = normalizePositionManagementMode(data.mode);
   const storedManagementMode = isFixedPriceManagementMode(data.mode) ? 'fixed' : managementMode;
@@ -443,7 +443,7 @@ async function closePositionFromEntrySignal(
 
   const closeResult = await closeTrackedPosition(position);
   if (!closeResult.ok) {
-    const detailSummary = closeResult.details ? summarizeBitgetResponse(closeResult.details) : null;
+    const detailSummary = closeResult.details ? summarizeKrakenResponse(closeResult.details) : null;
     const errDetail = `No se pudo cerrar ${symbol} por senal externa: ${closeResult.message}` +
       (detailSummary ? `. ${detailSummary}` : '');
     await saveLastEntryError(errDetail, symbol, 'close');
@@ -482,7 +482,7 @@ async function maybeUpgradeTakeProfitFromSameDirectionSignal(params: {
   symbol: string;
   type: 'buy' | 'sell';
   tradingMode: TradingMode;
-  effectivePositionMode: BitgetPositionMode;
+  effectivePositionMode: KrakenPositionMode;
   exchangeInfo: any;
   requestedTakeProfitPrice: number | null;
   requestedTakeProfitPercent: number | null;
@@ -544,8 +544,8 @@ async function maybeUpgradeTakeProfitFromSameDirectionSignal(params: {
     });
   }
 
-  const existingContext = bitgetBuildPositionContext(existing.positionType as 'buy' | 'sell', effectivePositionMode);
-  const pendingProfitOrders = await bitgetGetPendingTpslOrders(symbol, tradingMode);
+  const existingContext = krakenBuildPositionContext(existing.positionType as 'buy' | 'sell', effectivePositionMode);
+  const pendingProfitOrders = await krakenGetPendingTpslOrders(symbol, tradingMode);
   if (!pendingProfitOrders.ok) {
     const errDetail = `No se pudieron consultar los TP pendientes de ${symbol} para evaluar mejora de take profit. ${pendingProfitOrders.error || 'unknown error'}`;
     await saveLastEntryError(errDetail, symbol, type);
@@ -559,8 +559,8 @@ async function maybeUpgradeTakeProfitFromSameDirectionSignal(params: {
   });
 
   const tpResp = currentProfitOrder?.orderId
-    ? await bitgetModifyTpslOrder(symbol, String(currentProfitOrder.orderId), candidateTakeProfit, existing.quantity, tradingMode)
-    : await bitgetPlaceTpslMarket(
+    ? await krakenModifyTpslOrder(symbol, String(currentProfitOrder.orderId), candidateTakeProfit, existing.quantity, tradingMode)
+    : await krakenPlaceTpslMarket(
         symbol,
         'profit_plan',
         existingContext.holdSide,
@@ -570,8 +570,8 @@ async function maybeUpgradeTakeProfitFromSameDirectionSignal(params: {
         tradingMode
       );
 
-  if (!bitgetOrderSuccess(tpResp)) {
-    const errDetail = `Bitget no permitio actualizar el TP de ${symbol} en ${tradingMode}. ${summarizeBitgetResponse(tpResp)}.`;
+  if (!krakenOrderSuccess(tpResp)) {
+    const errDetail = `Kraken no permitio actualizar el TP de ${symbol} en ${tradingMode}. ${summarizeKrakenResponse(tpResp)}.`;
     await saveLastEntryError(errDetail, symbol, type);
     return NextResponse.json({ error: true, message: errDetail, detail: tpResp }, { status: 500 });
   }
@@ -601,8 +601,8 @@ async function maybeUpgradeTakeProfitFromSameDirectionSignal(params: {
       computedTakeProfitPriceFromPercent: takeProfitResolution.computedTakeProfitPriceFromPercent,
       requestedTakeProfitAccepted: takeProfitResolution.isRequestedTakeProfitValid,
       requestedTakeProfitInputSource: takeProfitResolution.takeProfitInputSource,
-      bitgetAction: currentProfitOrder?.orderId ? 'modify-tpsl-order' : 'place-tpsl-order',
-      bitgetOrderId: currentProfitOrder?.orderId || null,
+      krakenAction: currentProfitOrder?.orderId ? 'modify-tpsl-order' : 'place-tpsl-order',
+      krakenOrderId: currentProfitOrder?.orderId || null,
       trigger: auth ? auth.authType : 'webhook',
     },
     req,
@@ -653,7 +653,7 @@ const toDepthFromWsQuote = (quote: any) => {
 };
 
 const getMakerRetryDelays = () => {
-  const rawValue = process.env.BITGET_MAKER_RETRY_DELAYS_MS;
+  const rawValue = process.env.KRAKEN_MAKER_RETRY_DELAYS_MS;
   if (!rawValue) {
     return DEFAULT_MAKER_RETRY_DELAYS_MS;
   }
@@ -672,7 +672,7 @@ async function executeEntry(
   auth: Awaited<ReturnType<typeof getAuthContext>>
 ) {
   try {
-    const symbol = bitgetNormalizeSymbol(data.symbol || '');
+    const symbol = krakenNormalizeSymbol(data.symbol || '');
     let amount = parseFloat(data.amount) || 0;
     const type = String(data.type || '').toLowerCase();
     const modeProvided = data.mode !== undefined && data.mode !== null && String(data.mode).trim() !== '';
@@ -813,27 +813,27 @@ async function executeEntry(
       }, {})
     );
     const forcedPositionMode = (() => {
-      const raw = String(process.env.BITGET_FORCE_POSITION_MODE || '').trim().toLowerCase();
+      const raw = String(process.env.KRAKEN_FORCE_POSITION_MODE || '').trim().toLowerCase();
       if (raw === 'hedge_mode' || raw === 'one_way_mode') {
-        return raw as BitgetPositionMode;
+        return raw as KrakenPositionMode;
       }
       return null;
     })();
-    const detectedPositionMode = await bitgetGetPositionMode(symbol, tradingMode);
+    const detectedPositionMode = await krakenGetPositionMode(symbol, tradingMode);
     let effectivePositionMode = detectedPositionMode || 'one_way_mode';
 
     if (forcedPositionMode && forcedPositionMode !== effectivePositionMode) {
-      const setPositionModeResp = await bitgetSetPositionMode(symbol, forcedPositionMode, tradingMode);
-      if (!bitgetOrderSuccess(setPositionModeResp)) {
-        const errDetail = `Bitget no permitio fijar position mode ${forcedPositionMode} para ${symbol}. ` +
-          `${summarizeBitgetResponse(setPositionModeResp)}.`;
+      const setPositionModeResp = await krakenSetPositionMode(symbol, forcedPositionMode, tradingMode);
+      if (!krakenOrderSuccess(setPositionModeResp)) {
+        const errDetail = `Kraken no permitio fijar position mode ${forcedPositionMode} para ${symbol}. ` +
+          `${summarizeKrakenResponse(setPositionModeResp)}.`;
         await saveLastEntryError(errDetail, symbol, type);
         return NextResponse.json({ error: true, message: errDetail, detail: setPositionModeResp }, { status: 500 });
       }
       effectivePositionMode = forcedPositionMode;
     }
 
-    const positionContext = bitgetBuildPositionContext(type as 'buy' | 'sell', effectivePositionMode);
+    const positionContext = krakenBuildPositionContext(type as 'buy' | 'sell', effectivePositionMode);
     const openTradeSide = positionContext.openTradeSide;
     const closeTradeSide = positionContext.closeTradeSide;
 
@@ -851,19 +851,6 @@ async function executeEntry(
 
     if (!symbol || (amount <= 0 && incomingQuantity <= 0) || !['buy', 'sell'].includes(type)) {
       return NextResponse.json({ error: true, message: 'Invalid parameters' }, { status: 400 });
-    }
-
-    if (tradingMode === 'live') {
-      if (symbol.endsWith('USDT')) {
-        const errDetail = `Modo LIVE detectado: El par ${symbol} (USDT) no esta permitido. Solo se admite USDC.`;
-        await saveLastEntryError(errDetail, symbol, type);
-        return NextResponse.json({ error: true, message: 'USDT symbols are forbidden in LIVE mode. Use USDC pairs.', detail: errDetail }, { status: 400 });
-      }
-      if (!symbol.endsWith('USDC')) {
-        const errDetail = `Modo LIVE detectado: El par ${symbol} debe ser un par USDC.`;
-        await saveLastEntryError(errDetail, symbol, type);
-        return NextResponse.json({ error: true, message: 'Only USDC pairs are allowed in LIVE mode.', detail: errDetail }, { status: 400 });
-      }
     }
 
     const existing = await prisma.position.findFirst({
@@ -904,7 +891,7 @@ async function executeEntry(
           return NextResponse.json({ success: true, message: `Ignorada (${tradingMode}): Ya existe una posicion abierta en direccion ${type} para ${symbol}.` });
         }
 
-        const existingExchangeInfo = await bitgetGetExchangeInfo(symbol, tradingMode);
+        const existingExchangeInfo = await krakenGetExchangeInfo(symbol, tradingMode);
         if (!existingExchangeInfo) {
           const errDetail = `No se pudo obtener la configuracion del contrato de ${symbol} para evaluar mejora de TP sobre posicion existente.`;
           await saveLastEntryError(errDetail, symbol, type);
@@ -953,7 +940,7 @@ async function executeEntry(
 
       const closeResult = await closeTrackedPosition(existing);
       if (!closeResult.ok) {
-        const detailSummary = closeResult.details ? summarizeBitgetResponse(closeResult.details) : null;
+        const detailSummary = closeResult.details ? summarizeKrakenResponse(closeResult.details) : null;
         const errDetail = `Error al cerrar posicion previa de ${symbol} en ${tradingMode} para cambio de direccion del mismo origin. ${closeResult.message}` +
           (detailSummary ? `. ${detailSummary}` : '');
         await saveLastEntryError(errDetail, symbol, type);
@@ -1007,15 +994,15 @@ async function executeEntry(
       }
     }
 
-    const exchangeInfo = await bitgetGetExchangeInfo(symbol, tradingMode);
+    const exchangeInfo = await krakenGetExchangeInfo(symbol, tradingMode);
     if (!exchangeInfo) {
       const errDetail = `No se pudo obtener la configuracion del contrato de ${symbol}.`;
       await saveLastEntryError(errDetail, symbol, type);
       return NextResponse.json({ error: true, message: errDetail }, { status: 500 });
     }
 
-    const wsQuote = await bitgetGetWsBestBidAsk(symbol, tradingMode);
-    const depth = toDepthFromWsQuote(wsQuote) || await bitgetGetMergeDepth(symbol, tradingMode);
+    const wsQuote = await krakenGetWsBestBidAsk(symbol, tradingMode);
+    const depth = toDepthFromWsQuote(wsQuote) || await krakenGetMergeDepth(symbol, tradingMode);
 
     if (!depth.ok || depth.bids.length === 0 || depth.asks.length === 0) {
       const errDetail = `No se pudo obtener profundidad para ${symbol}.`;
@@ -1026,16 +1013,16 @@ async function executeEntry(
     const bestBid = parseFloat(depth.bids[0][0]);
     const bestAsk = parseFloat(depth.asks[0][0]);
     const midPrice = (bestBid + bestAsk) / 2;
-    const tickSize = bitgetGetTickSize(exchangeInfo);
+    const tickSize = krakenGetTickSize(exchangeInfo);
     const spreadPercent = midPrice > 0 ? ((bestAsk - bestBid) / midPrice) * 100 : 0;
-    const maxSpreadPercent = Number.parseFloat(process.env.BITGET_MAX_SPREAD_PERCENT || `${DEFAULT_MAX_SPREAD_PERCENT}`);
-    const maxTakerCostPercent = Number.parseFloat(process.env.BITGET_MAX_TAKER_COST_PERCENT || `${DEFAULT_MAX_TAKER_COST_PERCENT}`);
+    const maxSpreadPercent = Number.parseFloat(process.env.KRAKEN_MAX_SPREAD_PERCENT || `${DEFAULT_MAX_SPREAD_PERCENT}`);
+    const maxTakerCostPercent = Number.parseFloat(process.env.KRAKEN_MAX_TAKER_COST_PERCENT || `${DEFAULT_MAX_TAKER_COST_PERCENT}`);
     const makerRetryDelays = getMakerRetryDelays();
 
-    const vipFees = await bitgetGetVipFeeRates();
-    const makerFeeRate = await bitgetGetMakerCommissionRate(symbol, tradingMode);
-    const takerFeeRate = await bitgetGetCommissionRate(symbol, tradingMode);
-    const fundingRate = await bitgetGetCurrentFundingRate(symbol, tradingMode);
+    const vipFees = await krakenGetVipFeeRates();
+    const makerFeeRate = await krakenGetMakerCommissionRate(symbol, tradingMode);
+    const takerFeeRate = await krakenGetCommissionRate(symbol, tradingMode);
+    const fundingRate = await krakenGetCurrentFundingRate(symbol, tradingMode);
     const pricePrecision = parseInt(exchangeInfo?.pricePlace || '4', 10);
     const minLever = Math.max(1, Number.parseFloat(String(exchangeInfo?.minLever || '1')) || 1);
     const maxLever = Math.max(minLever, Number.parseFloat(String(exchangeInfo?.maxLever || '1')) || 1);
@@ -1043,9 +1030,9 @@ async function executeEntry(
     const appliedLeverage = Math.min(maxLever, Math.max(minLever, requestedLeverage));
     const leverageHoldSide = positionContext.leverageHoldSide;
 
-    const leverageResp = await bitgetSetLeverage(symbol, appliedLeverage, leverageHoldSide, tradingMode);
-    if (!bitgetOrderSuccess(leverageResp)) {
-      const errDetail = `Bitget no acepto el leverage ${appliedLeverage}x para ${symbol}.`;
+    const leverageResp = await krakenSetLeverage(symbol, appliedLeverage, leverageHoldSide, tradingMode);
+    if (!krakenOrderSuccess(leverageResp)) {
+      const errDetail = `Kraken no acepto el leverage ${appliedLeverage}x para ${symbol}.`;
       await saveLastEntryError(errDetail, symbol, type);
       return NextResponse.json({ error: true, message: errDetail, detail: leverageResp }, { status: 500 });
     }
@@ -1057,7 +1044,7 @@ async function executeEntry(
       return NextResponse.json({ error: true, message: 'Calculation error' }, { status: 500 });
     }
 
-    const size = bitgetNormalizeSizeByContract(rawSize, exchangeInfo);
+    const size = krakenNormalizeSizeByContract(rawSize, exchangeInfo);
     const side = type === 'buy' ? 'BUY' : 'SELL';
 
     const computeMakerPrice = (bid: number, ask: number) => {
@@ -1068,7 +1055,7 @@ async function executeEntry(
       const valid = type === 'buy'
         ? raw > bid && raw < ask
         : raw > bid && raw < ask;
-      return bitgetNormalizePriceByContract(valid ? raw : fallback, exchangeInfo);
+      return krakenNormalizePriceByContract(valid ? raw : fallback, exchangeInfo);
     };
 
     const targetMakerPrice = computeMakerPrice(bestBid, bestAsk);
@@ -1083,7 +1070,7 @@ async function executeEntry(
       return NextResponse.json({ error: true, message: errDetail }, { status: 409 });
     }
 
-    await bitgetCancelAllOrders(symbol, tradingMode);
+    await krakenCancelAllOrders(symbol, tradingMode);
 
     let filledSize = 0;
     let entryPrice = targetMakerPrice;
@@ -1094,8 +1081,8 @@ async function executeEntry(
     let lastOrderResponse: any = null;
 
     for (const delayMs of makerRetryDelays) {
-      const attemptWsQuote = await bitgetGetWsBestBidAsk(symbol, tradingMode);
-      const attemptDepth = toDepthFromWsQuote(attemptWsQuote) || await bitgetGetMergeDepth(symbol, tradingMode);
+      const attemptWsQuote = await krakenGetWsBestBidAsk(symbol, tradingMode);
+      const attemptDepth = toDepthFromWsQuote(attemptWsQuote) || await krakenGetMergeDepth(symbol, tradingMode);
       if (!attemptDepth.ok || attemptDepth.bids.length === 0 || attemptDepth.asks.length === 0) {
         continue;
       }
@@ -1104,10 +1091,10 @@ async function executeEntry(
       const ask = parseFloat(attemptDepth.asks[0][0]);
       const makerPrice = computeMakerPrice(bid, ask);
       const clientOid = createClientOid(symbol);
-      const makerResp = await bitgetPlaceLimitOrder(symbol, side, size, makerPrice, 'post_only', clientOid, tradingMode, openTradeSide);
+      const makerResp = await krakenPlaceLimitOrder(symbol, side, size, makerPrice, 'post_only', clientOid, tradingMode, openTradeSide);
       lastOrderResponse = makerResp;
 
-      if (!bitgetOrderSuccess(makerResp)) {
+      if (!krakenOrderSuccess(makerResp)) {
         continue;
       }
 
@@ -1115,7 +1102,7 @@ async function executeEntry(
       executionOrderId = makerResp?.data?.orderId || makerResp?.data?.orderIdStr || '';
       await sleep(delayMs);
 
-      const detailResp = await bitgetGetOrderDetail(symbol, tradingMode, executionOrderId || undefined, clientOid);
+      const detailResp = await krakenGetOrderDetail(symbol, tradingMode, executionOrderId || undefined, clientOid);
       const orderData = extractOrderData(detailResp);
       const accBaseVolume = parseFloat(orderData?.baseVolume || orderData?.filledQty || orderData?.size || '0');
       const status = String(orderData?.state || orderData?.status || '').toLowerCase();
@@ -1125,14 +1112,14 @@ async function executeEntry(
         entryPrice = parseFloat(orderData?.priceAvg || orderData?.avgPrice || makerPrice.toString()) || makerPrice;
 
         if (executionOrderId) {
-          const fillsResp = await bitgetGetOrderFills(symbol, executionOrderId, tradingMode);
+          const fillsResp = await krakenGetOrderFills(symbol, executionOrderId, tradingMode);
           const fills = Array.isArray(fillsResp?.data) ? fillsResp.data : Array.isArray(fillsResp?.data?.fillList) ? fillsResp.data.fillList : [];
           realEntryFee = fills.reduce((sum: number, fill: any) => sum + Math.abs(parseFloat(fill.fee || '0')), 0) || (filledSize * entryPrice * makerFeeRate);
         }
         break;
       }
 
-      await bitgetCancelOrder(symbol, tradingMode, executionOrderId || undefined, clientOid);
+      await krakenCancelOrder(symbol, tradingMode, executionOrderId || undefined, clientOid);
       executionClientOid = '';
       executionOrderId = '';
     }
@@ -1154,9 +1141,9 @@ async function executeEntry(
       executionMode = takerFallbackMode;
 
       if (takerFallbackMode === 'market') {
-        const marketResp = await bitgetPlaceMarketOrder(symbol, side, size, tradingMode, openTradeSide);
+        const marketResp = await krakenPlaceMarketOrder(symbol, side, size, tradingMode, openTradeSide);
         lastOrderResponse = marketResp;
-        if (!bitgetOrderSuccess(marketResp)) {
+        if (!krakenOrderSuccess(marketResp)) {
           const errDetail = `Fallback market rechazado para ${symbol}.`;
           await saveLastEntryError(errDetail, symbol, type);
           return NextResponse.json({ error: true, message: errDetail, detail: marketResp }, { status: 500 });
@@ -1166,10 +1153,10 @@ async function executeEntry(
         entryPrice = parseFloat(marketResp?.avgPrice || midPrice.toString()) || midPrice;
         realEntryFee = filledSize * entryPrice * takerFeeRate;
       } else {
-        const iocPrice = bitgetNormalizePriceByContract(takerReferencePrice, exchangeInfo);
-        const iocResp = await bitgetPlaceLimitOrder(symbol, side, size, iocPrice, 'ioc', executionClientOid, tradingMode, openTradeSide);
+        const iocPrice = krakenNormalizePriceByContract(takerReferencePrice, exchangeInfo);
+        const iocResp = await krakenPlaceLimitOrder(symbol, side, size, iocPrice, 'ioc', executionClientOid, tradingMode, openTradeSide);
         lastOrderResponse = iocResp;
-        if (!bitgetOrderSuccess(iocResp)) {
+        if (!krakenOrderSuccess(iocResp)) {
           const errDetail = `Fallback IOC rechazado para ${symbol}.`;
           await saveLastEntryError(errDetail, symbol, type);
           return NextResponse.json({ error: true, message: errDetail, detail: iocResp }, { status: 500 });
@@ -1177,11 +1164,11 @@ async function executeEntry(
 
         executionOrderId = iocResp?.data?.orderId || '';
         await sleep(400);
-        const detailResp = await bitgetGetOrderDetail(symbol, tradingMode, executionOrderId || undefined, executionClientOid);
+        const detailResp = await krakenGetOrderDetail(symbol, tradingMode, executionOrderId || undefined, executionClientOid);
         const orderData = extractOrderData(detailResp);
         const accBaseVolume = parseFloat(orderData?.baseVolume || orderData?.filledQty || orderData?.size || '0');
         if (accBaseVolume <= 0) {
-          await bitgetCancelOrder(symbol, tradingMode, executionOrderId || undefined, executionClientOid);
+          await krakenCancelOrder(symbol, tradingMode, executionOrderId || undefined, executionClientOid);
           const errDetail = `IOC no obtuvo ejecucion para ${symbol}.`;
           await saveLastEntryError(errDetail, symbol, type);
           return NextResponse.json({ error: true, message: errDetail }, { status: 409 });
@@ -1204,7 +1191,7 @@ async function executeEntry(
     const stopNormalizeDirection = type === 'buy' ? 'down' : 'up';
     const normalizeExitPrice = (price: number | null, direction: 'down' | 'up') =>
       price !== null
-        ? bitgetNormalizePriceByContractDirectional(price, exchangeInfo, direction)
+        ? krakenNormalizePriceByContractDirectional(price, exchangeInfo, direction)
         : null;
     const computedStopPriceFromPercent = requestedStopPercent !== null
       ? (type === 'buy'
@@ -1248,8 +1235,8 @@ async function executeEntry(
     let structureAtrStopResolution: ReturnType<typeof calculateStructureAtrStop> = null;
     if (!isRequestedStopValid && apiStopMode === 'signal') {
       const [structureCandles, atrCandles] = await Promise.all([
-        bitgetGetHistoricalCandles(symbol, '15m', 8, tradingMode).catch(() => ({ ok: false as const, error: '15m history failed' })),
-        bitgetGetHistoricalCandles(symbol, '1H', 20, tradingMode).catch(() => ({ ok: false as const, error: '1H history failed' })),
+        krakenGetHistoricalCandles(symbol, '15m', 8, tradingMode).catch(() => ({ ok: false as const, error: '15m history failed' })),
+        krakenGetHistoricalCandles(symbol, '1H', 20, tradingMode).catch(() => ({ ok: false as const, error: '1H history failed' })),
       ]);
 
       if (structureCandles.ok && atrCandles.ok) {
@@ -1277,16 +1264,16 @@ async function executeEntry(
     const requestedStopWasInvalid = stopInputProvided && !isRequestedStopValid;
     const requestedTakeProfitWasInvalid = takeProfitInputProvided && !isRequestedTakeProfitValid;
 
-    // Bitget validates trigger prices against both the contract tick and the
+    // Kraken validates trigger prices against both the contract tick and the
     // current market. Preserve a valid self SL/TP exactly after tick
     // normalization; otherwise move it to the nearest valid protective level
     // for this symbol instead of silently dropping the requested TP.
-    const fetchedProtectionReferencePrice = await bitgetGetPrice(symbol, tradingMode).catch(() => false);
+    const fetchedProtectionReferencePrice = await krakenGetPrice(symbol, tradingMode).catch(() => false);
     const protectionReferencePrice = typeof fetchedProtectionReferencePrice === 'number' &&
       Number.isFinite(fetchedProtectionReferencePrice) && fetchedProtectionReferencePrice > 0
       ? fetchedProtectionReferencePrice
       : entryPrice;
-    const protectionTickSize = Math.max(Number(bitgetGetTickSize(exchangeInfo)) || 0, Number.EPSILON);
+    const protectionTickSize = Math.max(Number(krakenGetTickSize(exchangeInfo)) || 0, Number.EPSILON);
     const isSelfProtectionPriceValid = (
       price: number | null,
       kind: 'stop' | 'take_profit'
@@ -1310,7 +1297,7 @@ async function executeEntry(
       kind: 'stop' | 'take_profit'
     ) => {
       const normalizedCandidate = candidate !== null
-        ? bitgetNormalizeProtectionPrice(candidate, exchangeInfo, type as 'buy' | 'sell', kind)
+        ? krakenNormalizeProtectionPrice(candidate, exchangeInfo, type as 'buy' | 'sell', kind)
         : null;
       if (isSelfProtectionPriceValid(normalizedCandidate, kind)) {
         return normalizedCandidate;
@@ -1322,7 +1309,7 @@ async function executeEntry(
       const fallbackRawPrice = type === 'buy'
         ? (kind === 'stop' ? anchor - protectionTickSize : anchor + protectionTickSize)
         : (kind === 'stop' ? anchor + protectionTickSize : anchor - protectionTickSize);
-      const fallbackPrice = bitgetNormalizeProtectionPrice(fallbackRawPrice, exchangeInfo, type as 'buy' | 'sell', kind);
+      const fallbackPrice = krakenNormalizeProtectionPrice(fallbackRawPrice, exchangeInfo, type as 'buy' | 'sell', kind);
       if (isSelfProtectionPriceValid(fallbackPrice, kind)) {
         return fallbackPrice;
       }
@@ -1332,7 +1319,7 @@ async function executeEntry(
       const widerFallbackRawPrice = type === 'buy'
         ? (kind === 'stop' ? anchor - (protectionTickSize * 2) : anchor + (protectionTickSize * 2))
         : (kind === 'stop' ? anchor + (protectionTickSize * 2) : anchor - (protectionTickSize * 2));
-      return bitgetNormalizeProtectionPrice(widerFallbackRawPrice, exchangeInfo, type as 'buy' | 'sell', kind);
+      return krakenNormalizeProtectionPrice(widerFallbackRawPrice, exchangeInfo, type as 'buy' | 'sell', kind);
     };
     const selfStopPrice = managementMode === 'self'
       ? adjustSelfProtectionPrice(normalizedEffectiveRequestedStop ?? legacyStopPrice, 'stop')
@@ -1371,7 +1358,7 @@ async function executeEntry(
       : takeProfitInputSource;
     const selfNativeTrailingRequested = false;
     const nativeTrailingActivationPrice = selfNativeTrailingRequested
-      ? bitgetNormalizePriceByContractDirectional(
+      ? krakenNormalizePriceByContractDirectional(
           type === 'buy'
             ? entryPrice * (1 + (protectionSettings.selfNativeTrailingActivationPercent / 100))
             : entryPrice * (1 - (protectionSettings.selfNativeTrailingActivationPercent / 100)),
@@ -1427,7 +1414,7 @@ async function executeEntry(
             ? 'Self signal without SL used structure/ATR stop'
             : managementMode === 'self' && !stopInputProvided
               ? 'Self signal without SL fell back to Admin legacy stop'
-              : 'Invalid TP/SL sanitized before sending to Bitget',
+              : 'Invalid TP/SL sanitized before sending to Kraken',
         },
         req,
       });
@@ -1452,17 +1439,17 @@ async function executeEntry(
         kind: 'stop',
         symbol,
         tradingMode,
-        place: () => bitgetPlaceStopMarket(symbol, slSide, stopPrice!, filledSize, tradingMode, closeTradeSide, type as 'buy' | 'sell'),
+        place: () => krakenPlaceStopMarket(symbol, slSide, stopPrice!, filledSize, tradingMode, closeTradeSide, type as 'buy' | 'sell'),
       });
       slResponse = stopPlacement.response;
       initialStopAttempts = stopPlacement.attempts;
     }
 
-    if (shouldPlaceInitialStop && !bitgetOrderSuccess(slResponse)) {
-      await bitgetCancelAllOrders(symbol, tradingMode);
-      await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
-      const errDetail = `SL rechazado por Bitget (${tradingMode}) para ${symbol}. ` +
-        `${summarizeBitgetResponse(slResponse)}. Intentos=${initialStopAttempts || 1}. Rollback ejecutado.`;
+    if (shouldPlaceInitialStop && !krakenOrderSuccess(slResponse)) {
+      await krakenCancelAllOrders(symbol, tradingMode);
+      await krakenClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
+      const errDetail = `SL rechazado por Kraken (${tradingMode}) para ${symbol}. ` +
+        `${summarizeKrakenResponse(slResponse)}. Intentos=${initialStopAttempts || 1}. Rollback ejecutado.`;
       await saveLastEntryError(errDetail, symbol, type);
       return NextResponse.json({ error: true, message: errDetail, detail: slResponse }, { status: 500 });
     }
@@ -1478,9 +1465,9 @@ async function executeEntry(
       });
 
       if (!verifiedStop.ok) {
-        await bitgetCancelAllOrders(symbol, tradingMode);
-        await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
-        const errDetail = `SL no quedo verificado en Bitget (${tradingMode}) para ${symbol} en el precio ${stopPrice}. Rollback ejecutado.`;
+        await krakenCancelAllOrders(symbol, tradingMode);
+        await krakenClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
+        const errDetail = `SL no quedo verificado en Kraken (${tradingMode}) para ${symbol} en el precio ${stopPrice}. Rollback ejecutado.`;
         await saveLastEntryError(errDetail, symbol, type);
         return NextResponse.json({ error: true, message: errDetail, detail: slResponse }, { status: 500 });
       }
@@ -1491,7 +1478,7 @@ async function executeEntry(
         kind: 'takeProfit',
         symbol,
         tradingMode,
-        place: () => bitgetPlaceTpslMarket(
+        place: () => krakenPlaceTpslMarket(
           symbol,
           'profit_plan',
           holdSide,
@@ -1506,11 +1493,11 @@ async function executeEntry(
       initialTakeProfitPending = takeProfitPlacement.exhaustedRetryable;
     }
 
-    if (shouldPlaceNativeTakeProfit && !bitgetOrderSuccess(tpResponse) && !initialTakeProfitPending) {
-      await bitgetCancelAllOrders(symbol, tradingMode);
-      await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
-      const errDetail = `TP rechazado por Bitget (${tradingMode}) para ${symbol}. ` +
-        `${summarizeBitgetResponse(tpResponse)}. Intentos=${initialTakeProfitAttempts || 1}. Rollback ejecutado.`;
+    if (shouldPlaceNativeTakeProfit && !krakenOrderSuccess(tpResponse) && !initialTakeProfitPending) {
+      await krakenCancelAllOrders(symbol, tradingMode);
+      await krakenClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
+      const errDetail = `TP rechazado por Kraken (${tradingMode}) para ${symbol}. ` +
+        `${summarizeKrakenResponse(tpResponse)}. Intentos=${initialTakeProfitAttempts || 1}. Rollback ejecutado.`;
       await saveLastEntryError(errDetail, symbol, type);
       return NextResponse.json({ error: true, message: errDetail, detail: tpResponse }, { status: 500 });
     }
@@ -1526,25 +1513,25 @@ async function executeEntry(
       });
 
       if (!verifiedTakeProfit.ok) {
-        await bitgetCancelAllOrders(symbol, tradingMode);
-        await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
-        const errDetail = `TP no quedo verificado en Bitget (${tradingMode}) para ${symbol} en el precio ${takeProfitPrice}. Rollback ejecutado.`;
+        await krakenCancelAllOrders(symbol, tradingMode);
+        await krakenClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
+        const errDetail = `TP no quedo verificado en Kraken (${tradingMode}) para ${symbol} en el precio ${takeProfitPrice}. Rollback ejecutado.`;
         await saveLastEntryError(errDetail, symbol, type);
         return NextResponse.json({ error: true, message: errDetail, detail: tpResponse }, { status: 500 });
       }
     }
 
     if (stratManaged && shouldPlaceNativeTakeProfit && initialTakeProfitPending) {
-      await bitgetCancelAllOrders(symbol, tradingMode);
-      await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
-      const errDetail = `TP no pudo quedar confirmado en Bitget (${tradingMode}) para ${symbol}. Intentos=${initialTakeProfitAttempts || 1}. Rollback ejecutado.`;
+      await krakenCancelAllOrders(symbol, tradingMode);
+      await krakenClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
+      const errDetail = `TP no pudo quedar confirmado en Kraken (${tradingMode}) para ${symbol}. Intentos=${initialTakeProfitAttempts || 1}. Rollback ejecutado.`;
       await saveLastEntryError(errDetail, symbol, type);
       return NextResponse.json({ error: true, message: errDetail, detail: tpResponse }, { status: 500 });
     }
 
     if (selfNativeTrailingRequested && nativeTrailingActivationPrice !== null && nativeTrailingCallbackPercent !== null) {
       nativeTrailingClientOid = createClientOid(symbol);
-      const nativeTrailingPlacement = await bitgetEnsureTrailingOrder({
+      const nativeTrailingPlacement = await krakenEnsureTrailingOrder({
         symbol,
         holdSide,
         triggerPrice: nativeTrailingActivationPrice,
@@ -1558,9 +1545,9 @@ async function executeEntry(
 
       if (!nativeTrailingPlacement.ok) {
         if (nativeTrailingFallbackMode === 'abort') {
-          await bitgetCancelAllOrders(symbol, tradingMode);
-          await bitgetClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
-          const errDetail = `Trailing nativo rechazado por Bitget (${tradingMode}) para ${symbol}. ` +
+          await krakenCancelAllOrders(symbol, tradingMode);
+          await krakenClosePosition(symbol, rollbackCloseSide, filledSize, tradingMode, closeTradeSide);
+          const errDetail = `Trailing nativo rechazado por Kraken (${tradingMode}) para ${symbol}. ` +
             `${nativeTrailingPlacement.message}. Rollback ejecutado.`;
           await saveLastEntryError(errDetail, symbol, type);
           return NextResponse.json({ error: true, message: errDetail, detail: nativeTrailingPlacement.response }, { status: 500 });
@@ -1579,7 +1566,7 @@ async function executeEntry(
       persistedTakeProfitPrice = takeProfitPrice;
     }
 
-    const takeProfitManagedOnExchange = shouldPlaceNativeTakeProfit && !initialTakeProfitPending && bitgetOrderSuccess(tpResponse);
+    const takeProfitManagedOnExchange = shouldPlaceNativeTakeProfit && !initialTakeProfitPending && krakenOrderSuccess(tpResponse);
     const defaultTrailingEnabledOnOpen = stratManaged || trendManaged;
 
     const createdPosition = await prisma.position.create({
@@ -1686,12 +1673,12 @@ async function executeEntry(
         nativeTrailingCallbackPercent,
         nativeTrailingTriggerType,
         nativeTrailingFallbackMode,
-        protectionOwnerOnOpen: nativeTrailingEnabledOnOpen ? 'bitget' : 'app',
+        protectionOwnerOnOpen: nativeTrailingEnabledOnOpen ? 'kraken' : 'app',
         initialTakeProfitPending,
         initialTakeProfitAttempts,
         initialStopAttempts,
-        initialTakeProfitResponseCode: getBitgetResponseCode(tpResponse),
-        nativeTrailingResponseCode: getBitgetResponseCode(nativeTrailingResponse),
+        initialTakeProfitResponseCode: getKrakenResponseCode(tpResponse),
+        nativeTrailingResponseCode: getKrakenResponseCode(nativeTrailingResponse),
       },
       req,
     });
@@ -1711,7 +1698,7 @@ async function executeEntry(
           nativeTrailingCallbackPercent,
           nativeTrailingTriggerType,
           nativeTrailingFallbackMode,
-          responseSummary: summarizeBitgetResponse(nativeTrailingResponse),
+          responseSummary: summarizeKrakenResponse(nativeTrailingResponse),
         },
         req,
       });
@@ -1732,8 +1719,8 @@ async function executeEntry(
           appliedTakeProfitPrice: takeProfitPrice,
           quantity: filledSize,
           attempts: initialTakeProfitAttempts,
-          responseCode: getBitgetResponseCode(tpResponse),
-          responseSummary: summarizeBitgetResponse(tpResponse),
+          responseCode: getKrakenResponseCode(tpResponse),
+          responseSummary: summarizeKrakenResponse(tpResponse),
           trigger: auth ? auth.authType : 'webhook',
         },
         req,
@@ -1743,9 +1730,9 @@ async function executeEntry(
     await notifyAllActiveDevices({
       title: initialTakeProfitPending ? `${symbol} abierta con TP pendiente` : `${symbol} abierta`,
       body: initialTakeProfitPending
-        ? `Nueva posicion ${type.toUpperCase()} en ${tradingMode.toUpperCase()} @ ${entryPrice.toFixed(pricePrecision)}. El TP ha quedado pendiente en Bitget.`
+        ? `Nueva posicion ${type.toUpperCase()} en ${tradingMode.toUpperCase()} @ ${entryPrice.toFixed(pricePrecision)}. El TP ha quedado pendiente en Kraken.`
         : nativeTrailingEnabledOnOpen
-          ? `Nueva posicion ${type.toUpperCase()} en ${tradingMode.toUpperCase()} @ ${entryPrice.toFixed(pricePrecision)} con trailing nativo en Bitget.`
+          ? `Nueva posicion ${type.toUpperCase()} en ${tradingMode.toUpperCase()} @ ${entryPrice.toFixed(pricePrecision)} con trailing nativo en Kraken.`
           : `Nueva posicion ${type.toUpperCase()} en ${tradingMode.toUpperCase()} @ ${entryPrice.toFixed(pricePrecision)}.`,
       data: {
         kind: initialTakeProfitPending ? 'position_opened_tp_pending' : 'position_opened',
@@ -1766,9 +1753,9 @@ async function executeEntry(
     return NextResponse.json({
       success: true,
       message: initialTakeProfitPending
-        ? `Position opened in ${tradingMode} for ${symbol} with TP pending on Bitget`
+        ? `Position opened in ${tradingMode} for ${symbol} with TP pending on Kraken`
         : nativeTrailingEnabledOnOpen
-          ? `Position opened in ${tradingMode} for ${symbol} with native trailing on Bitget`
+          ? `Position opened in ${tradingMode} for ${symbol} with native trailing on Kraken`
           : `Position opened in ${tradingMode} for ${symbol}`,
       managementMode,
       storedManagementMode,
@@ -1810,7 +1797,7 @@ async function executeEntry(
       nativeTrailing: {
         requested: selfNativeTrailingRequested,
         enabled: nativeTrailingEnabledOnOpen,
-        protectionOwner: nativeTrailingEnabledOnOpen ? 'bitget' : 'app',
+        protectionOwner: nativeTrailingEnabledOnOpen ? 'kraken' : 'app',
         activationPrice: nativeTrailingActivationPrice,
         activationPercent: selfNativeTrailingRequested ? protectionSettings.selfNativeTrailingActivationPercent : null,
         callbackPercent: nativeTrailingCallbackPercent,
@@ -1878,7 +1865,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (isExternalWebhook) {
-    const symbol = bitgetNormalizeSymbol(data?.symbol || '');
+    const symbol = krakenNormalizeSymbol(data?.symbol || '');
     const type = String(data?.type || '').toLowerCase() || null;
     const origin = normalizeSignalOrigin(data?.origin);
     const timeframe = data?.timeframe ? String(data.timeframe) : null;

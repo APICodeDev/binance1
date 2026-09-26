@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct BitgetDeskNativeApp: App {
+struct KrakenDeskNativeApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var appModel = AppViewModel()

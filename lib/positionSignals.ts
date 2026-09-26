@@ -23,7 +23,7 @@ type TakeProfitUpgradeMeta = {
 };
 
 type ProtectionRuntimeMeta = {
-  protectionOwner: 'app' | 'bitget';
+  protectionOwner: 'app' | 'kraken';
   nativeTrailingEnabled: boolean;
   nativeTrailingPlacedAt: string | null;
   nativeTrailingOrderId: string | null;
@@ -257,7 +257,7 @@ export async function attachPositionProtectionMeta<T extends { id: number }>(pos
 
     const nativeTrailingEnabled = Boolean(metadata.nativeTrailingEnabledOnOpen);
     const nativeTrailingTriggerType = parseOptionalString(metadata.nativeTrailingTriggerType);
-    const protectionOwner = nativeTrailingEnabled ? 'bitget' as const : 'app' as const;
+    const protectionOwner = nativeTrailingEnabled ? 'kraken' as const : 'app' as const;
     summaryByPositionId.set(positionId, {
       protectionOwner,
       nativeTrailingEnabled,

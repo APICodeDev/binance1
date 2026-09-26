@@ -43,11 +43,11 @@ final class BackgroundSyncService {
     private let lastErrorKey = "native.background.lastError"
 
     static var taskIdentifier: String {
-        "\(Bundle.main.bundleIdentifier ?? "com.miquelgd.BitgetDeskNative").apprefresh"
+        "\(Bundle.main.bundleIdentifier ?? "com.miquelgd.KrakenDeskNative").apprefresh"
     }
 
     static var processingTaskIdentifier: String {
-        "\(Bundle.main.bundleIdentifier ?? "com.miquelgd.BitgetDeskNative").processing"
+        "\(Bundle.main.bundleIdentifier ?? "com.miquelgd.KrakenDeskNative").processing"
     }
 
     private init() {}

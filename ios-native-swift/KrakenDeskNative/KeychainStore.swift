@@ -2,7 +2,7 @@ import Foundation
 import Security
 
 enum KeychainStore {
-    private static let service = "com.miquelgd.bitgetdesk"
+    private static let service = "com.miquelgd.krakendesk"
     private static let tokenAccount = "api-token"
 
     static func saveToken(_ token: String) {

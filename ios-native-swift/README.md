@@ -1,4 +1,4 @@
-# Bitget Desk Native Clone
+# KrakenDesk Native Clone
 
 Proyecto SwiftUI totalmente separado del dashboard actual.
 
@@ -37,7 +37,7 @@ No depende de editar:
 
 ## Como abrirlo
 
-1. Abre `BitgetDeskNative.xcodeproj` en Xcode.
+1. Abre `KrakenDeskNative.xcodeproj` en Xcode.
 2. Selecciona un simulador o dispositivo iOS.
 3. Compila y ejecuta.
 
@@ -58,7 +58,7 @@ La app ya registra el token APNs del iPhone y lo envia al backend cuando el usua
 
 Configuracion pendiente para que funcione extremo a extremo:
 
-1. Anadir la capability `Push Notifications` al target `BitgetDeskNative` en Xcode.
+1. Anadir la capability `Push Notifications` al target `KrakenDeskNative` en Xcode.
 2. Crear o reutilizar una key APNs (`.p8`) en Apple Developer.
 3. Configurar estas variables en el backend:
 
@@ -66,7 +66,7 @@ Configuracion pendiente para que funcione extremo a extremo:
 APPLE_TEAM_ID="TU_TEAM_ID"
 APPLE_KEY_ID="TU_KEY_ID"
 APPLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
-APPLE_BUNDLE_ID="com.bitgetdesk.nativeclone"
+APPLE_BUNDLE_ID="com.krakendesk.nativeclone"
 CRON_SECRET="un-secreto-largo-y-aleatorio"
 ```
 

@@ -4,7 +4,7 @@ import { NextRequest } from 'next/server';
 import { ok, fail } from '@/lib/apiResponse';
 import { requireAuth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { bitgetGetPrice } from '@/lib/bitget';
+import { krakenGetPrice } from '@/lib/kraken';
 
 type TradingMode = 'demo' | 'live';
 
@@ -174,7 +174,7 @@ const syncOpenTrades = async (mode: TradingMode) => {
   });
 
   for (const trade of openTrades) {
-    const currentPrice = await bitgetGetPrice(trade.symbol, mode);
+    const currentPrice = await krakenGetPrice(trade.symbol, mode);
     if (!currentPrice) {
       continue;
     }

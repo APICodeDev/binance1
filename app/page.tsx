@@ -33,7 +33,7 @@ import {
 import { clsx, type ClassValue } from 'clsx';
 import { apiClient } from '@/lib/apiClient';
 import { buildInfo } from '@/lib/buildInfo';
-import appLogo from '@/logo1.png';
+import appLogo from '@/kraken_logo.png';
 import { twMerge } from 'tailwind-merge';
 
 function cn(...inputs: ClassValue[]) {
@@ -171,7 +171,7 @@ interface Position {
   requestedTakeProfitPercent?: number | null;
   requestedTakeProfitInputSource?: string | null;
   takeProfitTargetPercent?: number | null;
-  protectionOwner?: 'app' | 'bitget';
+  protectionOwner?: 'app' | 'kraken';
   nativeTrailingEnabled?: boolean;
   nativeTrailingPlacedAt?: string | null;
   nativeTrailingOrderId?: string | null;
@@ -516,7 +516,7 @@ interface LivePositionMarketUpdatePayload {
   managementMode: 'auto' | 'self' | 'strat' | 'trend';
   breakEvenEnabled: boolean;
   trailingEnabled: boolean;
-  trailingSource: 'app' | 'bitget' | 'none';
+  trailingSource: 'app' | 'kraken' | 'none';
   eventTimestamp: number;
 }
 
@@ -2262,7 +2262,7 @@ export default function Dashboard() {
   };
 
   const emergencyCloseAll = async () => {
-    if (confirm('⚠️ ERES CONSCIENTE DE QUE ESTO CERRARÁ TODAS LAS POSICIONES (REALES Y DEMO)?')) {
+    if (confirm('⚠️ ERES CONSCIENTE DE QUE ESTO CERRARÁ TODAS LAS POSICIONES (REALES Y PAPER)?')) {
       try {
         await apiClient.emergencyClose();
         fetchData();
@@ -2350,9 +2350,9 @@ export default function Dashboard() {
             transition={{ duration: 1, ease: "easeInOut", repeat: Infinity }}
             className="mb-5 drop-shadow-[0_0_24px_rgba(251,191,36,0.25)]"
           >
-            <Image src={appLogo} alt="Bitget Desk" className="w-[100px] h-[100px] object-contain" priority />
+            <Image src={appLogo} alt="KrakenDesk" className="w-[100px] h-[100px] object-contain" priority />
           </motion.div>
-          <h1 className="text-[40px] font-black tracking-[2px] m-0">BITGET<span className="text-amber-400">DESK</span></h1>
+          <h1 className="text-[40px] font-black tracking-[2px] m-0">KRAKEN<span className="text-amber-400">DESK</span></h1>
           <div className="mt-2.5 text-base text-slate-400 tracking-[4px] uppercase">Signal Engine Initializing</div>
         </motion.div>
       </div>
@@ -2368,9 +2368,9 @@ export default function Dashboard() {
       <div className="min-h-screen bg-slate-950 text-slate-50 flex items-center justify-center p-6">
         <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-[2rem] p-8 shadow-2xl">
           <div className="flex flex-col items-center text-center gap-4 mb-8">
-            <Image src={appLogo} alt="Bitget Desk" className="w-20 h-20 object-contain" priority />
+            <Image src={appLogo} alt="KrakenDesk" className="w-20 h-20 object-contain" priority />
             <div>
-              <h1 className="text-3xl font-black uppercase tracking-tight">Bitget Desk</h1>
+              <h1 className="text-3xl font-black uppercase tracking-tight">KrakenDesk</h1>
               <p className="text-xs text-slate-400 uppercase tracking-[0.25em] mt-2">Secure Dashboard Access</p>
             </div>
           </div>
@@ -2556,18 +2556,18 @@ export default function Dashboard() {
                 "w-12 h-12 rounded-xl flex items-center justify-center shadow-lg shadow-inner rotate-3 transition-colors",
                 tradingMode === 'live' ? "bg-amber-500 shadow-amber-500/20" : "bg-amber-400 shadow-amber-400/20"
               )}>
-                <Image src={appLogo} alt="Bitget Desk" className="w-7 h-7 object-contain" priority />
+                <Image src={appLogo} alt="KrakenDesk" className="w-7 h-7 object-contain" priority />
               </div>
               <div>
                 <h1 className="text-3xl font-black italic tracking-tighter uppercase">
                   {tradingMode === 'live' ? (
-                    <>BITGET<span className="text-amber-500">LIVE</span></>
+                    <>KRAKEN<span className="text-amber-500">LIVE</span></>
                   ) : (
-                    <>BITGET<span className="text-amber-400">SIGNALS</span></>
+                    <>KRAKEN<span className="text-amber-400">SIGNALS</span></>
                   )}
                 </h1>
                 <div className="flex flex-wrap items-center gap-2 mt-1">
-                  <p className="text-xs text-slate-400 font-medium uppercase tracking-[0.2em]">Automated trading command center for Bitget Futures</p>
+                  <p className="text-xs text-slate-400 font-medium uppercase tracking-[0.2em]">Automated trading command center for Kraken Futures</p>
                   <span className="px-2 py-1 rounded-full border border-amber-400/30 bg-amber-400/10 text-[10px] font-black uppercase tracking-[0.2em] text-amber-300">
                     {authUser.role}
                   </span>
@@ -2685,7 +2685,7 @@ export default function Dashboard() {
             <div className="bg-slate-900 border border-slate-800 px-4 py-3 rounded-2xl flex items-center gap-3">
               <Settings size={18} className="text-slate-500 shrink-0" />
               <div className="flex flex-col min-w-0">
-                <span className="text-[9px] uppercase font-black text-slate-500 tracking-widest">Entry Amount ({tradingMode === 'live' ? 'USDC' : 'USDT'})</span>
+                <span className="text-[9px] uppercase font-black text-slate-500 tracking-widest">Entry Amount (USD)</span>
                 <input 
                   type="number"
                   placeholder="Auto (JSON)"
@@ -2699,14 +2699,14 @@ export default function Dashboard() {
             <div className="bg-slate-900 border border-slate-800 px-4 py-3 rounded-2xl">
               <p className="text-[10px] text-blue-400/60 uppercase font-black tracking-wider">Secured Profit</p>
               <p className="text-2xl font-black text-blue-400 mt-1">
-                {totalSecuredProfit > 0 ? '+' : ''}{totalSecuredProfit.toFixed(2)} <span className="text-[10px] opacity-70">{tradingMode === 'live' ? 'USDC' : 'USDT'}</span>
+                {totalSecuredProfit > 0 ? '+' : ''}{totalSecuredProfit.toFixed(2)} <span className="text-[10px] opacity-70">USD</span>
               </p>
             </div>
 
             <div className="bg-slate-900 border border-slate-800 px-4 py-3 rounded-2xl">
               <p className="text-[10px] text-slate-500 uppercase font-black">Net Profit/Loss</p>
               <p className={cn("text-2xl font-black mt-1", totalPnl >= 0 ? "text-emerald-400" : "text-rose-400")}>
-                {totalPnl.toFixed(2)} <span className="text-[10px] opacity-70">{tradingMode === 'live' ? 'USDC' : 'USDT'}</span>
+                {totalPnl.toFixed(2)} <span className="text-[10px] opacity-70">USD</span>
               </p>
             </div>
 
@@ -2816,7 +2816,7 @@ export default function Dashboard() {
                         <div className="tabler-subcard p-3">
                           <div className="mb-2 flex items-center gap-2">
                             <span className="tabler-eyebrow text-amber-500 dark:text-amber-400">Trade Sizing</span>
-                            <HelpTooltip content="Entry Amount representa exposicion. El apalancamiento solo cambia el margen consumido en Bitget para esa misma exposicion." />
+                            <HelpTooltip content="Entry Amount representa exposicion. El apalancamiento solo cambia el margen consumido en Kraken para esa misma exposicion." />
                           </div>
                           <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_116px]">
                             <button
@@ -2965,7 +2965,7 @@ export default function Dashboard() {
                             </div>
 
                             <div className="rounded-lg border border-slate-200 bg-white/80 p-3 dark:border-slate-800 dark:bg-slate-950/40">
-                              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">If Bitget Rejects It</p>
+                              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">If Kraken Rejects It</p>
                               <div className="mt-2 grid gap-2 sm:grid-cols-2">
                                 {([
                                   { value: 'abort', label: 'Abort Entry' },
@@ -3034,10 +3034,10 @@ export default function Dashboard() {
                 <div className="tabler-card p-4">
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <HeadingWithTooltip
-                    eyebrow="Bitget Account"
+                    eyebrow="Kraken Account"
                     eyebrowClassName="text-violet-500 dark:text-violet-400"
                     title="Account Overview"
-                    description="Resumen live y demo basado en balances, cuentas de futuros y activos spot devueltos por las APIs de Bitget."
+                    description="Resumen live y paper basado en balances, cuentas de futuros y activos spot devueltos por las APIs de Kraken."
                   />
                   <button
                     onClick={fetchAccountOverview}
@@ -3059,7 +3059,7 @@ export default function Dashboard() {
                   </div>
                   ) : accountOverview ? (
                   <div className="mt-4 grid gap-4 2xl:grid-cols-2">
-                    <AccountOverviewCard title="Demo Account" modeData={accountOverview.demo} accent="text-emerald-400" />
+                    <AccountOverviewCard title="Paper Account" modeData={accountOverview.demo} accent="text-emerald-400" />
                     <AccountOverviewCard title="Live Account" modeData={accountOverview.live} accent="text-rose-400" />
                   </div>
                   ) : null}
@@ -3073,7 +3073,7 @@ export default function Dashboard() {
                     eyebrow="Trade Management"
                     eyebrowClassName="text-amber-500 dark:text-amber-400"
                     title="Exhaustion Guard"
-                    description="Optional demo-safe exit layer. It closes a winning trade if it reached at least +1.0%, stopped making new highs for 90 minutes, and already gave back 35% of its best open profit."
+                description="Optional paper-safe exit layer. It closes a winning trade if it reached at least +1.0%, stopped making new highs for 90 minutes, and already gave back 35% of its best open profit."
                   />
                   <button
                     type="button"
@@ -3642,7 +3642,7 @@ export default function Dashboard() {
                       <div>
                         <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-600">Net</p>
                         <p className={cn("font-black", pos.profitLossFiat >= 0 ? "text-emerald-400" : "text-rose-400")}>
-                          {pos.profitLossFiat > 0 ? '+' : ''}{pos.profitLossFiat.toFixed(2)} {tradingMode === 'live' ? 'USDC' : 'USDT'}
+                          {pos.profitLossFiat > 0 ? '+' : ''}{pos.profitLossFiat.toFixed(2)} USD
                         </p>
                       </div>
                       <div>
@@ -3677,7 +3677,7 @@ export default function Dashboard() {
                     <th className="px-6 py-4">Mode</th>
                     <th className="px-6 py-4">Entry</th>
                     <th className="px-6 py-4">PnL %</th>
-                    <th className="px-6 py-4">PnL {tradingMode === 'live' ? 'USDC' : 'USDT'}</th>
+                    <th className="px-6 py-4">PnL USD</th>
                     <th className="px-6 py-4">Closed At</th>
                     <th className="px-6 py-4">Duration</th>
                     <th className="px-6 py-4">Closed By</th>
@@ -3691,7 +3691,7 @@ export default function Dashboard() {
                     const tooltipData = `Entry Time: ${new Date(pos.createdAt).toLocaleString()}
 Close Time: ${pos.closedAt ? new Date(pos.closedAt).toLocaleString() : '-'}
 Duration: ${durationStr}
-Amount: ${pos.amount} ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}
+Amount: ${pos.amount} USD
 Symbol: ${pos.symbol}
 Type: ${pos.positionType.toUpperCase()}
 Mode: ${formatManagementModeLabel(pos.managementMode)}
@@ -3700,7 +3700,7 @@ Entry Price: ${formatPrice(pos.entryPrice, pos.pricePrecision)}
 Stop Target: ${formatPrice(pos.stopLoss, pos.pricePrecision)}
 Commission: ${(getFallbackCommissionRate(pos.tradingMode) * 100).toFixed(4)}%
 PnL %: ${pos.profitLossPercent.toFixed(2)}%
-PnL ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}: ${pos.profitLossFiat.toFixed(2)} ${pos.tradingMode === 'live' ? 'USDC' : 'USDT'}
+PnL USD: ${pos.profitLossFiat.toFixed(2)} USD
 Closed By: ${getCloseOriginLabel(pos)}`;
                     
                     return (
@@ -3786,7 +3786,7 @@ Closed By: ${getCloseOriginLabel(pos)}`;
                 eyebrow="Statistics"
                 eyebrowClassName="text-emerald-500 dark:text-emerald-400"
                 title="Closed Positions Analytics"
-                description="Analitica separada entre demo y live usando todas las operaciones cerradas registradas hasta ahora."
+                description="Analitica separada entre paper y live usando todas las operaciones cerradas registradas hasta ahora."
               />
               <button
                 onClick={fetchStats}
@@ -3808,7 +3808,7 @@ Closed By: ${getCloseOriginLabel(pos)}`;
               </section>
             ) : statsData ? (
               <div className="grid gap-4 xl:grid-cols-2">
-                <StatsModeSection title="Demo Statistics" mode="demo" stats={statsData.demo} />
+                <StatsModeSection title="Paper Statistics" mode="demo" stats={statsData.demo} />
                 <StatsModeSection title="Live Statistics" mode="live" stats={statsData.live} />
               </div>
             ) : null}
@@ -3877,7 +3877,7 @@ Closed By: ${getCloseOriginLabel(pos)}`;
             </div>
           )}
           <div className="text-[10px] text-slate-500/40 uppercase flex items-center gap-2 font-black tracking-[0.2em]">
-            <Hammer size={12} /> Build Bitget Sync Rev: {buildInfo.timestamp}
+            <Hammer size={12} /> Build Kraken Sync Rev: {buildInfo.timestamp}
           </div>
         </footer>
 
@@ -3901,7 +3901,7 @@ Closed By: ${getCloseOriginLabel(pos)}`;
                 <div className="absolute bottom-0 left-0 w-32 h-32 bg-yellow-300/10 blur-3xl -z-10 rounded-full" />
 
                 <h3 className="text-2xl font-black italic tracking-tighter mb-8 flex items-center gap-3">
-                  <ShieldCheck className={tradingMode === 'live' ? "text-amber-500" : "text-amber-400"} /> OPEN {tradingMode.toUpperCase()} BITGET SIGNAL
+                  <ShieldCheck className={tradingMode === 'live' ? "text-amber-500" : "text-amber-400"} /> OPEN {tradingMode.toUpperCase()} KRAKENSIGNALS
                 </h3>
 
                 <div className="space-y-6">
@@ -3936,7 +3936,7 @@ Closed By: ${getCloseOriginLabel(pos)}`;
                                 className="flex w-full items-center justify-between px-4 py-3 text-left text-sm font-black text-slate-200 transition-colors hover:bg-slate-800 hover:text-amber-300"
                               >
                                 <span>{symbol}</span>
-                                <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Bitget</span>
+                                <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500">Kraken</span>
                               </button>
                             ))
                           ) : (
@@ -3948,7 +3948,7 @@ Closed By: ${getCloseOriginLabel(pos)}`;
                   </div>
 
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Signal Budget ({tradingMode === 'live' ? 'USDC' : 'USDT'})</label>
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Signal Budget (USD)</label>
                     <input 
                       type="number" 
                       placeholder="100.00" 
@@ -4116,7 +4116,7 @@ function PositionCard({
   const breakEvenEnabled = isBreakEvenEffectivelyEnabledForPosition(pos);
   const trailingEnabled = isTrailingEffectivelyEnabledForPosition(pos);
   const breakEvenLocked = breakEvenEnabled || nativeTrailingManaged;
-  const quoteCurrency = pos.tradingMode === 'live' ? 'USDC' : 'USDT';
+  const quoteCurrency = 'USD';
   const comm = getFallbackCommissionRate(pos.tradingMode);
   const parsedLegacyStopPercent = Number.parseFloat(legacyStopPercent || '1.2');
   const LEGACY_STOP_PERCENT = Number.isFinite(parsedLegacyStopPercent) && parsedLegacyStopPercent > 0
@@ -4169,14 +4169,14 @@ function PositionCard({
           ? 'Strat Auto + BreakEven'
           : 'Strat Legacy')
     : nativeTrailingManaged
-      ? 'Bitget Native Trailing (Approx)'
+      ? 'Kraken Native Trailing (Approx)'
     : trendManaged
       ? (trailingEnabled ? 'Trend Signal/Legacy + Trend Trailing' : 'Trend Signal/Legacy + Trend BreakEven')
       : (stopAdjustedByApp ? 'Adapted By App' : `Legacy ${LEGACY_STOP_PERCENT}% Default`);
   const protectionModeLabel = managementMode === 'self'
     ? 'Breakeven >1% · Sin trailing'
     : nativeTrailingManaged
-    ? 'Bitget Native Trailing'
+    ? 'Kraken Native Trailing'
     : trailingEnabled
       ? 'Breakeven + Trailing'
     : breakEvenEnabled
@@ -4186,8 +4186,8 @@ function PositionCard({
     ? `CB ${pos.nativeTrailingCallbackPercent.toFixed(2)}% · ACT ${pos.nativeTrailingActivationPercent.toFixed(2)}%`
     : null;
 
-  const exchangeUrl = `https://www.bitget.com/en/futures/usdt/${pos.symbol}`;
-  const tradingViewUrl = `https://www.tradingview.com/chart/?symbol=BITGET%3A${encodeURIComponent(`${pos.symbol}.P`)}`;
+  const exchangeUrl = `https://www.kraken.com/en/futures/usdt/${pos.symbol}`;
+  const tradingViewUrl = `https://www.tradingview.com/chart/?symbol=KRAKEN%3A${encodeURIComponent(`${pos.symbol}.P`)}`;
   const takeProfitExpandedTitle = pos.takeProfitExpanded
     ? `TP ampliado${
         typeof pos.takeProfitExpandedFrom === 'number' && typeof pos.takeProfitExpandedTo === 'number'
@@ -4200,7 +4200,7 @@ function PositionCard({
       }`
     : '';
   const takeProfitPendingTitle = pos.takeProfitPending
-    ? `TP pendiente en Bitget${
+    ? `TP pendiente en Kraken${
         pos.takeProfitPendingCode
           ? ` · code=${pos.takeProfitPendingCode}`
           : ''
@@ -4274,10 +4274,10 @@ function PositionCard({
                 target="_blank"
                 rel="noopener noreferrer"
                 className="rounded-xl border border-amber-400/25 bg-amber-400/10 p-1 transition-colors hover:border-amber-300/60 hover:bg-amber-400/20"
-                aria-label={`Open ${pos.symbol} on Bitget`}
-                title="Open on Bitget"
+                aria-label={`Open ${pos.symbol} on Kraken`}
+                title="Open on Kraken"
               >
-                <Image src="/bitget-mark.svg" alt="Bitget" width={32} height={32} className="h-8 w-8" />
+                <Image src="/kraken-mark.svg" alt="Kraken" width={32} height={32} className="h-8 w-8" />
               </a>
               <a
                 href={tradingViewUrl}
@@ -4430,7 +4430,7 @@ function PositionCard({
             {managementMode === 'self'
               ? 'Breakeven automático >1%'
               : nativeTrailingManaged
-                ? 'Bitget Native'
+                ? 'Kraken Native'
                 : protectionBusy === 'breakEven'
                   ? 'Activando...'
                   : breakEvenEnabled
@@ -4452,7 +4452,7 @@ function PositionCard({
             {managementMode === 'self'
               ? 'Trailing no disponible'
               : nativeTrailingManaged
-              ? 'Trailing Bitget'
+              ? 'Trailing Kraken'
               : protectionBusy === 'trailing'
               ? (trailingEnabled ? 'Desactivando...' : 'Activando...')
               : trailingEnabled
@@ -4486,7 +4486,7 @@ function PositionCard({
 }
 
 function StatsModeSection({ title, mode, stats }: { title: string; mode: 'demo' | 'live'; stats: StatsMode }) {
-  const currency = mode === 'live' ? 'USDC' : 'USDT';
+  const currency = 'USD';
 
   return (
     <section className="tabler-shell p-4">
@@ -4717,11 +4717,11 @@ function AccountOverviewCard({
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className={cn("text-[10px] font-black uppercase tracking-[0.3em]", accent)}>{title}</p>
-          <h3 className="mt-1 text-lg font-black uppercase tracking-tight text-slate-900 dark:text-white">Bitget Balances</h3>
+          <h3 className="mt-1 text-lg font-black uppercase tracking-tight text-slate-900 dark:text-white">Kraken Balances</h3>
         </div>
         <div className="text-right">
           <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500 dark:text-slate-500">Approx Total</p>
-          <p className="text-xl font-black text-slate-900 dark:text-white">{totalUsdt.toFixed(2)} USDT</p>
+          <p className="text-xl font-black text-slate-900 dark:text-white">{totalUsdt.toFixed(2)} USD</p>
           <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-600">{totalBtc.toFixed(8)} BTC</p>
         </div>
       </div>
@@ -4730,16 +4730,16 @@ function AccountOverviewCard({
         {modeData.summary.map((item) => (
           <div key={item.accountType} className="tabler-subcard p-3">
             <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500 dark:text-slate-500">{item.accountType}</p>
-            <p className="mt-1 text-lg font-black text-slate-900 dark:text-white">{item.usdtBalance.toFixed(2)} USDT</p>
+            <p className="mt-1 text-lg font-black text-slate-900 dark:text-white">{item.usdtBalance.toFixed(2)} USD</p>
             <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-600">{item.btcBalance.toFixed(8)} BTC</p>
           </div>
         ))}
       </div>
 
       <div className="mt-3 tabler-subcard p-3">
-        <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500 dark:text-slate-500">Futures Accounts · USDT Only</p>
+        <p className="text-[10px] font-black uppercase tracking-[0.16em] text-slate-500 dark:text-slate-500">Futures Accounts · USD Margin</p>
         {futuresRows.length === 0 ? (
-          <p className="mt-3 text-sm italic text-slate-500 dark:text-slate-500">No USDT futures balance data returned.</p>
+          <p className="mt-3 text-sm italic text-slate-500 dark:text-slate-500">No USD futures balance data returned.</p>
         ) : (
           <div className="mt-3 space-y-3">
             {futuresRows.map((row, index) => (
@@ -4899,7 +4899,7 @@ function formatDurationMs(durationMs: number) {
 function formatExchangeLabel(exchange: string) {
   if (exchange === 'bybit') return 'Bybit';
   if (exchange === 'binance') return 'Binance';
-  if (exchange === 'bitget') return 'Bitget';
+  if (exchange === 'kraken') return 'Kraken';
   return exchange;
 }
 
@@ -5244,7 +5244,7 @@ function BookmapPanel({
           eyebrow="Bookmap Lab"
           eyebrowClassName="text-cyan-500 dark:text-cyan-300"
           title="Cross-Exchange Liquidity Radar"
-          description="Bybit y Binance alimentan el mapa de liquidez. Bitget queda expuesto como referencia del venue de ejecucion."
+          description="Bybit y Binance alimentan el mapa de liquidez. Kraken queda expuesto como referencia del venue de ejecucion."
           titleClassName="text-xl"
         />
 

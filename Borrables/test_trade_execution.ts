@@ -9,7 +9,7 @@ envContent.split('\n').forEach((line: string) => {
 });
 
 // require AFTER env is set
-const { bitgetPlaceMarketOrder, bitgetPlaceStopMarket } = require('./lib/bitget.ts');
+const { krakenPlaceMarketOrder, krakenPlaceStopMarket } = require('./lib/kraken.ts');
 
 async function run() {
   const symbol = 'BTCUSDT';
@@ -17,7 +17,7 @@ async function run() {
   const quantity = 0.001; // Tiny amount
 
   console.log(`[TEST] Placing Market Order (${type.toUpperCase()}) for ${quantity} ${symbol} in Demo mode...`);
-  const orderRes = await bitgetPlaceMarketOrder(symbol, 'BUY', quantity, 'demo');
+  const orderRes = await krakenPlaceMarketOrder(symbol, 'BUY', quantity, 'demo');
   console.log('[TEST] Market Order Response JSON:', JSON.stringify(orderRes, null, 2));
 
   if (orderRes.code === '00000') {
@@ -25,7 +25,7 @@ async function run() {
       const stopLoss = execPrice * 0.98;
       
       console.log(`[TEST] Success. Now placing Stop Market at ${stopLoss.toFixed(2)}...`);
-      const slRes = await bitgetPlaceStopMarket(symbol, 'SELL', stopLoss, quantity, 'demo');
+      const slRes = await krakenPlaceStopMarket(symbol, 'SELL', stopLoss, quantity, 'demo');
       console.log('[TEST] SL Response JSON:', JSON.stringify(slRes, null, 2));
       
       if (slRes.code === '00000') {

@@ -22,7 +22,7 @@ enum AppFormatters {
     }
 
     static func currency(for tradingMode: String) -> String {
-        tradingMode == "live" ? "USDC" : "USDT"
+        "USD"
     }
 
     static func dateTime(_ iso: String?) -> String {

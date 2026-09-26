@@ -8,7 +8,7 @@ type ProfitNotificationInput = {
 };
 
 function buildCurrencyLabel(tradingMode: 'demo' | 'live') {
-  return tradingMode === 'live' ? 'USDC' : 'USDT';
+  return 'USD';
 }
 
 export async function notifyPositiveClose(input: ProfitNotificationInput) {
@@ -17,7 +17,7 @@ export async function notifyPositiveClose(input: ProfitNotificationInput) {
   }
 
   const currency = buildCurrencyLabel(input.tradingMode);
-  const title = `BITGET SIGNAL ${input.symbol}`;
+  const title = `KRAKENSIGNALS ${input.symbol}`;
   const body = [
     `Beneficio: +${input.profitFiat.toFixed(2)} ${currency}`,
     `Rentabilidad: +${input.profitPercent.toFixed(2)}%`,

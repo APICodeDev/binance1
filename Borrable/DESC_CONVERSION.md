@@ -1,4 +1,4 @@
-﻿# BITGETSync Premium Dashboard (Node.js/Vercel)
+# Kraken Futures Dashboard (Node.js/Vercel)
 
 Esta es la conversiÃ³n de tu bot de trading PHP a **Node.js 20+** sobre **Next.js 14 (App Router)** y **Vercel**.
 
@@ -20,10 +20,12 @@ Debes configurar las siguientes variables en Vercel (o en tu archivo `.env.local
 # Database (PostgreSQL)
 DATABASE_URL="postgres://tu_usuario:tu_password@tu_host:5432/tu_db"
 
-# BITGET API
-BITGET_API_KEY="BybstQ0Af..."
-BITGET_SECRET_KEY="Jw58keRY..."
-BITGET_BASE_URL="https://testnet.BITGETfuture.com"
+# Kraken Futures live (paper no necesita credenciales privadas)
+KRAKEN_FUTURES_API_URL_LIVE="https://futures.kraken.com"
+KRAKEN_LIVE_API_KEY=""
+KRAKEN_LIVE_API_SECRET=""
+KRAKEN_LIVE_TRADING_ENABLED="0"
+KRAKEN_PAPER_INITIAL_BALANCE_USD="10000"
 ```
 
 ## ðŸ“¦ Despliegue

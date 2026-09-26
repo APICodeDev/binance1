@@ -10,8 +10,8 @@ struct StatsView: View {
                     .font(.largeTitle.bold())
 
                 if let stats = appModel.stats {
-                    StatsModeCard(title: "Demo", mode: stats.demo, tint: .green, currency: "USDT")
-                    StatsModeCard(title: "Live", mode: stats.live, tint: .red, currency: "USDC")
+                    StatsModeCard(title: "Paper", mode: stats.demo, tint: .green, currency: "USD")
+                    StatsModeCard(title: "Live", mode: stats.live, tint: .red, currency: "USD")
                 } else {
                     EmptyStateCard(text: "Statistics not available yet.")
                 }

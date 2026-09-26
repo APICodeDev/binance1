@@ -5,16 +5,11 @@ import { NextRequest } from 'next/server';
 import { ok, fail } from '@/lib/apiResponse';
 import { requireAuth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { krakenGetMergeDepth } from '@/lib/kraken';
 
 const BOOKMAP_SERVICE_URL = (process.env.BOOKMAP_WS_SERVICE_URL || 'http://127.0.0.1:8788').replace(/\/$/, '');
 
-type ExchangeName = 'bybit' | 'binance' | 'bitget';
-
-const getBitgetProductType = (symbol: string) => {
-  if (symbol.endsWith('USDC')) return 'USDC-FUTURES';
-  if (symbol.endsWith('USD')) return 'COIN-FUTURES';
-  return 'USDT-FUTURES';
-};
+type ExchangeName = 'bybit' | 'binance' | 'kraken';
 
 const parseNumber = (value: unknown) => {
   const parsed = Number.parseFloat(String(value));
@@ -134,7 +129,7 @@ const buildZoneList = (
 };
 
 async function buildFallbackSummary(symbol: string) {
-  const [bybitOrderbook, bybitTrades, binanceDepth, binanceTrades, bitgetDepth] = await Promise.all([
+  const [bybitOrderbook, bybitTrades, binanceDepth, binanceTrades, krakenDepth] = await Promise.all([
     axios.get('https://api.bybit.com/v5/market/orderbook', {
       params: { category: 'linear', symbol, limit: 25 },
       timeout: 3500,
@@ -151,10 +146,7 @@ async function buildFallbackSummary(symbol: string) {
       params: { symbol, limit: 30 },
       timeout: 3500,
     }),
-    axios.get('https://api.bitget.com/api/v2/mix/market/merge-depth', {
-      params: { symbol, productType: getBitgetProductType(symbol), limit: 15 },
-      timeout: 3500,
-    }),
+    krakenGetMergeDepth(symbol, 'live'),
   ]);
 
   const bybitBook = bybitOrderbook.data?.result || {};
@@ -167,13 +159,13 @@ async function buildFallbackSummary(symbol: string) {
   const binanceAsk = parseNumber(binanceBook?.asks?.[0]?.[0]);
   const binanceTs = parseNumber(binanceBook?.E) || Date.now();
 
-  const bitgetBook = bitgetDepth.data?.data || {};
-  const bitgetBid = parseNumber(bitgetBook?.bids?.[0]?.[0]);
-  const bitgetAsk = parseNumber(bitgetBook?.asks?.[0]?.[0]);
-  const bitgetTs = parseNumber(bitgetBook?.ts) || Date.now();
+  const krakenBook: any = krakenDepth?.ok ? krakenDepth : {};
+  const krakenBid = parseNumber(krakenBook?.bids?.[0]?.[0]);
+  const krakenAsk = parseNumber(krakenBook?.asks?.[0]?.[0]);
+  const krakenTs = parseNumber(krakenBook?.ts) || Date.now();
 
-  const bidValues = [bybitBid, binanceBid, bitgetBid].filter((value): value is number => value !== null);
-  const askValues = [bybitAsk, binanceAsk, bitgetAsk].filter((value): value is number => value !== null);
+  const bidValues = [bybitBid, binanceBid, krakenBid].filter((value): value is number => value !== null);
+  const askValues = [bybitAsk, binanceAsk, krakenAsk].filter((value): value is number => value !== null);
   const compositeBestBid = bidValues.length ? bidValues.reduce((sum, value) => sum + value, 0) / bidValues.length : null;
   const compositeBestAsk = askValues.length ? askValues.reduce((sum, value) => sum + value, 0) / askValues.length : null;
   const mid = compositeBestBid !== null && compositeBestAsk !== null ? (compositeBestBid + compositeBestAsk) / 2 : 0;
@@ -207,13 +199,13 @@ async function buildFallbackSummary(symbol: string) {
   const supportEntries = [
     ...(Array.isArray(bybitBook?.b) ? bybitBook.b.slice(0, 12).map((level: any[]) => ({ exchange: 'bybit' as const, price: parseNumber(level?.[0]) || 0, size: parseNumber(level?.[1]) || 0 })) : []),
     ...(Array.isArray(binanceBook?.bids) ? binanceBook.bids.slice(0, 12).map((level: any[]) => ({ exchange: 'binance' as const, price: parseNumber(level?.[0]) || 0, size: parseNumber(level?.[1]) || 0 })) : []),
-    ...(Array.isArray(bitgetBook?.bids) ? bitgetBook.bids.slice(0, 12).map((level: any[]) => ({ exchange: 'bitget' as const, price: parseNumber(level?.[0]) || 0, size: parseNumber(level?.[1]) || 0 })) : []),
+    ...(Array.isArray(krakenBook?.bids) ? krakenBook.bids.slice(0, 12).map((level: any[]) => ({ exchange: 'kraken' as const, price: parseNumber(level?.[0]) || 0, size: parseNumber(level?.[1]) || 0 })) : []),
   ].filter((entry) => entry.price > 0 && entry.size > 0);
 
   const resistanceEntries = [
     ...(Array.isArray(bybitBook?.a) ? bybitBook.a.slice(0, 12).map((level: any[]) => ({ exchange: 'bybit' as const, price: parseNumber(level?.[0]) || 0, size: parseNumber(level?.[1]) || 0 })) : []),
     ...(Array.isArray(binanceBook?.asks) ? binanceBook.asks.slice(0, 12).map((level: any[]) => ({ exchange: 'binance' as const, price: parseNumber(level?.[0]) || 0, size: parseNumber(level?.[1]) || 0 })) : []),
-    ...(Array.isArray(bitgetBook?.asks) ? bitgetBook.asks.slice(0, 12).map((level: any[]) => ({ exchange: 'bitget' as const, price: parseNumber(level?.[0]) || 0, size: parseNumber(level?.[1]) || 0 })) : []),
+    ...(Array.isArray(krakenBook?.asks) ? krakenBook.asks.slice(0, 12).map((level: any[]) => ({ exchange: 'kraken' as const, price: parseNumber(level?.[0]) || 0, size: parseNumber(level?.[1]) || 0 })) : []),
   ].filter((entry) => entry.price > 0 && entry.size > 0);
 
   const supports = buildZoneList('support', supportEntries, mid);
@@ -258,12 +250,12 @@ async function buildFallbackSummary(symbol: string) {
         isFresh: true,
       },
       {
-        exchange: 'bitget',
+        exchange: 'kraken',
         status: 'rest-fallback',
-        bestBid: bitgetBid,
-        bestAsk: bitgetAsk,
-        spreadBps: bitgetBid !== null && bitgetAsk !== null ? Number((((bitgetAsk - bitgetBid) / ((bitgetBid + bitgetAsk) / 2)) * 10_000).toFixed(2)) : null,
-        lastUpdateAgeMs: Math.max(0, Date.now() - bitgetTs),
+        bestBid: krakenBid,
+        bestAsk: krakenAsk,
+        spreadBps: krakenBid !== null && krakenAsk !== null ? Number((((krakenAsk - krakenBid) / ((krakenBid + krakenAsk) / 2)) * 10_000).toFixed(2)) : null,
+        lastUpdateAgeMs: Math.max(0, Date.now() - krakenTs),
         isFresh: true,
       },
     ],

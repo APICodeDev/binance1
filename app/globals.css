@@ -6,10 +6,10 @@
 :root {
   color-scheme: dark;
   --foreground-rgb: 226, 232, 240;
-  --background-start-rgb: 2, 6, 23;
-  --background-end-rgb: 15, 23, 42;
-  --surface-rgb: 15, 23, 42;
-  --surface-muted-rgb: 2, 6, 23;
+  --background-start-rgb: 11, 12, 15;
+  --background-end-rgb: 20, 21, 25;
+  --surface-rgb: 20, 21, 25;
+  --surface-muted-rgb: 7, 8, 10;
 }
 
 html {
@@ -83,4 +83,9 @@ body {
 }
 ::-webkit-scrollbar-thumb {
   @apply bg-slate-800 rounded-full hover:bg-slate-700 transition-colors;
+}
+
+/* Neutral charcoal base while preserving the existing card and accent palette. */
+.bg-slate-950 {
+  background-color: #0b0c0f !important;
 }

@@ -22,11 +22,11 @@ Las órdenes de Take Profit (TP) y Stop Loss (SL) se crean de manera **similar**
    - Se validan contra el precio de entrada
    
 2. **Placement de SL** (líneas 1193-1226)
-   - Se llama a `bitgetPlaceStopMarket()` con `planType: 'normal_plan'`
+   - Se llama a `krakenPlaceStopMarket()` con `planType: 'normal_plan'`
    - Apenas en modo strat se verifica post-colocación
    
 3. **Placement de TP** (líneas 1233-1275)
-   - Se llama a `bitgetPlaceTpslMarket()` con `planType: 'profit_plan'`
+   - Se llama a `krakenPlaceTpslMarket()` con `planType: 'profit_plan'`
    - Apenas en modo strat se verifica post-colocación
 
 ---
@@ -98,10 +98,10 @@ const shouldRejectInvalidTakeProfit = !stratManaged && ((managementMode === 'sel
 
 ## 5. Funciones de Placement
 
-### 5.1 Stop Loss: `bitgetPlaceStopMarket()` (lib/bitget.ts, línea 433)
+### 5.1 Stop Loss: `krakenPlaceStopMarket()` (lib/kraken.ts, línea 433)
 
 ```typescript
-export const bitgetPlaceStopMarket = async (
+export const krakenPlaceStopMarket = async (
   symbol: string,
   side: 'BUY' | 'SELL',
   stopPrice: number,
@@ -122,14 +122,14 @@ await placeProtectionOrderWithRetries({
   kind: 'stop',
   symbol,
   tradingMode,
-  place: () => bitgetPlaceStopMarket(symbol, slSide, stopPrice!, filledSize, tradingMode, closeTradeSide),
+  place: () => krakenPlaceStopMarket(symbol, slSide, stopPrice!, filledSize, tradingMode, closeTradeSide),
 })
 ```
 
-### 5.2 Take Profit: `bitgetPlaceTpslMarket()` (lib/bitget.ts, línea 470)
+### 5.2 Take Profit: `krakenPlaceTpslMarket()` (lib/kraken.ts, línea 470)
 
 ```typescript
-export const bitgetPlaceTpslMarket = async (
+export const krakenPlaceTpslMarket = async (
   symbol: string,
   planType: 'profit_plan' | 'loss_plan',
   holdSide: 'long' | 'short' | 'buy' | 'sell',
@@ -148,7 +148,7 @@ export const bitgetPlaceTpslMarket = async (
 
 **Cómo se coloca en entry:**
 ```typescript
-await bitgetPlaceTpslMarket(
+await krakenPlaceTpslMarket(
   symbol,
   'profit_plan',      // Siempre profit_plan para TP inicial
   holdSide,           // long o short según posición
@@ -202,7 +202,7 @@ async function verifyProtectionOrder(params: {
 **Lógica de verificación:**
 
 1. **Delayed retries:** `[250, 700, 1300]` ms (después de colocación inicial)
-   - Espera a que Bitget procese la orden
+   - Espera a que Kraken procese la orden
    - 3 intentos de verificación máximo
 
 2. **Matcher for stop orders:**
@@ -236,7 +236,7 @@ async function placeProtectionOrderWithRetries(params: {
 })
 ```
 
-**Retries:** Se reintenta si Bitget retorna un error retryable (códigos 43023 o 40891)
+**Retries:** Se reintenta si Kraken retorna un error retryable (códigos 43023 o 40891)
 - **Delays:** `getProtectionRetryDelays()` (típicamente 500, 1000, 1500 ms)
 - **Max intentos:** Hasta 3-4 intentos
 
@@ -263,8 +263,8 @@ if (shouldPlaceInitialTakeProfit) {
 **Si TP placement agota los retries:**
 - No es un error fatal (la posición se abre igualmente)
 - Se guarda `initialTakeProfitPending = true`
-- Se notifica al usuario: "Position opened with TP pending on Bitget"
-- La posición se registra en DB con el TP solicitado (esperando que Bitget lo procese)
+- Se notifica al usuario: "Position opened with TP pending on Kraken"
+- La posición se registra en DB con el TP solicitado (esperando que Kraken lo procese)
 
 ---
 
@@ -295,8 +295,8 @@ if (existingManagementMode === 'strat') {
 **Línea 534:**
 ```typescript
 const tpResp = currentProfitOrder?.orderId
-  ? await bitgetModifyTpslOrder(symbol, String(currentProfitOrder.orderId), candidateTakeProfit, existing.quantity, tradingMode)
-  : await bitgetPlaceTpslMarket(
+  ? await krakenModifyTpslOrder(symbol, String(currentProfitOrder.orderId), candidateTakeProfit, existing.quantity, tradingMode)
+  : await krakenPlaceTpslMarket(
       symbol,
       'profit_plan',
       existingContext.holdSide,
@@ -317,8 +317,8 @@ const tpResp = currentProfitOrder?.orderId
 
 ### Contexto histórico (de session memory)
 
-- **`normal_plan`:** Órdenes de stop clásicas (creadas por `bitgetPlaceStopMarket`)
-- **`loss_plan`:** Órdenes TPSL automáticas de Bitget
+- **`normal_plan`:** Órdenes de stop clásicas (creadas por `krakenPlaceStopMarket`)
+- **`loss_plan`:** Órdenes TPSL automáticas de Kraken
 
 **En entry actual:**
 - Se coloca `normal_plan` (línea 1196-1202)
@@ -373,9 +373,9 @@ const tpResp = currentProfitOrder?.orderId
   - `placeProtectionOrderWithRetries()` (línea 267)
   - `maybeUpgradeTakeProfitFromSameDirectionSignal()` (línea 450)
 
-- **Bitget API functions:** [lib/bitget.ts](lib/bitget.ts)
-  - `bitgetPlaceStopMarket()` (línea 433)
-  - `bitgetPlaceTpslMarket()` (línea 470)
-  - `bitgetModifyTpslOrder()` para upgrades
-  - `bitgetGetPendingStopOrders()` para verificación
-  - `bitgetGetPendingTpslOrders()` para verificación
+- **Kraken API functions:** [lib/kraken.ts](lib/kraken.ts)
+  - `krakenPlaceStopMarket()` (línea 433)
+  - `krakenPlaceTpslMarket()` (línea 470)
+  - `krakenModifyTpslOrder()` para upgrades
+  - `krakenGetPendingStopOrders()` para verificación
+  - `krakenGetPendingTpslOrders()` para verificación

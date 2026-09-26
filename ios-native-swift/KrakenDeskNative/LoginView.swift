@@ -15,7 +15,7 @@ struct LoginView: View {
                         Image(systemName: "bolt.horizontal.circle.fill")
                             .font(.system(size: 54))
                             .foregroundStyle(.yellow)
-                        Text("Bitget Desk Native")
+                        Text("KrakenDesk")
                             .font(.system(size: 32, weight: .black, design: .rounded))
                         Text("Clon nativo iOS del dashboard actual, separado del proyecto web.")
                             .font(.subheadline)
