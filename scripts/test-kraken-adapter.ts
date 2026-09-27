@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { createKrakenFuturesSignature, krakenBuildPositionContext, krakenNormalizeSymbol, krakenOrderSuccess } from '@/lib/kraken';
 
-assert.equal(krakenNormalizeSymbol('PF_XBTUSD'), 'BTCUSDT');
+assert.equal(krakenNormalizeSymbol('PF_XBTUSD'), 'BTCUSD');
 assert.equal(krakenNormalizeSymbol('BTC/USDT'), 'BTCUSDT');
-assert.equal(krakenNormalizeSymbol('ETHUSD'), 'ETHUSDT');
+assert.equal(krakenNormalizeSymbol('ETHUSD'), 'ETHUSD');
+assert.equal(krakenNormalizeSymbol('XRPUSD'), 'XRPUSD');
 
 const signature = createKrakenFuturesSignature('/derivatives/api/v3/sendorder', 'symbol=PF_XBTUSD&side=buy', '1700000000000', Buffer.from('test-secret').toString('base64'));
 assert.match(signature, /^[A-Za-z0-9+/]+=*$/);

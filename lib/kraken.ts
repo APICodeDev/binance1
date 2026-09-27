@@ -121,9 +121,30 @@ const toKrakenContractSymbol = (symbol: string) => {
 };
 
 export const krakenNormalizeSymbol = (symbol: string): string => {
-  const base = baseFromAppSymbol(symbol);
-  return base ? `${base}USDT` : '';
+  const raw = String(symbol || '').trim().toUpperCase().replace(/[\/-]/g, '');
+  if (!raw) return '';
+
+  const nativeMatch = raw.match(/^(?:PF|PI|FF)_([A-Z0-9]+?)(USD|USDT|USDC)(?:_.+)?$/);
+  if (nativeMatch) {
+    const base = nativeMatch[1].replace(/^XBT$/, 'BTC');
+    return `${base}${nativeMatch[2]}`;
+  }
+
+  const appMatch = raw.match(/^([A-Z0-9]+?)(USDT|USDC|USD)$/);
+  if (appMatch) {
+    return `${appMatch[1].replace(/^XBT$/, 'BTC')}${appMatch[2]}`;
+  }
+
+  return raw.replace(/^XBT$/, 'BTC');
 };
+
+// Preserve the symbol received from the app while reconciling aliases by the
+// Kraken Futures contract they resolve to (e.g. XRPUSD and XRPUSDT).
+export const krakenSymbolsMatch = (left: string, right: string) => (
+  Boolean(left && right) && toKrakenContractSymbol(left) === toKrakenContractSymbol(right)
+);
+
+export const krakenContractSymbol = toKrakenContractSymbol;
 
 export type KrakenPositionMode = 'one_way_mode' | 'hedge_mode';
 export type KrakenProtectionKind = 'stop' | 'take_profit';
@@ -317,8 +338,7 @@ export const krakenGetPositions = async (tradingMode: TradingMode = 'demo'): Pro
 
 export const krakenGetSinglePosition = async (symbol: string, tradingMode: TradingMode = 'demo') => {
   const all = await krakenGetPositions(tradingMode);
-  const canonical = krakenNormalizeSymbol(symbol);
-  return { ...all, positions: all.positions.filter((position) => position.symbol === canonical) };
+  return { ...all, positions: all.positions.filter((position) => krakenSymbolsMatch(position.symbol, symbol)) };
 };
 
 const decimalPlaces = (value: number) => {

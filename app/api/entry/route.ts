@@ -52,6 +52,7 @@ import {
   krakenNormalizeSizeByContract,
   krakenNormalizeSymbol,
   krakenOrderSuccess,
+  krakenSymbolsMatch,
   krakenEnsureTrailingOrder,
   krakenPlaceLimitOrder,
   krakenPlaceMarketOrder,
@@ -398,7 +399,6 @@ async function closePositionFromEntrySignal(
 
   const tradingMode = await resolveTradingMode();
   const where: Record<string, unknown> = {
-    symbol,
     status: 'open',
     tradingMode,
   };
@@ -407,10 +407,11 @@ async function closePositionFromEntrySignal(
     where.managementMode = storedManagementMode;
   }
 
-  const position = await prisma.position.findFirst({
+  const positionCandidates = await prisma.position.findMany({
     where: where as any,
     orderBy: { createdAt: 'desc' },
   });
+  const position = positionCandidates.find((candidate) => krakenSymbolsMatch(candidate.symbol, symbol));
 
   if (!position) {
     return NextResponse.json({
@@ -854,9 +855,11 @@ async function executeEntry(
       return NextResponse.json({ error: true, message: 'Invalid parameters' }, { status: 400 });
     }
 
-    const existing = await prisma.position.findFirst({
-      where: { symbol, status: 'open', tradingMode } as any,
+    const existingCandidates = await prisma.position.findMany({
+      where: { status: 'open', tradingMode } as any,
+      orderBy: { createdAt: 'desc' },
     });
+    const existing = existingCandidates.find((candidate) => krakenSymbolsMatch(candidate.symbol, symbol));
 
     if (existing) {
       const sameOrigin = isSameOrigin(existing.origin, origin);

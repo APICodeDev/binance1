@@ -12,6 +12,7 @@ import {
   krakenGetPrice,
   krakenGetSinglePosition,
   krakenOrderSuccess,
+  krakenSymbolsMatch,
 } from '@/lib/kraken';
 
 export type TradingMode = 'demo' | 'live';
@@ -486,9 +487,8 @@ function extractCloseOrderId(closeResp: any) {
 }
 
 function snapshotHasOpenPosition(snapshot: Awaited<ReturnType<typeof krakenGetSinglePosition>>, symbol: string) {
-  const normalizedSymbol = symbol.toUpperCase();
   return snapshot.positions.some((rp: any) =>
-    String(rp?.symbol || '').toUpperCase() === normalizedSymbol &&
+    krakenSymbolsMatch(String(rp?.symbol || ''), symbol) &&
     Number.parseFloat(String(rp?.positionAmt || '0')) !== 0
   );
 }

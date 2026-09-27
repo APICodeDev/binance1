@@ -18,6 +18,8 @@ import {
   krakenGetPositions,
   krakenGetSinglePosition,
   krakenOrderSuccess,
+  krakenContractSymbol,
+  krakenSymbolsMatch,
 } from '@/lib/kraken';
 import {
   AdaptiveProtectionContext,
@@ -138,8 +140,8 @@ let engineSettings: EngineSettings = {
 };
 
 // Kraken's public futures feed uses native product ids (for example
-// PF_ADAUSD), while positions are stored using the app symbol (ADAUSDT).
-// Keep one canonical key so market events are actually routed to positions.
+// PF_ADAUSD), while app positions retain the incoming symbol (ADAUSD or
+// ADAUSDT). Convert both representations only for market event routing.
 const toKrakenMarketSymbol = (rawSymbol: string) => {
   const value = String(rawSymbol || '').toUpperCase().replace(/[\/-]/g, '');
   if (/^(PF|PI|FF)_/.test(value)) {
@@ -570,9 +572,8 @@ const buildPositionIdsByMode = () => {
 };
 
 const positionExistsInSnapshot = (snapshot: Awaited<ReturnType<typeof krakenGetSinglePosition>>, symbol: string) => {
-  const normalizedSymbol = symbol.toUpperCase();
   return snapshot.ok && snapshot.positions.some((remotePosition: any) => (
-    String(remotePosition?.symbol || '').toUpperCase() === normalizedSymbol &&
+    krakenSymbolsMatch(String(remotePosition?.symbol || ''), symbol) &&
     Number.parseFloat(String(remotePosition?.positionAmt || '0')) !== 0
   ));
 };
@@ -685,7 +686,7 @@ const reconcileOpenPositionsAgainstExchange = async (positions: ManagedPosition[
 
     for (const remotePosition of snapshot.positions) {
       if (Number.parseFloat(String(remotePosition?.positionAmt || '0')) !== 0) {
-        openSymbolsByMode[mode].add(String(remotePosition.symbol || '').toUpperCase());
+        openSymbolsByMode[mode].add(krakenContractSymbol(String(remotePosition.symbol || '')));
       }
     }
   }
@@ -693,7 +694,7 @@ const reconcileOpenPositionsAgainstExchange = async (positions: ManagedPosition[
   const reconciled = await Promise.all(positions.map(async (position) => {
     const tradingMode = ((position as any).tradingMode || 'demo') as TradingMode;
     const symbol = position.symbol.toUpperCase();
-    if (openSymbolsByMode[tradingMode].has(symbol)) {
+    if (openSymbolsByMode[tradingMode].has(krakenContractSymbol(symbol))) {
       return position;
     }
 
@@ -903,8 +904,8 @@ const closePositionFromEngine = async (position: ManagedPosition, update: Positi
   if (!krakenOrderSuccess(closeResp)) {
     const singlePositionSnapshot = await krakenGetSinglePosition(position.symbol.toUpperCase(), tradingMode).catch(() => null);
     const exchangeStillOpen = singlePositionSnapshot?.ok
-      ? singlePositionSnapshot.positions.some((remotePosition: any) => (
-          String(remotePosition?.symbol || '').toUpperCase() === position.symbol.toUpperCase() &&
+        ? singlePositionSnapshot.positions.some((remotePosition: any) => (
+          krakenSymbolsMatch(String(remotePosition?.symbol || ''), position.symbol) &&
           Number.parseFloat(String(remotePosition?.positionAmt || '0')) !== 0
         ))
       : true;
