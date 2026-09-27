@@ -257,15 +257,13 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       return null;
     }
 
-    const stepsCrossed = Math.floor((marketMovePercent / settings.trendTrailingPercent) + 1e-9);
-    const crossedStep = stepsCrossed * settings.trendTrailingPercent;
-    const crossedPrice = side === 'buy'
-      ? entryPrice * (1 + crossedStep / 100)
-      : entryPrice * (1 - crossedStep / 100);
-
+    // Keep the same continuous callback used by the trade engine. A stepped
+    // calculation left the first Trend stop near/below entry until the next
+    // threshold, making a live trailing position look inactive.
+    const lockedMovePercent = Math.max(0, marketMovePercent - settings.trendTrailingPercent);
     return side === 'buy'
-      ? crossedPrice * (1 - settings.trendTrailingPercent / 100)
-      : crossedPrice * (1 + settings.trendTrailingPercent / 100);
+      ? entryPrice * (1 + lockedMovePercent / 100)
+      : entryPrice * (1 - lockedMovePercent / 100);
   };
 
   const getAutoTrailingStopPrice = (

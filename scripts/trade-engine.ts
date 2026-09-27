@@ -137,7 +137,24 @@ let engineSettings: EngineSettings = {
   protection: resolveProtectionThresholdSettingsFromMap({}),
 };
 
-const makeMarketKey = (tradingMode: TradingMode, symbol: string) => `${tradingMode}:${symbol.toUpperCase()}`;
+// Kraken's public futures feed uses native product ids (for example
+// PF_ADAUSD), while positions are stored using the app symbol (ADAUSDT).
+// Keep one canonical key so market events are actually routed to positions.
+const toKrakenMarketSymbol = (rawSymbol: string) => {
+  const value = String(rawSymbol || '').toUpperCase().replace(/[\/-]/g, '');
+  if (/^(PF|PI|FF)_/.test(value)) {
+    return value;
+  }
+
+  const base = value
+    .replace(/USDT$|USDC$|USD$/, '')
+    .replace(/^BTC$/, 'XBT');
+  return `PF_${base}USD`;
+};
+
+const makeMarketKey = (tradingMode: TradingMode, symbol: string) => (
+  `${tradingMode}:${toKrakenMarketSymbol(symbol)}`
+);
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const writeSse = (res: ServerResponse, event: string, payload: unknown) => {
@@ -161,15 +178,15 @@ const getTrendTrailingStopPrice = (
     return null;
   }
 
-  const stepsCrossed = Math.floor((marketMovePercent / settings.trendTrailingPercent) + 1e-9);
-  const crossedStep = stepsCrossed * settings.trendTrailingPercent;
-  const crossedPrice = side === 'buy'
-    ? entryPrice * (1 + crossedStep / 100)
-    : entryPrice * (1 - crossedStep / 100);
-
+  // Trend trailing is a callback from the best move, not a staircase.
+  // With the old stepped calculation, +1.17% and a 0.75% setting produced
+  // a stop just below entry and looked as if trailing was not active until
+  // the next 1.50% step. Keep the configured distance while locking the
+  // highest observed move continuously.
+  const lockedMovePercent = Math.max(0, marketMovePercent - settings.trendTrailingPercent);
   return side === 'buy'
-    ? crossedPrice * (1 - settings.trendTrailingPercent / 100)
-    : crossedPrice * (1 + settings.trendTrailingPercent / 100);
+    ? entryPrice * (1 + lockedMovePercent / 100)
+    : entryPrice * (1 - lockedMovePercent / 100);
 };
 
 const getAutoTrailingStopPrice = (

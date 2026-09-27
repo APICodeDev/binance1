@@ -4335,10 +4335,16 @@ function PositionCard({
             </div>
           </div>
           <div className="shrink-0 text-right">
-            <p className="text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">Duration</p>
-            <p className="mt-1 text-sm font-black uppercase tracking-[0.15em] text-slate-200">
-              {formatOpenDuration(pos.createdAt)}
+            <p className={cn("text-2xl font-black leading-none", pos.profitLossFiat >= 0 ? "text-emerald-400" : "text-rose-400")}>
+              {pos.profitLossFiat > 0 ? '+' : ''}{pos.profitLossFiat.toFixed(2)}
             </p>
+            <p className="mt-1 text-[11px] font-black uppercase tracking-[0.15em] text-slate-300">
+              {quoteCurrency}
+            </p>
+            <div className="mt-2 flex flex-wrap justify-end gap-2 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">
+              <span>{pos.amount.toFixed(0)} {quoteCurrency}</span>
+              <span>Fee {(getFallbackCommissionRate(pos.tradingMode) * 100).toFixed(4)}%</span>
+            </div>
           </div>
         </div>
 
@@ -4395,16 +4401,10 @@ function PositionCard({
             </p>
           </div>
           <div className="shrink-0 text-right">
-            <p className={cn("text-2xl font-black leading-none", pos.profitLossFiat >= 0 ? "text-emerald-400" : "text-rose-400")}>
-              {pos.profitLossFiat > 0 ? '+' : ''}{pos.profitLossFiat.toFixed(2)}
+            <p className="text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">Duration</p>
+            <p className="mt-1 text-sm font-black uppercase tracking-[0.15em] text-slate-200">
+              {formatOpenDuration(pos.createdAt)}
             </p>
-            <p className="mt-1 text-[11px] font-black uppercase tracking-[0.15em] text-slate-300">
-              {quoteCurrency}
-            </p>
-            <div className="mt-2 flex flex-wrap justify-end gap-2 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">
-              <span>{pos.amount.toFixed(0)} {quoteCurrency}</span>
-              <span>Fee {(getFallbackCommissionRate(pos.tradingMode) * 100).toFixed(4)}%</span>
-            </div>
           </div>
         </div>
       </div>
