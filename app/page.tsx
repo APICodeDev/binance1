@@ -803,6 +803,13 @@ function formatPrice(value: number, precision?: number | null) {
   return value.toFixed(typeof precision === 'number' ? precision : 4);
 }
 
+function formatProtectionNumber(value: number) {
+  return value.toLocaleString('es-ES', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 function formatOpenDuration(createdAt: string) {
   const diffMs = Date.now() - new Date(createdAt).getTime();
   const totalSeconds = Math.max(0, Math.floor(diffMs / 1000));
@@ -4155,11 +4162,9 @@ function PositionCard({
   const breakevenActive = stopVsBreakevenDelta >= -stopTolerance;
   const trailingSecured = isSafe && stopVsBreakevenDelta > stopTolerance;
   const slAtEntry = breakevenActive && !trailingSecured;
-  const protectionStatus = trailingSecured
-    ? `${nativeTrailingManaged ? 'Approx Secured ' : 'Secured '}+${pnlSafe.toFixed(2)} ${quoteCurrency}`
-    : breakevenActive
-      ? (nativeTrailingManaged ? 'Trailing Native Active' : 'Breakeven Active')
-      : (nativeTrailingManaged ? 'Native Trailing Arming' : 'Protection Arming');
+  const trailingActive = trailingEnabled && trailingSecured;
+  const trailingLockedPercent = Math.max(0, -riskDistancePercent);
+  const trailingLockedFiat = Math.max(0, pnlSafe);
   const stopEngineLabel = managementMode === 'self'
     ? 'Self SL/TP + Breakeven >1%'
     : stratManaged
@@ -4364,13 +4369,9 @@ function PositionCard({
             </p>
             <p className={cn(
               "mt-2 text-[10px] font-black uppercase tracking-[0.18em]",
-              trailingSecured
-                ? "text-emerald-300"
-                : breakevenActive
-                  ? "text-amber-300"
-                  : "text-slate-500"
+              breakevenActive ? "text-emerald-300" : "text-amber-300"
             )}>
-              {protectionStatus}
+              {breakevenActive ? 'BREAKEVEN ACTIVADO' : 'BREAKEVEN EN ESPERA'}
             </p>
             {typeof pos.takeProfit === 'number' && pos.takeProfit > 0 && (
               <p className="mt-2 text-[10px] font-black uppercase tracking-[0.18em] text-amber-300">
@@ -4422,19 +4423,21 @@ function PositionCard({
             className={cn(
               "rounded-xl border px-3 py-2 text-[11px] font-black uppercase tracking-[0.18em] transition-colors",
               breakEvenEnabled
-                ? "border-amber-400/50 bg-amber-500/15 text-amber-300"
+                ? breakevenActive
+                  ? "border-emerald-400/50 bg-emerald-500/15 text-emerald-300"
+                  : "border-amber-400/50 bg-amber-500/15 text-amber-300"
                 : "border-slate-700 bg-slate-900/70 text-slate-300 hover:border-amber-400/40 hover:text-amber-200",
               (breakEvenLocked || protectionBusy !== null) && "cursor-not-allowed opacity-80"
             )}
           >
             {managementMode === 'self'
-              ? 'Breakeven automático >1%'
+              ? (breakevenActive ? 'BREAKEVEN ACTIVO' : 'BREAKEVEN EN ESPERA')
               : nativeTrailingManaged
-                ? 'Kraken Native'
+                ? (breakevenActive ? 'BREAKEVEN ACTIVO' : 'BREAKEVEN EN ESPERA')
                 : protectionBusy === 'breakEven'
                   ? 'Activando...'
                   : breakEvenEnabled
-                    ? 'Breakeven Activo'
+                    ? (breakevenActive ? 'BREAKEVEN ACTIVO' : 'BREAKEVEN EN ESPERA')
                     : 'Activar Breakeven'}
           </button>
           <button
@@ -4443,8 +4446,10 @@ function PositionCard({
             disabled={protectionBusy !== null || nativeTrailingManaged || managementMode === 'self'}
             className={cn(
               "rounded-xl border px-3 py-2 text-[11px] font-black uppercase tracking-[0.18em] transition-colors",
-              trailingEnabled
+              trailingActive
                 ? "border-emerald-400/50 bg-emerald-500/15 text-emerald-300"
+                : trailingEnabled
+                  ? "border-amber-400/50 bg-amber-500/15 text-amber-300"
                 : "border-slate-700 bg-slate-900/70 text-slate-300 hover:border-emerald-400/40 hover:text-emerald-200",
               (protectionBusy !== null || nativeTrailingManaged || managementMode === 'self') && "cursor-not-allowed opacity-80"
             )}
@@ -4456,7 +4461,9 @@ function PositionCard({
               : protectionBusy === 'trailing'
               ? (trailingEnabled ? 'Desactivando...' : 'Activando...')
               : trailingEnabled
-                ? 'Desactivar Trailing'
+                ? (trailingActive
+                  ? `TRAILING ${formatProtectionNumber(trailingLockedPercent)}% (+${formatProtectionNumber(trailingLockedFiat)} ${quoteCurrency})`
+                  : 'TRAILING EN ESPERA')
                 : 'Activar Trailing'}
           </button>
         </div>

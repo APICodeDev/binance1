@@ -17,7 +17,7 @@ export async function notifyPositiveClose(input: ProfitNotificationInput) {
   }
 
   const currency = buildCurrencyLabel(input.tradingMode);
-  const title = `KRAKENSIGNALS ${input.symbol}`;
+  const title = `${input.symbol} KRAKENSIGNALS`;
   const body = [
     `Beneficio: +${input.profitFiat.toFixed(2)} ${currency}`,
     `Rentabilidad: +${input.profitPercent.toFixed(2)}%`,
