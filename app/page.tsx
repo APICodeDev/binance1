@@ -4191,8 +4191,7 @@ function PositionCard({
     ? `CB ${pos.nativeTrailingCallbackPercent.toFixed(2)}% · ACT ${pos.nativeTrailingActivationPercent.toFixed(2)}%`
     : null;
 
-  const exchangeUrl = `https://www.kraken.com/en/futures/usdt/${pos.symbol}`;
-  const tradingViewUrl = `https://www.tradingview.com/chart/?symbol=KRAKEN%3A${encodeURIComponent(`${pos.symbol}.P`)}`;
+  const tradingViewUrl = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(`KRAKEN:${pos.symbol}`)}`;
   const takeProfitExpandedTitle = pos.takeProfitExpanded
     ? `TP ampliado${
         typeof pos.takeProfitExpandedFrom === 'number' && typeof pos.takeProfitExpandedTo === 'number'
@@ -4275,16 +4274,6 @@ function PositionCard({
             </span>
             <div className="flex items-center gap-2">
               <a
-                href={exchangeUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="rounded-xl border border-amber-400/25 bg-amber-400/10 p-1 transition-colors hover:border-amber-300/60 hover:bg-amber-400/20"
-                aria-label={`Open ${pos.symbol} on Kraken`}
-                title="Open on Kraken"
-              >
-                <Image src={appLogo} alt="Kraken" width={32} height={32} className="h-8 w-8 rounded-lg object-cover" />
-              </a>
-              <a
                 href={tradingViewUrl}
                 target="_blank"
                 rel="noopener noreferrer"
@@ -4292,7 +4281,7 @@ function PositionCard({
                 aria-label={`Open ${pos.symbol} on TradingView`}
                 title="Open on TradingView"
               >
-                <Image src="/tradingview-mark.svg" alt="TradingView" width={32} height={32} className="h-8 w-8" />
+                <Image src="/tradingview-logo.png" alt="TradingView" width={32} height={32} className="h-8 w-8 rounded-lg object-contain" />
               </a>
             </div>
             {pos.tradingMode === 'live' && <span className="bg-rose-500 text-[8px] font-black px-1.5 py-0.5 rounded text-white animate-pulse">LIVE</span>}
