@@ -4,6 +4,7 @@ out
 build
 .git
 .env
+.env.*
 .vercel
 *.log
 npm-debug.log*

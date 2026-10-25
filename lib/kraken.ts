@@ -159,7 +159,9 @@ export const krakenBuildPositionContext = (positionType: 'buy' | 'sell', _positi
   flashCloseHoldSide: (positionType === 'buy' ? 'long' : 'short') as 'long' | 'short',
 });
 
-export const krakenOrderSuccess = (resp: any) => Boolean(resp && typeof resp === 'object' && (resp.result === 'success' || resp.code === '00000'));
+export const krakenOrderSuccess = (resp: any) => Boolean(resp && typeof resp === 'object' &&
+  (resp.result === 'success' || resp.code === '00000') &&
+  (!resp.sendStatus || ['placed', 'partiallyFilled', 'filled'].includes(resp.sendStatus.status)));
 
 const getTicker = async (symbol: string, mode: TradingMode) => {
   const resp = await krakenRequest('/derivatives/api/v3/tickers', {}, 'GET', false, mode);
@@ -293,8 +295,8 @@ const sendOrder = async (params: Record<string, any>, mode: TradingMode) => {
   return krakenRequest('/derivatives/api/v3/sendorder', params, 'POST', true, mode);
 };
 
-export const krakenPlaceMarketOrder = async (symbol: string, side: 'BUY' | 'SELL', quantity: number, tradingMode: TradingMode = 'demo', _tradeSide?: 'open' | 'close') =>
-  sendOrder({ orderType: 'mkt', symbol: toKrakenContractSymbol(symbol), side: side.toLowerCase(), size: quantity }, tradingMode);
+export const krakenPlaceMarketOrder = async (symbol: string, side: 'BUY' | 'SELL', quantity: number, tradingMode: TradingMode = 'demo', _tradeSide?: 'open' | 'close', clientOid?: string) =>
+  sendOrder({ orderType: 'mkt', symbol: toKrakenContractSymbol(symbol), side: side.toLowerCase(), size: quantity, cliOrdId: clientOid }, tradingMode);
 
 export const krakenSetLeverage = async (symbol: string, leverage: number, _holdSide?: 'long' | 'short', tradingMode: TradingMode = 'demo') => ({ result: 'success', code: '00000', msg: 'Kraken Futures leverage is account-configured', data: { symbol: toKrakenContractSymbol(symbol), leverage }, tradingMode });
 export const krakenGetPositionMode = async (_symbol: string, _tradingMode: TradingMode = 'demo'): Promise<KrakenPositionMode> => 'one_way_mode';
@@ -359,8 +361,11 @@ export const krakenGetExchangeInfo = async (symbol: string, tradingMode: Trading
   const instrument = (await getInstruments(tradingMode)).find((item: any) => item.symbol === native);
   if (!instrument) return null;
   const tickSize = Number(instrument.tickSize) || 0.0001;
-  const contractSize = Number(instrument.contractSize) || 1;
-  return { ...instrument, symbol: krakenNormalizeSymbol(symbol), krakenSymbol: native, pricePlace: decimalPlaces(tickSize), priceEndStep: Math.max(1, Math.round(tickSize * 10 ** decimalPlaces(tickSize))), tickSize, minTradeNum: contractSize, sizeMultiplier: contractSize, volumePlace: Math.max(0, Number(instrument.contractValueTradePrecision ?? 0)), minLever: 1, maxLever: 50 };
+  const tradePrecision = Number(instrument.contractValueTradePrecision ?? 0);
+  const volumePlace = Math.max(0, tradePrecision);
+  // Negative precision denotes lots above one (e.g. PEPE -3 => 1000).
+  const sizeStep = 10 ** -tradePrecision;
+  return { ...instrument, symbol: krakenNormalizeSymbol(symbol), krakenSymbol: native, pricePlace: decimalPlaces(tickSize), priceEndStep: Math.max(1, Math.round(tickSize * 10 ** decimalPlaces(tickSize))), tickSize, minTradeNum: sizeStep, sizeMultiplier: sizeStep, volumePlace, minLever: 1, maxLever: 50 };
 };
 export const krakenGetPricePrecision = async (symbol: string, mode: TradingMode = 'demo') => Number((await krakenGetExchangeInfo(symbol, mode))?.pricePlace || 4);
 export const krakenGetTickSize = (exchangeInfo: any) => Number(exchangeInfo?.tickSize) || Number(exchangeInfo?.priceEndStep || 1) / 10 ** Number(exchangeInfo?.pricePlace || 4);
@@ -373,9 +378,10 @@ export const krakenNormalizePriceByContractDirectional = (price: number, exchang
 export const krakenNormalizePriceByContract = (price: number, exchangeInfo: any) => krakenNormalizePriceByContractDirectional(price, exchangeInfo, 'down');
 export const krakenNormalizeProtectionPrice = (price: number, exchangeInfo: any, positionType: 'buy' | 'sell', kind: KrakenProtectionKind) => krakenNormalizePriceByContractDirectional(price, exchangeInfo, kind === 'stop' ? (positionType === 'buy' ? 'down' : 'up') : (positionType === 'buy' ? 'up' : 'down'));
 export const krakenNormalizeSizeByContract = (size: number, exchangeInfo: any) => {
-  const step = Number(exchangeInfo?.contractSize || exchangeInfo?.sizeMultiplier || 1) || 1;
-  const min = Number(exchangeInfo?.minTradeNum || step) || step;
-  return Number(Math.max(min, Math.floor(size / step) * step).toFixed(Number(exchangeInfo?.volumePlace || 6)));
+  const step = Number(exchangeInfo?.sizeMultiplier ?? 10 ** -Number(exchangeInfo?.contractValueTradePrecision ?? 0));
+  if (!Number.isFinite(size) || size <= 0 || !Number.isFinite(step) || step <= 0) return 0;
+  const rounded = Number((Math.floor(size / step + 1e-10) * step).toFixed(Math.max(0, Number(exchangeInfo?.volumePlace ?? exchangeInfo?.contractValueTradePrecision ?? 0))));
+  return rounded >= Number(exchangeInfo?.minTradeNum ?? step) ? rounded : 0;
 };
 export const formatQuantity = (quantity: number, exchangeInfo: any) => krakenNormalizeSizeByContract(quantity, exchangeInfo).toString();
 
@@ -513,6 +519,7 @@ const getPendingOrders = async (symbol: string, mode: TradingMode) => {
   return { ok: true as const, orders: normalizeOpenOrders(resp, symbol), error: null };
 };
 export const krakenGetPendingStopOrders = async (symbol: string, mode: TradingMode = 'demo') => { const pending = await getPendingOrders(symbol, mode); return pending.ok ? { ...pending, orders: pending.orders.filter((order: any) => ['stp', 'stop', 'trigger_order'].some((kind) => String(order.orderType).toLowerCase().includes(kind))) } : pending; };
+export const krakenGetOpenOrders = getPendingOrders;
 export const krakenGetPendingTpslOrders = async (symbol: string, mode: TradingMode = 'demo') => { const pending = await getPendingOrders(symbol, mode); return pending.ok ? { ...pending, orders: pending.orders.filter((order: any) => ['take_profit', 'trailing_stop', 'trigger_order'].some((kind) => String(order.orderType).toLowerCase().includes(kind) || String(order.planType).toLowerCase().includes(kind))) } : pending; };
 export const krakenIsTrailingOrder = (order: any) => String(order?.orderType || '').toLowerCase().includes('trailing') || Number.isFinite(Number(order?.rangeRate));
 export const krakenGetPendingTrailingOrders = async (symbol: string, mode: TradingMode = 'demo') => { const pending = await krakenGetPendingTpslOrders(symbol, mode); return pending.ok ? { ...pending, orders: pending.orders.filter(krakenIsTrailingOrder) } : pending; };
@@ -561,7 +568,7 @@ export const krakenCancelAllOrdersAfter = async (timeoutSeconds: number, mode: T
   return krakenRequest('/derivatives/api/v3/cancelallordersafter', { timeout: Math.max(0, Math.floor(timeoutSeconds)) }, 'POST', true, mode);
 };
 export const krakenFlashClosePosition = async (symbol: string, _holdSide?: 'long' | 'short', mode: TradingMode = 'demo') => { const position = await krakenGetSinglePosition(symbol, mode); const current = position.positions[0]; if (!current || Number(current.positionAmt) === 0) return { result: 'success', code: '00000', msg: 'already-flat' }; return krakenClosePosition(symbol, Number(current.positionAmt) > 0 ? 'SELL' : 'BUY', Math.abs(Number(current.positionAmt)), mode); };
-export const krakenClosePosition = async (symbol: string, side: 'BUY' | 'SELL', quantity: number, mode: TradingMode = 'demo', _tradeSide?: 'open' | 'close') => sendOrder({ orderType: 'mkt', symbol: toKrakenContractSymbol(symbol), side: orderSide(side), size: quantity, reduceOnly: true }, mode);
+export const krakenClosePosition = async (symbol: string, side: 'BUY' | 'SELL', quantity: number, mode: TradingMode = 'demo', _tradeSide?: 'open' | 'close', clientOid?: string) => sendOrder({ orderType: 'mkt', symbol: toKrakenContractSymbol(symbol), side: orderSide(side), size: quantity, reduceOnly: true, cliOrdId: clientOid }, mode);
 
 const normalizeAccountRecords = (payload: any) => {
   const source = payload?.accounts || payload?.data?.accounts || payload?.data;

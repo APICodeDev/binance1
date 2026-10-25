@@ -101,3 +101,35 @@ Las claves reales no se documentan ni se versionan. Deben configurarse como vari
 - [ ] Smoke live autenticado: requiere que el usuario configure credenciales Futures de minimo privilegio y autorice la prueba.
 
 No se ejecutaron ordenes reales durante la migracion. El bloqueo del smoke autenticado es intencionado y seguro.
+
+## 8. Grid Pine: mode=special
+
+Implementado para perpetuos lineales Kraken `PF_*USD`. Acumula hasta cinco compras en una posicion larga, con cantidad ejecutada y precio medio ponderado. `amount` es el nominal USD de **cada** compra; no se multiplica por el apalancamiento ni se sustituye por `custom_amount`. Se consulta el contrato para redondear hacia abajo y rechazar importes inferiores al lote minimo o superiores al maximo de posicion. Kraken sigue aplicando sus requisitos de margen y disponibilidad del contrato/cuenta.
+
+No exige precio de entrada, SL o TP. Los campos de proteccion recibidos se ignoran en este modo. No activa stops, breakeven, trailing ni cierre por agotamiento. `type=close` vende toda la cantidad acumulada mediante `reduceOnly`, incluso con el bot desactivado. No abre cortos ni mezcla posiciones de otros modos, origenes o timeframes. El monitor no modifica posiciones special; cambios manuales en Kraken o liquidaciones requieren conciliacion antes de nuevas entradas.
+
+En `API-(IK) Grid Strategy.pine`, seleccionar **Bot: cierre total**, activar alertas externas y elegir **special**. Crear/recrear la alerta de ejecuciones de orden con `{{strategy.order.alert_message}}`. Este modo ya existente en el Pine cierra toda la posicion cuando se cumple la primera salida de un tramo: su backtest difiere de **Rejilla original**, que tiene cierres parciales. El importe de la alerta no modifica el tamano del backtest de TradingView.
+
+Ejemplos de cuerpo para `/api/entry`:
+
+```json
+{"type":"buy","symbol":"BTCUSD","origin":"API-IK-Grid","timeframe":"5","amount":1000,"mode":"special","signal_id":"grid-unique-entry-1"}
+```
+
+```json
+{"type":"close","symbol":"BTCUSD","origin":"API-IK-Grid","timeframe":"5","mode":"special","signal_id":"grid-unique-close-1"}
+```
+
+El Pine genera `signal_id` por barra, tramo y ciclo. Los reenvios con el mismo ID se deduplican de forma persistente. Los mensajes antiguos sin ID siguen aceptandose, pero no se pueden distinguir sus reenvios de nuevas compras. No reutilizar IDs al iniciar nuevas operaciones. Se conserva la autenticacion y el procesamiento asincrono del webhook existente; el acuse HTTP de recepcion no confirma una ejecucion, que debe revisarse en la auditoria.
+
+Las entradas se serializan mediante un bloqueo en PostgreSQL compartido entre instancias. Una intencion `special_pending:<modo>:<contrato>` se guarda antes del envio. Si faltan fills verificables, falla la persistencia o la respuesta es ambigua, se bloquean nuevas operaciones de ese contrato. Revisar su `clientOid`, los fills y la posicion en Kraken, reconciliar cantidad/precio/estado y solo entonces retirar esa intencion; no borrarla para reintentar a ciegas. Un cierre parcial conserva la cantidad restante y exige otro `close`; no permite nuevas compras mientras esta cerrando. Los recibos `special_receipt:*` conservan la deduplicacion incluso despues del cierre y no deben borrarse durante el uso de las alertas.
+
+Verificacion sin dinero real:
+
+- `npm run test:kraken`: pruebas del adaptador.
+- `npm run test:special`: ruta HTTP, cinco entradas, concurrencia, promedio, duplicados, minimos, aislamiento, monitor, cierre total/manual y bloqueo tras fallo de persistencia. Incluye respuestas privadas ficticias para rechazos y ejecuciones parciales; nunca se envian a la red.
+- `npm run test:special -- --public-market`: las mismas pruebas con instrumentos y cotizaciones publicas reales. Base de datos aislada en memoria, ordenes simuladas, cero llamadas privadas a Kraken.
+
+Estas pruebas no certifican ejecuciones reales, margen, liquidez ni compilacion/backtest del Pine en TradingView. No se ha activado ni desplegado operativa real.
+
+Fuentes: [ordenes Kraken y reduceOnly](https://docs.kraken.com/api-reference/order-management/send-order), [lotes minimos y especificaciones lineales](https://support.mtf.kraken.com/hc/en-us/articles/25499987607837-Linear-Contract-Specifications), [retirada de la demo](https://support.kraken.com/es/articles/360024809011-api-testing-environment-derivatives).

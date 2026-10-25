@@ -137,7 +137,7 @@ interface Position {
   id: number;
   symbol: string;
   positionType: 'buy' | 'sell';
-  managementMode?: 'auto' | 'self' | 'strat' | 'trend' | 'fixed';
+  managementMode?: 'auto' | 'self' | 'strat' | 'trend' | 'special' | 'fixed';
   amount: number;
   quantity: number;
   entryPrice: number;
@@ -513,7 +513,7 @@ interface LivePositionMarketUpdatePayload {
   candidateStopLoss: number | null;
   estimatedStopLoss: number | null;
   canImproveStop: boolean;
-  managementMode: 'auto' | 'self' | 'strat' | 'trend';
+  managementMode: 'auto' | 'self' | 'strat' | 'trend' | 'special';
   breakEvenEnabled: boolean;
   trailingEnabled: boolean;
   trailingSource: 'app' | 'kraken' | 'none';
@@ -864,8 +864,9 @@ function parsePositivePercentInput(value: string) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-function normalizeManagementMode(value?: string | null): 'auto' | 'self' | 'strat' | 'trend' {
+function normalizeManagementMode(value?: string | null): 'auto' | 'self' | 'strat' | 'trend' | 'special' {
   const raw = String(value ?? '').trim().toLowerCase();
+  if (raw === 'special') return 'special';
   if (raw === 'self' || raw === 'fixed') {
     return 'self';
   }
@@ -883,6 +884,7 @@ function normalizeManagementMode(value?: string | null): 'auto' | 'self' | 'stra
 
 function formatManagementModeLabel(value?: string | null) {
   const normalized = normalizeManagementMode(value);
+  if (normalized === 'special') return 'Special';
   if (normalized === 'self') {
     return 'Self';
   }
@@ -916,6 +918,7 @@ function isBaseTrailingEnabledForPosition(position: Pick<Position, 'managementMo
 }
 
 function isBreakEvenEffectivelyEnabledForPosition(position: Pick<Position, 'managementMode' | 'stratBreakEvenEnabled' | 'manualBreakEvenEnabled' | 'manualTrailingOverride' | 'stratTrailingEnabled'>) {
+  if (normalizeManagementMode(position.managementMode) === 'special') return false;
   return isBaseBreakEvenEnabledForPosition(position) ||
     Boolean(position.manualBreakEvenEnabled) ||
     Boolean(position.stratBreakEvenEnabled) ||
@@ -923,6 +926,7 @@ function isBreakEvenEffectivelyEnabledForPosition(position: Pick<Position, 'mana
 }
 
 function isTrailingEffectivelyEnabledForPosition(position: Pick<Position, 'managementMode' | 'manualTrailingOverride' | 'stratTrailingEnabled'>) {
+  if (normalizeManagementMode(position.managementMode) === 'special') return false;
   if (normalizeManagementMode(position.managementMode) === 'self') {
     return false;
   }
@@ -4122,7 +4126,8 @@ function PositionCard({
   const nativeTrailingManaged = isNativeTrailingManagedByExchangeForPosition(pos);
   const breakEvenEnabled = isBreakEvenEffectivelyEnabledForPosition(pos);
   const trailingEnabled = isTrailingEffectivelyEnabledForPosition(pos);
-  const breakEvenLocked = breakEvenEnabled || nativeTrailingManaged;
+  const specialManaged = managementMode === 'special';
+  const breakEvenLocked = specialManaged || breakEvenEnabled || nativeTrailingManaged;
   const quoteCurrency = 'USD';
   const comm = getFallbackCommissionRate(pos.tradingMode);
   const parsedLegacyStopPercent = Number.parseFloat(legacyStopPercent || '1.2');
@@ -4165,7 +4170,7 @@ function PositionCard({
   const trailingActive = trailingEnabled && trailingSecured;
   const trailingLockedPercent = Math.max(0, -riskDistancePercent);
   const trailingLockedFiat = Math.max(0, pnlSafe);
-  const stopEngineLabel = managementMode === 'self'
+  const stopEngineLabel = specialManaged ? 'Salida por close' : managementMode === 'self'
     ? 'Self SL/TP + Breakeven >1%'
     : stratManaged
     ? (trailingEnabled
@@ -4178,7 +4183,7 @@ function PositionCard({
     : trendManaged
       ? (trailingEnabled ? 'Trend Signal/Legacy + Trend Trailing' : 'Trend Signal/Legacy + Trend BreakEven')
       : (stopAdjustedByApp ? 'Adapted By App' : `Legacy ${LEGACY_STOP_PERCENT}% Default`);
-  const protectionModeLabel = managementMode === 'self'
+  const protectionModeLabel = specialManaged ? 'Sin SL / TP' : managementMode === 'self'
     ? 'Breakeven >1% · Sin trailing'
     : nativeTrailingManaged
     ? 'Kraken Native Trailing'
@@ -4346,10 +4351,10 @@ function PositionCard({
           <div className="min-w-0">
             <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Stop Engine</p>
             <p className={cn("mt-1 text-xl font-mono", isSafe ? "text-emerald-300" : "text-rose-300")}>
-              {formatPrice(displayStopLoss, pos.pricePrecision)}
+              {specialManaged ? 'Sin SL / TP' : formatPrice(displayStopLoss, pos.pricePrecision)}
             </p>
             <p className={cn("mt-2 text-[11px] font-black uppercase tracking-[0.15em]", stopAdjustedByApp || stratManaged ? "text-cyan-300" : "text-slate-500")}>
-              {stopDistancePercent > 0 ? '+' : ''}{stopDistancePercent.toFixed(2)}% vs entry
+              {specialManaged ? 'Piramide: maximo 5 entradas' : `${stopDistancePercent > 0 ? '+' : ''}${stopDistancePercent.toFixed(2)}% vs entry`}
             </p>
           </div>
           <div className="shrink-0 text-right">
@@ -4360,7 +4365,7 @@ function PositionCard({
               "mt-2 text-[10px] font-black uppercase tracking-[0.18em]",
               breakevenActive ? "text-emerald-300" : "text-amber-300"
             )}>
-              {breakevenActive ? 'BREAKEVEN ACTIVADO' : 'BREAKEVEN EN ESPERA'}
+              {specialManaged ? 'CIERRE POR SENAL' : breakevenActive ? 'BREAKEVEN ACTIVADO' : 'BREAKEVEN EN ESPERA'}
             </p>
             {typeof pos.takeProfit === 'number' && pos.takeProfit > 0 && (
               <p className="mt-2 text-[10px] font-black uppercase tracking-[0.18em] text-amber-300">
@@ -4419,7 +4424,7 @@ function PositionCard({
               (breakEvenLocked || protectionBusy !== null) && "cursor-not-allowed opacity-80"
             )}
           >
-            {managementMode === 'self'
+            {specialManaged ? 'No disponible en Special' : managementMode === 'self'
               ? (breakevenActive ? 'BREAKEVEN ACTIVO' : 'BREAKEVEN EN ESPERA')
               : nativeTrailingManaged
                 ? (breakevenActive ? 'BREAKEVEN ACTIVO' : 'BREAKEVEN EN ESPERA')
@@ -4432,7 +4437,7 @@ function PositionCard({
           <button
             type="button"
             onClick={handleTrailingClick}
-            disabled={protectionBusy !== null || nativeTrailingManaged || managementMode === 'self'}
+            disabled={specialManaged || protectionBusy !== null || nativeTrailingManaged || managementMode === 'self'}
             className={cn(
               "rounded-xl border px-3 py-2 text-[11px] font-black uppercase tracking-[0.18em] transition-colors",
               trailingActive
@@ -4443,7 +4448,7 @@ function PositionCard({
               (protectionBusy !== null || nativeTrailingManaged || managementMode === 'self') && "cursor-not-allowed opacity-80"
             )}
           >
-            {managementMode === 'self'
+            {specialManaged ? 'No disponible en Special' : managementMode === 'self'
               ? 'Trailing no disponible'
               : nativeTrailingManaged
               ? 'Trailing Kraken'

@@ -88,7 +88,7 @@ type PositionMarketUpdate = {
   candidateStopLoss: number | null;
   estimatedStopLoss: number | null;
   canImproveStop: boolean;
-  managementMode: 'auto' | 'self' | 'strat' | 'trend';
+  managementMode: 'auto' | 'self' | 'strat' | 'trend' | 'special';
   breakEvenEnabled: boolean;
   trailingEnabled: boolean;
   trailingSource: 'app' | 'kraken' | 'none';
@@ -1119,6 +1119,7 @@ const processPositionMarketUpdate = async (positionId: number, snapshot: MarketS
     }
 
     const managementMode = update.managementMode;
+    if (managementMode === 'special') return;
     const fixedManaged = isFixedPriceManagementMode(currentPosition.managementMode);
     const stratManaged = managementMode === 'strat';
     const trendManaged = managementMode === 'trend';

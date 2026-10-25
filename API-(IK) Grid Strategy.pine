@@ -6,9 +6,22 @@
 // with pyramid effect is better
 //---------------------------------------------
 //@version=6
-strategy('API-(IK) Grid Strategy', overlay = true, pyramiding = 14, close_entries_rule = 'ANY', default_qty_type = strategy.cash, initial_capital = 100.0, currency = 'USD', commission_type = strategy.commission.percent, commission_value = 0.1)
+//@strategy_alert_message {{strategy.order.alert_message}}
+strategy('API-(IK) Grid Strategy', overlay=true, initial_capital=1000,
+ currency=currency.USD, default_qty_type=strategy.cash, default_qty_value=100,
+ pyramiding=5, commission_type=strategy.commission.percent, commission_value=0.05,
+ slippage=2, margin_long=100, margin_short=100, calc_on_every_tick=false,
+ calc_on_order_fills=false, process_orders_on_close=false, use_bar_magnifier=false,
+ max_bars_back=5000)
 
 //-- INPUTS ------
+i_executionMode = input.string('Rejilla original', 'Modo de ejecucion', options = ['Rejilla original', 'Bot: cierre total'], group = 'Alertas bot', tooltip = 'Rejilla original conserva las salidas por tramo y no admite alertas para este bot. Bot: cierre total cambia la estrategia: la primera salida de un tramo realmente abierto cierra toda la posicion, sin nuevas compras en esa misma ejecucion. Evaluar este modo por separado; no equivale al backtest original.')
+i_botAlerts = input.bool(false, 'Activar alertas para bot externo', group = 'Alertas bot', tooltip = 'Requiere el modo Bot: cierre total. Emite buy por cada entrada ejecutada y un close por la orden que cierra toda la posicion. Crear una alerta de ejecuciones de orden con el mensaje {{strategy.order.alert_message}}. Puede testearse el modo bot con esta casilla apagada. Recrear la alerta de TradingView tras cambiar los ajustes.')
+i_botAmount = input.float(1000.0, 'Amount enviado al bot', minval = 0.01, group = 'Alertas bot', tooltip = 'Valor del campo amount de cada compra para tu app. Solo configura el mensaje: no modifica el capital ni el tamaño de las ordenes del backtest.')
+i_botMode = input.string('special', 'Estrategia del bot', options = ['trend', 'self', 'special'], group = 'Alertas bot', tooltip = 'Mismos modos usados en TTBuffer. Tu app interpreta type:close como cierre de toda la posicion del simbolo.')
+bool botExecution = i_executionMode == 'Bot: cierre total'
+if i_botAlerts and not botExecution
+    runtime.error('Tu bot cierra toda la posicion con close. Selecciona Bot: cierre total para activar alertas, o apaga las alertas para usar la rejilla original.')
 i_autoBounds = input.bool(group = 'Grid Bounds', title = 'Use Auto Bounds?', defval = true) // calculate upper and lower bound of the grid automatically? This will theorhetically be less profitable, but will certainly require less attention
 i_boundSrc = input.string(group = 'Grid Bounds', title = '(Auto) Bound Source', defval = 'Hi & Low', options = ['Hi & Low', 'Average']) // should bounds of the auto grid be calculated from recent High & Low, or from a Simple Moving Average
 i_boundLookback = input.int(group = 'Grid Bounds', title = '(Auto) Bound Lookback', defval = 250, maxval = 500, minval = 0) // when calculating auto grid bounds, how far back should we look for a High & Low, or what should the length be of our sma
@@ -18,6 +31,19 @@ i_lowerBound = input.float(group = 'Grid Bounds', title = '(Manual) Lower Boundr
 i_gridQty = input.int(group = 'Grid Lines', title = 'Grid Line Quantity', defval = 8, maxval = 15, minval = 3) // how many grid lines are in your grid
 
 //-- FUNCTIONS ------
+// Formato habitual de la app: buy abre un largo; close cierra, no abre un corto.
+// Confirmado por el usuario: close cierra toda la posicion del simbolo.
+// Solo el modo Bot: cierre total puede emitir mensajes; no se inventan campos de API.
+f_botMessage(_type, _slot = 'all') =>
+    string message = '{"type":"' + _type + '","symbol":"' + syminfo.ticker + '","origin":"API-IK-Grid","timeframe":"' + timeframe.period + '"'
+    if _type == 'buy'
+        message += ',"amount":' + str.tostring(i_botAmount, '#.########')
+    message += ',"mode":"' + i_botMode + '"'
+    message += ',"signal_id":"' + syminfo.tickerid + ':' + timeframe.period + ':' + str.tostring(time) + ':' + _type + ':' + _slot + ':' + str.tostring(strategy.closedtrades) + '"'
+    if _type == 'buy' and i_botMode == 'trend'
+        message += ',"takeprofit":null,"stoploss":null'
+    message + '}'
+
 f_getGridBounds(_bs, _bl, _bd, _up) =>
     if _bs == 'Hi & Low'
         _up ? ta.highest(close, _bl) * (1 + _bd) : ta.lowest(close, _bl) * (1 - _bd)
@@ -51,16 +77,43 @@ var closeLineArr = f_getNearGridLines(gridLineArr, close) // for plotting purpos
 var nearTopGridLine = array.get(closeLineArr, 0) // for plotting purposes - the index (in our grid line array) of the closest grid line above current price
 var nearBotGridLine = array.get(closeLineArr, 1) // for plotting purposes - the index (in our grid line array) of the closest grid line below current price
 
-for i = 0 to array.size(gridLineArr) - 1 by 1
-    if close < array.get(gridLineArr, i) and not array.get(orderArr, i) and i < array.size(gridLineArr) - 1
-        buyId = i
-        array.set(orderArr, buyId, true)
-        strategy.entry(id = str.tostring(buyId), direction = strategy.long, qty = strategy.initial_capital / (i_gridQty - 1) / close, comment = '#' + str.tostring(buyId))
-    if close > array.get(gridLineArr, i) and i != 0
-        if array.get(orderArr, i - 1)
-            sellId = i - 1
-            array.set(orderArr, sellId, false)
-            strategy.close(id = str.tostring(sellId), comment = '#' + str.tostring(sellId))
+var bool botExitPending = false
+if botExecution
+    // Use actual fills: rejected orders must not create phantom exit signals.
+    array.fill(orderArr, false)
+    if strategy.position_size == 0
+        botExitPending := false
+    bool botExitSignal = false
+    if strategy.opentrades > 0
+        for k = 0 to strategy.opentrades - 1
+            int slot = int(str.tonumber(strategy.opentrades.entry_id(k)))
+            if not na(slot) and slot >= 0 and slot < i_gridQty - 1
+                array.set(orderArr, slot, true)
+                if close > array.get(gridLineArr, slot + 1)
+                    botExitSignal := true
+    if botExitSignal and not botExitPending
+        // One market order, irrespective of the number of open entry IDs.
+        strategy.cancel_all()
+        strategy.close_all(comment = 'Bot close all', alert_message = f_botMessage('close'), disable_alert = not i_botAlerts)
+        botExitPending := true
+    // Prioritize the global exit; never add a buy in the closing execution.
+    if not botExitSignal and not botExitPending
+        for i = 0 to array.size(gridLineArr) - 2
+            if close < array.get(gridLineArr, i) and not array.get(orderArr, i)
+                array.set(orderArr, i, true)
+                strategy.entry(id = str.tostring(i), direction = strategy.long, qty = strategy.initial_capital / (i_gridQty - 1) / close, comment = '#' + str.tostring(i), alert_message = f_botMessage('buy', str.tostring(i)), disable_alert = not i_botAlerts)
+else
+    // Original grid decisions and bookkeeping retained. Partial closes never alert.
+    for i = 0 to array.size(gridLineArr) - 1 by 1
+        if close < array.get(gridLineArr, i) and not array.get(orderArr, i) and i < array.size(gridLineArr) - 1
+            buyId = i
+            array.set(orderArr, buyId, true)
+            strategy.entry(id = str.tostring(buyId), direction = strategy.long, qty = strategy.initial_capital / (i_gridQty - 1) / close, comment = '#' + str.tostring(buyId), disable_alert = true)
+        if close > array.get(gridLineArr, i) and i != 0
+            if array.get(orderArr, i - 1)
+                sellId = i - 1
+                array.set(orderArr, sellId, false)
+                strategy.close(id = str.tostring(sellId), comment = '#' + str.tostring(sellId), disable_alert = true)
 
 if i_autoBounds
     upperBound := f_getGridBounds(i_boundSrc, i_boundLookback, i_boundDev, true)

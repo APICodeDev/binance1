@@ -63,6 +63,9 @@ export async function POST(req: NextRequest) {
   }
 
   const selfManaged = normalizePositionManagementMode(position.managementMode) === 'self';
+  if (normalizePositionManagementMode(position.managementMode) === 'special') {
+    return fail(409, 'Special no utiliza SL, TP, breakeven ni trailing. Se cierra mediante close.');
+  }
   if (selfManaged && requestedTrailingEnabled === true) {
     return fail(409, 'Self positions do not support trailing; only breakeven above 1% profit is allowed');
   }

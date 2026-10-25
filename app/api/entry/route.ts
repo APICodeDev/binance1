@@ -1,4 +1,7 @@
 export const dynamic = 'force-dynamic';
+export const maxDuration = 120;
+import { executeSpecialSignal } from '@/lib/specialTrading';
+import { withTradingLock } from '@/lib/tradingLock';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
@@ -443,6 +446,9 @@ async function closePositionFromEntrySignal(
     });
   }
 
+  if (position.managementMode === 'special') {
+    return NextResponse.json({ error: true, message: 'Para cerrar esta posicion se requiere mode=special y su timeframe.' }, { status: 409 });
+  }
   const closeResult = await closeTrackedPosition(position);
   if (!closeResult.ok) {
     const detailSummary = closeResult.details ? summarizeKrakenResponse(closeResult.details) : null;
@@ -668,12 +674,16 @@ const getMakerRetryDelays = () => {
   return parsed.length > 0 ? parsed : DEFAULT_MAKER_RETRY_DELAYS_MS;
 };
 
-async function executeEntry(
+async function executeEntryUnlocked(
   data: any,
   req: NextRequest,
   auth: Awaited<ReturnType<typeof getAuthContext>>
 ) {
   try {
+    if (normalizePositionManagementMode(data.mode) === 'special') {
+      const result = await executeSpecialSignal(data, await resolveTradingMode());
+      return NextResponse.json(result.body, { status: result.status });
+    }
     const symbol = krakenNormalizeSymbol(data.symbol || '');
     let amount = parseFloat(data.amount) || 0;
     const type = String(data.type || '').toLowerCase();
@@ -862,6 +872,9 @@ async function executeEntry(
     const existing = existingCandidates.find((candidate) => krakenSymbolsMatch(candidate.symbol, symbol));
 
     if (existing) {
+      if (existing.managementMode === 'special') {
+        return NextResponse.json({ error: true, message: 'El contrato pertenece a special. Enviar mode=special y type=close antes de usar otro modo.' }, { status: 409 });
+      }
       const sameOrigin = isSameOrigin(existing.origin, origin);
 
       if (existing.positionType === type) {
@@ -1049,6 +1062,7 @@ async function executeEntry(
     }
 
     const size = krakenNormalizeSizeByContract(rawSize, exchangeInfo);
+    if (size <= 0) return NextResponse.json({ error: true, message: 'Importe inferior al tamano minimo de Kraken.' }, { status: 400 });
     const side = type === 'buy' ? 'BUY' : 'SELL';
 
     const computeMakerPrice = (bid: number, ask: number) => {
@@ -1841,6 +1855,14 @@ async function executeEntry(
       await saveLastEntryError(errDetail, 'N/A', 'N/A');
     } catch {}
     return NextResponse.json({ error: true, message: error.message, detail: errDetail }, { status: 500 });
+  }
+}
+
+async function executeEntry(data: any, req: NextRequest, auth: Awaited<ReturnType<typeof getAuthContext>>) {
+  try {
+    return await withTradingLock(() => executeEntryUnlocked(data, req, auth));
+  } catch (error: any) {
+    return NextResponse.json({ error: true, message: error.message }, { status: 503 });
   }
 }
 

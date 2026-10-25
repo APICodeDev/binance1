@@ -12,6 +12,7 @@
     "bookmap:start": "npx tsx scripts/bookmap-ws-service.ts",
     "analyze:performance": "npx tsx scripts/analyze-performance.ts",
     "test:kraken": "npx tsx scripts/test-kraken-adapter.ts",
+    "test:special": "npx tsx scripts/test-special-trading.ts",
     "calibrate:stops": "npx tsx scripts/calibrate-stops.ts",
     "lint": "next lint",
     "create-admin": "npx tsx scripts/create-admin.ts",

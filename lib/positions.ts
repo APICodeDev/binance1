@@ -16,7 +16,7 @@ import {
 } from '@/lib/kraken';
 
 export type TradingMode = 'demo' | 'live';
-export type PositionManagementMode = 'auto' | 'self' | 'strat' | 'trend';
+export type PositionManagementMode = 'auto' | 'self' | 'strat' | 'trend' | 'special';
 export type PositionCloseOrigin = 'app_rules' | 'api_close' | 'manual' | 'exchange_sync';
 
 const SELF_MODE_ALIASES = new Set(['self', 'sefl', 'selft']);
@@ -45,6 +45,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function normalizePositionManagementMode(value: unknown): PositionManagementMode {
   const raw = String(value ?? '').trim().toLowerCase();
+  if (raw === 'special') return 'special';
   if (SELF_MODE_ALIASES.has(raw) || FIXED_PRICE_MODE_ALIASES.has(raw)) {
     return 'self';
   }
@@ -80,6 +81,7 @@ type ProtectionConfigPosition = {
 };
 
 export function isBaseBreakEvenEnabled(value: unknown, trendBreakEvenEnabled = true) {
+  if (normalizePositionManagementMode(value) === 'special') return false;
   if (isFixedPriceManagementMode(value)) {
     return false;
   }
@@ -107,6 +109,7 @@ export function getManualTrailingOverride(position: ProtectionConfigPosition) {
 }
 
 export function isBreakEvenEffectivelyEnabled(position: ProtectionConfigPosition) {
+  if (normalizePositionManagementMode(position.managementMode) === 'special') return false;
   return isBaseBreakEvenEnabled(position.managementMode, position.trendBreakEvenEnabled ?? true) ||
     Boolean(position.manualBreakEvenEnabled) ||
     Boolean(position.stratBreakEvenEnabled) ||
@@ -114,6 +117,7 @@ export function isBreakEvenEffectivelyEnabled(position: ProtectionConfigPosition
 }
 
 export function isTrailingEffectivelyEnabled(position: ProtectionConfigPosition) {
+  if (normalizePositionManagementMode(position.managementMode) === 'special') return false;
   // Self positions keep their incoming SL/TP and only receive the fixed
   // breakeven rule. Manual controls must not be able to re-enable trailing.
   if (normalizePositionManagementMode(position.managementMode) === 'self') {
@@ -436,6 +440,9 @@ export function computeAdaptiveProtectionDecision(params: {
 }
 
 type CloseablePosition = {
+  managementMode?: string;
+  origin?: string | null;
+  timeframe?: string | null;
   id: number;
   symbol: string;
   positionType: string;
@@ -635,6 +642,21 @@ export async function resolveKrakenCloseExecution(params: {
 }
 
 export async function closeTrackedPosition(pos: CloseablePosition): Promise<ClosePositionResult> {
+  if (pos.managementMode === 'special') {
+    const { withTradingLock } = await import('@/lib/tradingLock');
+    const { executeSpecialSignal } = await import('@/lib/specialTrading');
+    try {
+      return await withTradingLock(async () => {
+        const tradingMode = (pos.tradingMode || 'demo') as TradingMode;
+        const result = await executeSpecialSignal({ type: 'close', symbol: pos.symbol, origin: pos.origin, timeframe: pos.timeframe, expectedPositionId: pos.id }, tradingMode);
+        if (result.status !== 200) return { ok: false as const, status: result.status, message: result.body.message };
+        const closed = await prisma.position.findUniqueOrThrow({ where: { id: pos.id } });
+        return { ok: true as const, symbol: pos.symbol, tradingMode, profitPercent: closed.profitLossPercent || 0, profitFiat: closed.profitLossFiat || 0, exitPrice: closed.exitPrice || 0, closedAt: closed.closedAt!, exitReason: closed.exitReason };
+      });
+    } catch (error: any) {
+      return { ok: false, status: 503, message: error.message };
+    }
+  }
   const tradingMode = ((pos.tradingMode || 'demo') as TradingMode);
   const symbol = pos.symbol.toUpperCase();
 

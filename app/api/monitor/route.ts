@@ -316,6 +316,9 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
   for (const pos of positions) {
     const mode = ((pos as any).tradingMode || 'demo') as 'demo' | 'live';
     const managementMode = normalizePositionManagementMode((pos as any).managementMode);
+    // Special is driven solely by external fills/close signals. In particular,
+    // stale monitor snapshots must never close or overwrite an accumulating row.
+    if (managementMode === 'special') continue;
     const fixedManaged = isFixedPriceManagementMode((pos as any).managementMode);
     const selfManaged = managementMode === 'self' && !fixedManaged;
     const stratManaged = managementMode === 'strat';
