@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 
 type PositionWithId = {
   id: number;
+  managementMode?: string;
   positionType: string;
   entryPrice: number;
   takeProfit?: number | null;
@@ -296,5 +297,27 @@ export async function attachPositionProtectionMeta<T extends { id: number }>(pos
 
 export async function attachPositionRuntimeMeta<T extends PositionWithId>(positions: T[]) {
   const positionsWithTakeProfit = await attachTakeProfitUpgradeMeta(positions);
-  return attachPositionProtectionMeta(positionsWithTakeProfit);
+  const positionsWithProtection = await attachPositionProtectionMeta(positionsWithTakeProfit);
+  const specialIds = positions.filter((position) => position.managementMode === 'special').map((position) => String(position.id));
+  // Entry receipts survive closing/reopening the same contract, unlike its current state.
+  const entries = specialIds.length ? await prisma.auditLog.findMany({
+    where: {
+      action: 'position.special.entry',
+      targetType: 'position',
+      targetId: { in: specialIds },
+    },
+    select: { targetId: true, metadata: true },
+  }) : [];
+  const entryCounts = new Map<string, number>();
+  for (const entry of entries) {
+    const metadata = entry.metadata && typeof entry.metadata === 'object' ? entry.metadata as Record<string, unknown> : {};
+    const count = Number(metadata.entries);
+    if (entry.targetId && Number.isSafeInteger(count) && count > 0) {
+      entryCounts.set(entry.targetId, Math.max(entryCounts.get(entry.targetId) || 0, count));
+    }
+  }
+  return positionsWithProtection.map((position) => ({
+    ...position,
+    specialEntryCount: position.managementMode === 'special' ? (entryCounts.get(String(position.id)) ?? 1) : 0,
+  }));
 }

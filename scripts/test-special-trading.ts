@@ -77,6 +77,12 @@ async function main() {
   const send = async (overrides: any = {}) => { const response = await POST(request({ ...base, ...overrides })); return { status: response.status, body: await response.json() }; };
   const orders = () => JSON.parse(settings.get('kraken_paper_orders') || '[]');
   const open = () => positions.find((position) => position.status === 'open');
+  const positionsApi = await import('@/app/api/positions/route');
+  const readPositions = async () => {
+    const response = await positionsApi.GET(new NextRequest('http://localhost/api/positions?mode=demo', { headers: { authorization: 'Bearer isolated-test' } }));
+    assert.equal(response.status, 200);
+    return response.json();
+  };
   assert.equal(protection.normalizePositionManagementMode('SPECIAL'), 'special');
   assert.equal(protection.isBreakEvenEffectivelyEnabled({ managementMode: 'special', manualBreakEvenEnabled: true }), false);
   assert.equal(protection.isTrailingEffectivelyEnabled({ managementMode: 'special', manualTrailingOverride: true }), false);
@@ -97,17 +103,20 @@ async function main() {
   assert.equal(open().takeProfit, null);
   assert.equal((await send({ signal_id: 'entry-1' })).body.duplicate, true);
   assert.equal(orders().length, 1);
+  assert.equal((await readPositions()).open[0].specialEntryCount, 1, 'Initial and duplicate signals must not show extra entries');
   assert.equal((await send({ origin: 'Another' })).status, 409);
   assert.equal((await send({ timeframe: '15' })).status, 409);
   assert.equal((await send({ mode: 'trend', type: 'close' })).status, 200);
   assert.equal(open().status, 'open');
   marketPrice = 48000;
   assert.equal((await send({ signal_id: 'entry-2', stoploss: 100, takeprofit: 90000, entryPrice: 1 })).status, 200);
+  assert.equal((await readPositions()).open[0].specialEntryCount, 2, 'Second filled entry must display +1');
   marketPrice = 47000;
   const simultaneous = await Promise.all([3, 4, 5].map((i) => send({ signal_id: `entry-${i}` })));
   simultaneous.forEach((result) => assert.equal(result.status, 200, JSON.stringify(result.body)));
   assert.equal(positions.filter((p) => p.status === 'open').length, 1);
   assert.equal(orders().length, 5);
+  assert.equal((await readPositions()).open[0].specialEntryCount, 5, 'Concurrent entries must display +4');
   const totalQuantity = orders().reduce((sum: number, o: any) => sum + o.filledSize, 0);
   const averagePrice = orders().reduce((sum: number, o: any) => sum + o.filledSize * o.averagePrice, 0) / totalQuantity;
   assert.ok(Math.abs(open().quantity - totalQuantity) < 1e-10);
@@ -117,7 +126,8 @@ async function main() {
   const controls = await import('@/app/api/positions/strat-controls/route');
   assert.equal((await controls.POST(request({ id: open().id, breakEvenEnabled: true }))).status, 409);
   const monitor = await import('@/app/api/monitor/route');
-  await monitor.runMonitor(new NextRequest('http://localhost/api/monitor?mode=demo'), 1);
+  const monitored = await monitor.runMonitor(new NextRequest('http://localhost/api/monitor?mode=demo'), 1);
+  assert.equal((await monitored.json()).data.snapshot.open[0].specialEntryCount, 5, 'Live polling must preserve the count after a rejected sixth entry');
   assert.equal(orders().length, 5, 'Monitor must not create protections or close special');
   settings.set('bot_enabled', '0');
   marketPrice = 51000;
@@ -134,6 +144,9 @@ async function main() {
   assert.equal((await send({ signal_id: 'entry-7' })).body.message, 'Bot disabled');
   settings.set('bot_enabled', '1');
   assert.equal((await send({ signal_id: 'entry-7' })).status, 200);
+  const reopened = await readPositions();
+  assert.equal(reopened.open[0].specialEntryCount, 1, 'New position resets the counter');
+  assert.equal(reopened.history[0].specialEntryCount, 5, 'Closed position keeps its own count after reopening the contract');
   const manual = await protection.closeTrackedPosition({ ...open() });
   assert.equal(manual.ok, true);
   assert.equal(open(), undefined);

@@ -164,6 +164,7 @@ interface Position {
   takeProfitExpandedFrom?: number | null;
   takeProfitExpandedTo?: number | null;
   takeProfitExpansionCount?: number;
+  specialEntryCount?: number;
   takeProfitPending?: boolean;
   takeProfitPendingAt?: string | null;
   takeProfitPendingCode?: string | null;
@@ -186,6 +187,20 @@ interface Position {
   stratTrailingEnabled?: boolean;
   manualBreakEvenEnabled?: boolean;
   manualTrailingOverride?: boolean | null;
+}
+
+function SpecialPyramidCounter({ position }: { position: Position }) {
+  const additionalEntries = (position.specialEntryCount ?? 1) - 1;
+  if (position.managementMode !== 'special' || !Number.isSafeInteger(additionalEntries) || additionalEntries <= 0) return null;
+  return (
+    <span
+      className="ml-1 whitespace-nowrap"
+      title={`Piramide: ${position.specialEntryCount} entradas en total (${additionalEntries} adicionales)`}
+      aria-label={`${additionalEntries} entradas adicionales en piramide`}
+    >
+      +{additionalEntries}
+    </span>
+  );
 }
 
 interface AuthUser {
@@ -3632,7 +3647,7 @@ export default function Dashboard() {
                         <p className="font-black text-white">{pos.symbol}</p>
                       </div>
                       <span className={cn(pos.positionType === 'buy' ? 'text-emerald-400' : 'text-rose-400', "font-bold text-xs uppercase")}>
-                        {pos.positionType}
+                        {pos.positionType}<SpecialPyramidCounter position={pos} />
                       </span>
                     </div>
                     <div className="grid grid-cols-2 gap-3 text-sm">
@@ -3724,7 +3739,7 @@ Closed By: ${getCloseOriginLabel(pos)}`;
                       </td>
                       <td className="px-6 py-4">
                         <span className={cn(pos.positionType === 'buy' ? 'text-emerald-400' : 'text-rose-400', "font-bold text-xs uppercase")}>
-                          {pos.positionType}
+                          {pos.positionType}<SpecialPyramidCounter position={pos} />
                         </span>
                       </td>
                       <td className="px-6 py-4 text-xs font-black text-slate-300">
@@ -4316,6 +4331,7 @@ function PositionCard({
         </div>
         <span className={cn(isBuy ? "badge-buy" : "badge-sell", "flex items-center gap-1.5")}>
           {isBuy ? <TrendingUp size={10}/> : <TrendingDown size={10}/>} {pos.positionType}
+          <SpecialPyramidCounter position={pos} />
         </span>
       </div>
 
