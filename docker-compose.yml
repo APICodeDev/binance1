@@ -1,9 +1,9 @@
-name: TraderBot
+name: kraken-bot
 
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: traderbot-postgres
+    container_name: kraken-bot-postgres
     environment:
       POSTGRES_DB: traderbot
       POSTGRES_USER: traderbot
@@ -21,7 +21,7 @@ services:
 
   db-init:
     build: .
-    container_name: traderbot-db-init
+    container_name: kraken-bot-db-init
     env_file:
       - .env
     environment:
@@ -131,3 +131,6 @@ services:
 
 volumes:
   postgres_data:
+    # Reuse the existing database when renaming the Compose project.
+    external: true
+    name: traderbot_postgres_data
