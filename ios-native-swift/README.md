@@ -4,14 +4,14 @@ Proyecto SwiftUI totalmente separado del dashboard actual.
 
 Objetivo:
 - Replicar el estado funcional actual de la app web como cliente nativo iOS.
-- Consumir las APIs ya existentes en `binance1`.
+- Consumir las APIs ya existentes en `KrakenDesk`.
 - No interferir con el desarrollo del dashboard web actual.
 
 ## Carpeta aislada
 
 Todo lo de esta app vive solo en:
 
-- `C:\PROYECTOS\binance1\ios-native-swift`
+- `C:\PROYECTOS\KrakenDesk\ios-native-swift`
 
 No depende de editar:
 
