@@ -43,6 +43,7 @@ model Position {
   stratTrailingEnabled  Boolean  @default(false) @map("strat_trailing_enabled")
   manualBreakEvenEnabled Boolean @default(false) @map("manual_break_even_enabled")
   manualTrailingOverride Boolean? @map("manual_trailing_override")
+  timeoutHours         Int?      @map("timeout_hours")
 
   @@map("positions")
 }

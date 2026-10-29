@@ -165,6 +165,7 @@ interface Position {
   takeProfitExpandedTo?: number | null;
   takeProfitExpansionCount?: number;
   specialEntryCount?: number;
+  timeoutHours?: 3 | 6 | 12 | 24 | null;
   takeProfitPending?: boolean;
   takeProfitPendingAt?: string | null;
   takeProfitPendingCode?: string | null;
@@ -2274,6 +2275,24 @@ export default function Dashboard() {
     }
   };
 
+  const updatePositionTimeout = async (pos: Position, timeoutHours: 3 | 6 | 12 | 24 | null) => {
+    try {
+      const response = await apiClient.updatePositionProtectionControls(pos.id, { timeoutHours });
+      const updatedPosition = response?.data?.position;
+      if (updatedPosition) {
+        setOpenPositions((current) => current.map((position) => (
+          position.id === pos.id
+            ? { ...position, ...updatedPosition }
+            : position
+        )));
+      } else {
+        await fetchData(true, pos.tradingMode);
+      }
+    } catch (error) {
+      setErrorPopup(getApiErrorMessage(error, 'No se pudo actualizar el timeout de la operacion.'));
+    }
+  };
+
   const confirmManualEject = async () => {
     if (!showEjectModal) return;
     const { id } = showEjectModal;
@@ -3553,6 +3572,7 @@ export default function Dashboard() {
                       pos={pos}
                       onEject={manualEject}
                       onUpdateProtection={updatePositionProtection}
+                      onUpdateTimeout={updatePositionTimeout}
                       legacyStopPercent={apiLegacyStopPercent}
                     />
                   ))
@@ -4125,14 +4145,17 @@ function PositionCard({
   pos,
   onEject,
   onUpdateProtection,
+  onUpdateTimeout,
   legacyStopPercent,
 }: {
   pos: Position,
   onEject: (pos: Position) => void,
   onUpdateProtection: (pos: Position, action: 'breakEven' | 'trailing', enabled?: boolean) => Promise<void>,
+  onUpdateTimeout: (pos: Position, timeoutHours: 3 | 6 | 12 | 24 | null) => Promise<void>,
   legacyStopPercent: string,
 }) {
   const [protectionBusy, setProtectionBusy] = useState<null | 'breakEven' | 'trailing'>(null);
+  const [timeoutBusy, setTimeoutBusy] = useState(false);
   const isBuy = pos.positionType === 'buy';
   const managementMode = normalizeManagementMode(pos.managementMode);
   const managementModeLabel = formatManagementModeLabel(pos.managementMode);
@@ -4269,6 +4292,17 @@ function PositionCard({
       await onUpdateProtection(pos, 'trailing', !trailingEnabled);
     } finally {
       setProtectionBusy(null);
+    }
+  };
+
+  const handleTimeoutChange = async (value: string) => {
+    if (timeoutBusy) return;
+    const timeoutHours = value === '' ? null : Number(value) as 3 | 6 | 12 | 24;
+    setTimeoutBusy(true);
+    try {
+      await onUpdateTimeout(pos, timeoutHours);
+    } finally {
+      setTimeoutBusy(false);
     }
   };
 
@@ -4416,6 +4450,23 @@ function PositionCard({
             <p className="mt-1 text-sm font-black uppercase tracking-[0.15em] text-slate-200">
               {formatOpenDuration(pos.createdAt)}
             </p>
+            <label className="mt-2 flex items-center justify-end gap-2 text-[10px] font-black uppercase tracking-[0.14em] text-slate-500">
+              Timeout
+              <select
+                value={pos.timeoutHours ?? ''}
+                onChange={(event) => void handleTimeoutChange(event.target.value)}
+                disabled={timeoutBusy}
+                aria-label={`Timeout de ${pos.symbol}`}
+                title="Al vencer, mantiene la operacion mientras el PnL neto sea positivo y la cierra al pasar a cero o negativo."
+                className="h-7 w-[5.25rem] rounded-lg border border-slate-700 bg-slate-900 px-2 text-[11px] font-black text-slate-200 outline-none transition-colors focus:border-cyan-400 disabled:cursor-wait disabled:opacity-60"
+              >
+                <option value="">Sin limite</option>
+                <option value="3">3 horas</option>
+                <option value="6">6 horas</option>
+                <option value="12">12 horas</option>
+                <option value="24">24 horas</option>
+              </select>
+            </label>
           </div>
         </div>
       </div>

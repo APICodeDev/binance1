@@ -171,6 +171,7 @@ export const apiClient = {
     trailingEnabled?: boolean;
     stratBreakEvenEnabled?: boolean;
     stratTrailingEnabled?: boolean;
+    timeoutHours?: 3 | 6 | 12 | 24 | null;
   }) =>
     request<any>('/api/positions/strat-controls', {
       method: 'POST',

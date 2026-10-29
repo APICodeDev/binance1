@@ -27,6 +27,9 @@ import {
 import { attachPositionProtectionMeta, attachPositionRuntimeMeta } from '@/lib/positionSignals';
 import { notifyPositiveClose } from '@/lib/ntfy';
 import { notifyAllActiveDevices } from '@/lib/pushNotifications';
+import { shouldClosePositionForTimeout } from '@/lib/positionTimeout';
+import { executeSpecialSignal } from '@/lib/specialTrading';
+import { withTradingLock } from '@/lib/tradingLock';
 import {
   krakenBuildPositionContext,
   krakenGetPrice,
@@ -316,9 +319,37 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
   for (const pos of positions) {
     const mode = ((pos as any).tradingMode || 'demo') as 'demo' | 'live';
     const managementMode = normalizePositionManagementMode((pos as any).managementMode);
-    // Special is driven solely by external fills/close signals. In particular,
-    // stale monitor snapshots must never close or overwrite an accumulating row.
-    if (managementMode === 'special') continue;
+    // Special normally follows external signals only. Its per-position timeout
+    // is the sole monitor rule and closes through the serialized special path.
+    if (managementMode === 'special') {
+      if (!(pos as any).timeoutHours) continue;
+      const symbol = pos.symbol.toUpperCase();
+      const [currentPrice, commission] = await Promise.all([
+        krakenGetPrice(symbol, mode),
+        krakenGetCommissionRate(symbol, mode),
+      ]);
+      if (!currentPrice) continue;
+      const entryCost = pos.entryPrice * pos.quantity * commission;
+      const exitCost = currentPrice * pos.quantity * commission;
+      const netProfitFiat = pos.positionType === 'buy'
+        ? ((currentPrice - pos.entryPrice) * pos.quantity) - entryCost - exitCost
+        : ((pos.entryPrice - currentPrice) * pos.quantity) - entryCost - exitCost;
+      if (!shouldClosePositionForTimeout(pos as any, netProfitFiat)) continue;
+      const closeResult = await withTradingLock(() => executeSpecialSignal({
+        type: 'close',
+        symbol: pos.symbol,
+        origin: pos.origin,
+        timeframe: pos.timeframe,
+        expectedPositionId: pos.id,
+        signal_id: `position-timeout-${pos.id}`,
+        internalCloseReason: 'position_timeout',
+        internalCloseOrigin: 'app_rules',
+      }, mode));
+      results.push(closeResult.status === 200
+        ? `TIMEOUT_CERRADA (${mode}): Position #${pos.id} (${symbol}) special cerrada al dejar de ser rentable.`
+        : `TIMEOUT_ERROR (${mode}): Position #${pos.id} (${symbol}) -> ${closeResult.body.message}`);
+      continue;
+    }
     const fixedManaged = isFixedPriceManagementMode((pos as any).managementMode);
     const selfManaged = managementMode === 'self' && !fixedManaged;
     const stratManaged = managementMode === 'strat';
@@ -492,6 +523,7 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
     let takeProfitTriggered = false;
     let exhaustionTriggered = false;
     let exhaustionReason: 'retracement' | 'flat_timeout' | null = null;
+    const timeoutTriggered = shouldClosePositionForTimeout(pos as any, profitFiat);
     const takeProfit = Number((pos as any).takeProfit || 0);
     const hasTakeProfit = Number.isFinite(takeProfit) && takeProfit > 0;
 
@@ -739,14 +771,16 @@ export async function runMonitor(req: NextRequest, actorUserId?: number) {
       }
     }
 
-    if (stopLossTriggered || takeProfitTriggered || exhaustionTriggered) {
+    if (stopLossTriggered || takeProfitTriggered || exhaustionTriggered || timeoutTriggered) {
       const closeSide = positionContext.closeSide;
       await krakenCancelAllOrders(symbol, mode);
       const closeResp = await krakenClosePosition(symbol, closeSide, pos.quantity, mode, positionContext.closeTradeSide);
 
       if (krakenOrderSuccess(closeResp)) {
         const stopWasMovedByTrailing = !trendManaged && Math.abs(newSl - previousStopLoss) > Math.max(1e-8, Math.abs(previousStopLoss) * 0.000001);
-        const closeReason = exhaustionTriggered
+        const closeReason = timeoutTriggered
+          ? 'position_timeout'
+          : exhaustionTriggered
           ? 'exhaustion'
           : stopLossTriggered
             ? (stopWasMovedByTrailing ? 'trailing_stop' : 'stop_loss')

@@ -92,7 +92,7 @@ async function main() {
   assert.equal(kraken.krakenNormalizeSizeByContract(1900, { contractValueTradePrecision: -3 }), 1000);
   assert.equal(kraken.krakenNormalizeSizeByContract(999, { contractValueTradePrecision: -3 }), 0);
   assert.equal((await send({ amount: 0.000001 })).status, 400);
-  assert.equal((await send({ type: 'sell' })).status, 400);
+  assert.equal((await send({ type: 'hold' })).status, 400);
   assert.equal((await send({ symbol: 'PI_XBTUSD' })).status, 400);
   assert.equal(orders().length, 0);
   const first = await send({ signal_id: 'entry-1', symbol: 'KRAKEN:BTCUSD.P' });
@@ -125,6 +125,12 @@ async function main() {
   assert.equal(orders().length, 5);
   const controls = await import('@/app/api/positions/strat-controls/route');
   assert.equal((await controls.POST(request({ id: open().id, breakEvenEnabled: true }))).status, 409);
+  assert.equal((await controls.POST(request({ id: open().id, timeoutHours: 3 }))).status, 200);
+  assert.equal(open().timeoutHours, 3);
+  const timeout = await import('@/lib/positionTimeout');
+  const expired = { createdAt: new Date(Date.now() - 4 * 60 * 60 * 1000), timeoutHours: 3 };
+  assert.equal(timeout.shouldClosePositionForTimeout(expired, 10), false, 'Expired winners remain open');
+  assert.equal(timeout.shouldClosePositionForTimeout(expired, -0.01), true, 'Expired losers close immediately');
   const monitor = await import('@/app/api/monitor/route');
   const monitored = await monitor.runMonitor(new NextRequest('http://localhost/api/monitor?mode=demo'), 1);
   assert.equal((await monitored.json()).data.snapshot.open[0].specialEntryCount, 5, 'Live polling must preserve the count after a rejected sixth entry');
@@ -149,6 +155,16 @@ async function main() {
   assert.equal(reopened.history[0].specialEntryCount, 5, 'Closed position keeps its own count after reopening the contract');
   const manual = await protection.closeTrackedPosition({ ...open() });
   assert.equal(manual.ok, true);
+  assert.equal(open(), undefined);
+  const shortEntry = await send({ type: 'sell', signal_id: 'short-entry' });
+  assert.equal(shortEntry.status, 200, JSON.stringify(shortEntry.body));
+  assert.equal(open().positionType, 'sell');
+  const reversed = await send({ type: 'buy', signal_id: 'reverse-to-long' });
+  assert.equal(reversed.status, 200, JSON.stringify(reversed.body));
+  assert.equal(reversed.body.reversed, true);
+  assert.equal(open().positionType, 'buy');
+  assert.equal(positions.filter((p) => p.status === 'open').length, 1);
+  assert.equal((await send({ type: 'close', signal_id: 'close-after-reverse' })).status, 200);
   assert.equal(open(), undefined);
   // A process/db failure after a simulated fill must never double the exposure.
   failCommit = true;
@@ -216,6 +232,6 @@ async function main() {
   assert.ok(Math.abs(livePosition.exitPrice - (marketPrice - 50)) < 1e-8, 'History uses the weighted price of all partial exits');
   process.env.KRAKEN_LIVE_TRADING_ENABLED = '0';
   console.log('Local Kraken response fixtures: partial buy, explicit rejection, partial close, residual close PASS');
-  console.log(JSON.stringify({ result: 'PASS', publicMarket, publicCalls, simulatedOrders: orders().length, privateNetworkCalls: 0, database: 'isolated in-memory', scenarios: ['entry HTTP route', 'five entries', 'concurrent buys', 'weighted average', 'duplicate signal', 'sixth rejected', 'minimum size', 'origin/timeframe isolation', 'no protections', 'monitor exclusion', 'close while bot disabled', 'reduce-only full close', 'manual close', 'crash blocks resubmission'] }, null, 2));
+  console.log(JSON.stringify({ result: 'PASS', publicMarket, publicCalls, simulatedOrders: orders().length, privateNetworkCalls: 0, database: 'isolated in-memory', scenarios: ['entry HTTP route', 'five entries', 'concurrent buys', 'weighted average', 'duplicate signal', 'sixth rejected', 'minimum size', 'origin/timeframe isolation', 'no SL/TP protections', 'individual timeout', 'winner timeout hold', 'loser timeout close', 'close while bot disabled', 'reduce-only full close', 'long/short reversal', 'manual close', 'crash blocks resubmission'] }, null, 2));
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

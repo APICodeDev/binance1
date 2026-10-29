@@ -5,6 +5,9 @@ import { writeAuditLog } from '@/lib/audit';
 import { notifyAllActiveDevices } from '@/lib/pushNotifications';
 import { notifyPositiveClose } from '@/lib/ntfy';
 import { attachPositionProtectionMeta } from '@/lib/positionSignals';
+import { shouldClosePositionForTimeout } from '@/lib/positionTimeout';
+import { executeSpecialSignal } from '@/lib/specialTrading';
+import { withTradingLock } from '@/lib/tradingLock';
 import {
   krakenBuildPositionContext,
   krakenCancelTrailingOrders,
@@ -888,7 +891,7 @@ const syncStopForPosition = async (position: ManagedPosition, update: PositionMa
   return update.candidateStopLoss;
 };
 
-const closePositionFromEngine = async (position: ManagedPosition, update: PositionMarketUpdate, reason: 'stop_loss' | 'trailing_stop' | 'take_profit' | 'exhaustion') => {
+const closePositionFromEngine = async (position: ManagedPosition, update: PositionMarketUpdate, reason: 'stop_loss' | 'trailing_stop' | 'take_profit' | 'exhaustion' | 'position_timeout') => {
   const tradingMode = ((position as any).tradingMode || 'demo') as TradingMode;
   const positionMode = await krakenGetPositionMode(position.symbol.toUpperCase(), tradingMode) || 'one_way_mode';
   const positionContext = krakenBuildPositionContext(position.positionType as 'buy' | 'sell', positionMode);
@@ -1069,6 +1072,8 @@ const closePositionFromEngine = async (position: ManagedPosition, update: Positi
           ? 'position_closed_trailing_stop'
           : reason === 'exhaustion'
             ? 'position_closed_exhaustion'
+            : reason === 'position_timeout'
+              ? 'position_closed_timeout'
             : 'position_closed_stop_loss',
       positionId: position.id,
       symbol: position.symbol.toUpperCase(),
@@ -1119,7 +1124,35 @@ const processPositionMarketUpdate = async (positionId: number, snapshot: MarketS
     }
 
     const managementMode = update.managementMode;
-    if (managementMode === 'special') return;
+    const timeoutTriggered = shouldClosePositionForTimeout(currentPosition as any, update.profitFiat);
+    if (managementMode === 'special') {
+      if (timeoutTriggered) {
+        const closeResult = await withTradingLock(() => executeSpecialSignal({
+          type: 'close',
+          symbol: currentPosition.symbol,
+          origin: currentPosition.origin,
+          timeframe: currentPosition.timeframe,
+          expectedPositionId: currentPosition.id,
+          signal_id: `position-timeout-${currentPosition.id}`,
+          internalCloseReason: 'position_timeout',
+          internalCloseOrigin: 'app_rules',
+        }, (currentPosition.tradingMode || 'demo') as TradingMode));
+        if (closeResult.status === 200 && !closeResult.body.error) {
+          emitEngineEvent('position_closed', {
+            positionId: currentPosition.id,
+            symbol: currentPosition.symbol.toUpperCase(),
+            tradingMode: currentPosition.tradingMode,
+            reason: 'position_timeout',
+            exitPrice: update.price,
+            profitPercent: update.profitPercent,
+            profitFiat: update.profitFiat,
+            at: Date.now(),
+          });
+          removeOpenPosition(currentPosition);
+        }
+      }
+      return;
+    }
     const fixedManaged = isFixedPriceManagementMode(currentPosition.managementMode);
     const stratManaged = managementMode === 'strat';
     const trendManaged = managementMode === 'trend';
@@ -1193,12 +1226,14 @@ const processPositionMarketUpdate = async (positionId: number, snapshot: MarketS
     // breach check in case the exchange-side protection is missing or fails.
     const stopLossTriggered = hasBreachedStopLevel(currentPosition, update.price, derivedStopLoss);
 
-    if (exhaustionTriggered || takeProfitTriggered || stopLossTriggered) {
+    if (exhaustionTriggered || takeProfitTriggered || stopLossTriggered || timeoutTriggered) {
       const impliedTrailingStop = !trendManaged && update.candidateStopLoss !== null && (
         (currentPosition.positionType === 'buy' && update.candidateStopLoss > currentPosition.stopLoss) ||
         (currentPosition.positionType === 'sell' && update.candidateStopLoss < currentPosition.stopLoss)
       );
-      const reason = exhaustionTriggered
+      const reason = timeoutTriggered
+        ? 'position_timeout'
+        : exhaustionTriggered
         ? 'exhaustion'
         : takeProfitTriggered
           ? 'take_profit'

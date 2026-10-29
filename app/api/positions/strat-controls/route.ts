@@ -5,6 +5,7 @@ import { ok, fail } from '@/lib/apiResponse';
 import { requireAuth } from '@/lib/auth';
 import { writeAuditLog } from '@/lib/audit';
 import { prisma } from '@/lib/db';
+import { parsePositionTimeoutHours } from '@/lib/positionTimeout';
 import {
   getManualTrailingOverride,
   isBreakEvenEffectivelyEnabled,
@@ -52,9 +53,17 @@ export async function POST(req: NextRequest) {
     : typeof body?.stratTrailingEnabled === 'boolean'
       ? body.stratTrailingEnabled
       : undefined;
+  const hasTimeoutRequest = Boolean(body) && Object.prototype.hasOwnProperty.call(body, 'timeoutHours');
+  const requestedTimeoutHours = hasTimeoutRequest
+    ? parsePositionTimeoutHours(body.timeoutHours)
+    : undefined;
 
-  if (typeof requestedBreakEvenEnabled !== 'boolean' && typeof requestedTrailingEnabled !== 'boolean') {
-    return fail(400, 'At least one protection control flag is required');
+  if (hasTimeoutRequest && requestedTimeoutHours === undefined) {
+    return fail(400, 'Timeout must be disabled or set to 3, 6, 12 or 24 hours');
+  }
+
+  if (typeof requestedBreakEvenEnabled !== 'boolean' && typeof requestedTrailingEnabled !== 'boolean' && !hasTimeoutRequest) {
+    return fail(400, 'At least one protection control or timeout is required');
   }
 
   const position = await prisma.position.findUnique({ where: { id } });
@@ -63,6 +72,31 @@ export async function POST(req: NextRequest) {
   }
 
   const selfManaged = normalizePositionManagementMode(position.managementMode) === 'self';
+  const onlyTimeoutRequested = hasTimeoutRequest &&
+    typeof requestedBreakEvenEnabled !== 'boolean' &&
+    typeof requestedTrailingEnabled !== 'boolean';
+
+  if (onlyTimeoutRequested) {
+    const updated = await prisma.position.update({
+      where: { id: position.id },
+      data: { timeoutHours: requestedTimeoutHours } as any,
+    });
+    await writeAuditLog({
+      action: 'position.timeout_updated',
+      userId: auth.auth.user.id,
+      targetType: 'position',
+      targetId: String(position.id),
+      metadata: {
+        symbol: position.symbol.toUpperCase(),
+        tradingMode: (position as any).tradingMode || 'demo',
+        previousTimeoutHours: (position as any).timeoutHours ?? null,
+        timeoutHours: requestedTimeoutHours,
+      },
+      req,
+    });
+    return ok({ position: updated }, 'Position timeout updated');
+  }
+
   if (normalizePositionManagementMode(position.managementMode) === 'special') {
     return fail(409, 'Special no utiliza SL, TP, breakeven ni trailing. Se cierra mediante close.');
   }
@@ -166,6 +200,7 @@ export async function POST(req: NextRequest) {
       manualBreakEvenEnabled: nextManualBreakEvenEnabled,
       manualTrailingOverride: nextManualTrailingOverride,
       stopLoss: updatedStopLoss,
+      ...(hasTimeoutRequest ? { timeoutHours: requestedTimeoutHours } : {}),
     } as any,
   });
 
@@ -187,6 +222,10 @@ export async function POST(req: NextRequest) {
       updatedStopLoss,
       immediateSyncMessage,
       trailingJustEnabled,
+      ...(hasTimeoutRequest ? {
+        previousTimeoutHours: (position as any).timeoutHours ?? null,
+        timeoutHours: requestedTimeoutHours,
+      } : {}),
     },
     req,
   });
